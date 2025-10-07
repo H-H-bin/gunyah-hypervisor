@@ -39,8 +39,16 @@ assert_failed(const char *file, int line, const char *func, const char *err);
 			    : assert_failed(__FILE__, __LINE__, __func__, #x))
 #endif
 
-#if defined(VERBOSE) && VERBOSE
+#if defined(__KLOCWORK__)
+#define assert_debug assert
+#elif defined(VERBOSE) && VERBOSE
 #define assert_debug assert
 #else
 #define assert_debug(x) (void)assert_if_const(x)
+#endif
+
+#if defined(PLATFORM_SAFETY) && (PLATFORM_SAFETY == 1)
+#define assert_safety assert
+#else
+#define assert_safety assert_debug
 #endif

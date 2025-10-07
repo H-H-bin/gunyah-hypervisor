@@ -34,6 +34,7 @@ CPULOCAL_DECLARE_STATIC(ticks_t, expected_timeout);
 bool
 tests_timer(void)
 {
+	cpulocal_begin();
 	ticks_t	 current_ticks;
 	timer_t *timer1		  = &CPULOCAL(timer1);
 	timer_t *timer2		  = &CPULOCAL(timer2);
@@ -51,15 +52,15 @@ tests_timer(void)
 		current_ticks + (0x100000 * (cpulocal_get_index() + 1));
 	atomic_store_relaxed(&CPULOCAL(in_progress), true);
 	timer_enqueue(timer1, *expected_timeout);
+	cpulocal_end();
 
-	preempt_enable();
 	while (atomic_load_relaxed(in_progress)) {
 	}
-	preempt_disable();
 
 	// Test 2
 	// Enqueue two timers, dequeue the first one and make sure only the
 	// expiry for the second one is received
+	cpulocal_begin();
 	CPULOCAL(test_num)++;
 	timer_init_object(timer1, TIMER_ACTION_TEST);
 	timer_init_object(timer2, TIMER_ACTION_TEST);
@@ -73,16 +74,18 @@ tests_timer(void)
 	timer_enqueue(timer2, *expected_timeout);
 
 	timer_dequeue(timer1);
+	cpulocal_end();
 
-	preempt_enable();
 	while (atomic_load_relaxed(in_progress)) {
 	}
-	preempt_disable();
 
 	// TODO: Add more tests
 
+	cpulocal_begin();
 	LOG(DEBUG, INFO, "Timer tests successfully finished on core {:d}",
 	    cpulocal_get_index());
+	cpulocal_end();
+
 	return false;
 }
 

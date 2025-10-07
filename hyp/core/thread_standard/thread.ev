@@ -24,6 +24,3 @@ subscribe object_deactivate_thread
 
 // Add a dummy handler so the scheduler can always register an unwinder.
 subscribe thread_context_switch_pre()
-
-subscribe thread_exit_to_user()
-	priority last

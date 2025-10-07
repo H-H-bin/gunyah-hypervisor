@@ -1,0 +1,23 @@
+// © 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+extend trace_class enumeration {
+	PROFILE_LEVEL1 = 8;
+	PROFILE_LEVEL2 = 9;
+};
+
+// Profile trace id range 0x1000-0x10ff
+extend trace_id enumeration {
+	PROFILE_EL2_ENTRY	= 0x1000;
+	PROFILE_EL2_EXIT	= 0x1001;
+	PROFILE_EL2_NESTED_ENTRY	= 0x1002;
+	PROFILE_EL2_NESTED_EXIT		= 0x1003;
+};
+
+#if defined(HYPERCALLS)
+extend hyp_api_flags0 bitfield {
+	delete	trace_profile;
+	12	trace_profile	bool = 1;
+};
+#endif

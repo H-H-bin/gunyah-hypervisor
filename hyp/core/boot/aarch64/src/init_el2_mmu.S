@@ -1,4 +1,5 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// © 2019 Qualcomm Innovation Center, Inc. All rights reserved.
+// All Rights Reserved.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -320,11 +321,15 @@ function aarch64_init_address_space, section=nosection
 	adrl	x12, aarch64_pt_ttbr_level1	// physical addresses of EL2 PT
 #if defined(ARCH_ARM_FEAT_VHE)
 	orr	x9, x12, TTBR1_EL2_CNP_MASK
-	// -- preserve x12 for use below
+	// -- note, preserve x12 for use below
 	msr	TTBR1_EL2, x9
+	// Set TTBR0_EL2 to an invalid address, even though we set EPD0=1
+	// - a dummy ASID - 0xffff, CnP=0
+	mov	x10, ~0x1
+	msr	TTBR0_EL2, x10
 #else
 	orr	x9, x12, TTBR0_EL2_CNP_MASK
-	// -- preserve x12 for use below
+	// -- note, preserve x12 for use below
 	msr	TTBR0_EL2, x9
 #endif
 	isb
@@ -364,7 +369,11 @@ function aarch64_init_address_space, section=nosection
 	// -- construct Level-1 table entry
 	// Set initial entry count in the level below. Assume there's two entries.
 	// Update with the actual count of entries used.
+#ifndef HYPVM_WITH_COVERAGE
 	mov	x9, (VSMAv8_TABLE_TYPE | (2 << VSMAv8_TABLE_REFCOUNT_SHIFT))
+#else
+	mov	x9, (VSMAv8_TABLE_TYPE | (3 << VSMAv8_TABLE_REFCOUNT_SHIFT))
+#endif
 	orr	x9, x9, x13
 	str	x9, [x10]
 	// -- construct Level-2 2MB block entry - for hypervisor code
@@ -380,9 +389,30 @@ function aarch64_init_address_space, section=nosection
 	orr	x9, x9, x10
 	str	x9, [x11]
 
+#ifdef HYPVM_WITH_COVERAGE
+	// create 2nd entry of Level-2 for next page
+	sub	x10, x11, x13				// x10 = x11 - x13 = (x11 << 3) == old entry
+	lsr	x10, x10, VSMAv8_ENTRY_BITS		// x10 = x10 >> 3
+	add	x10, x10, #1				// x10 = x10 + 1 == points to second entry
+	add	x10, x13, x10, lsl VSMAv8_ENTRY_BITS	// x10 is second entry in table 2
+
+	// points to second page of hypervisor
+	adr	x11, image_virt_start
+	bic	x11, x11, MASK_2MiB
+	orr	x11, x11, 0x200000			// move to next MB
+	orr	x11, x11, VSMAv8_BLOCK_TYPE
+	movz	x9, LOWER_ATTRIBUTES_HYP_R
+#if defined(ARCH_ARM_FEAT_BTI)
+	movk	x9, ((UPPER_ATTRIBUTES_HYP_X | GUARDED_PAGE)  >> 48), LSL 48
+#else
+	movk	x9, (UPPER_ATTRIBUTES_HYP_X >> 48), LSL 48
+#endif
+	orr	x11, x9, x11
+	str	x11, [x10]				// str the data into 2nd page table entry L2
+#endif
 	// - create hypervisor RW 2MB mapping
 	adrp	x9, data_base			// calculate the hypervisor data physical base
-	bic	x9, x9, MASK_2MiB		//
+	bic	x9, x9, MASK_2MiB
 	add	x10, x9, x14
 	sub	x15, x10, x12
 

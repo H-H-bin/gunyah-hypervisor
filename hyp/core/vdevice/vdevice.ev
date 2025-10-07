@@ -4,8 +4,6 @@
 
 module vdevice
 
-subscribe gpt_values_equal[GPT_TYPE_VDEVICE]
-
 subscribe object_create_addrspace
 	unwinder
 

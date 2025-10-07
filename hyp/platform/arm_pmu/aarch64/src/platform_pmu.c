@@ -7,6 +7,7 @@
 
 #include <hypregisters.h>
 
+#include <atomic.h>
 #include <compiler.h>
 #include <cpulocal.h>
 #include <irq.h>
@@ -27,14 +28,14 @@
 #include "platform_pmu.h"
 
 static hwirq_t *pmu_hwirq;
-CPULOCAL_DECLARE_STATIC(bool, pmu_irq_active);
+CPULOCAL_DECLARE_STATIC(_Atomic bool, pmu_irq_active);
 
 void
 platform_pmu_handle_boot_cpu_cold_init(void)
 {
 	// Disable all the interrupts at the startup
 	sysreg64_write(PMINTENCLR_EL1, ~0UL);
-	CPULOCAL(pmu_irq_active) = false;
+	atomic_init(&CPULOCAL(pmu_irq_active), false);
 
 	if (pmu_hwirq != NULL) {
 		irq_enable_local(pmu_hwirq);
@@ -80,8 +81,8 @@ platform_pmu_is_hw_irq_pending(void)
 void
 platform_pmu_hw_irq_deactivate(void)
 {
-	if (CPULOCAL(pmu_irq_active)) {
-		CPULOCAL(pmu_irq_active) = false;
+	if (atomic_load_relaxed(&CPULOCAL(pmu_irq_active))) {
+		atomic_store_relaxed(&CPULOCAL(pmu_irq_active), false);
 		irq_deactivate(pmu_hwirq);
 	}
 }
@@ -100,7 +101,7 @@ platform_pmu_handle_irq_received(void)
 	bool deactivate = true;
 
 	if (platform_pmu_is_hw_irq_pending()) {
-		CPULOCAL(pmu_irq_active) = true;
+		atomic_store_relaxed(&CPULOCAL(pmu_irq_active), true);
 		trigger_platform_pmu_counter_overflow_event();
 
 		// Leave the IRQ active until the guest has cleared the

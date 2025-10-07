@@ -22,9 +22,7 @@
 // sanity checks to test whether the configuration is correct and we don't leak
 // trace and debug context registers between VMs, or permit tracing the
 // hypervisor.
-#if defined(MODULE_VM_VETM) || defined(MODULE_VM_VETM_NULL)
-#define VCPU_TRACE_CONTEXT_SAVED 1
-#elif defined(PLATFORM_HAS_NO_ETM_BASE) && (PLATFORM_HAS_NO_ETM_BASE != 0)
+#if defined(PLATFORM_HAS_NO_ETM_BASE) && (PLATFORM_HAS_NO_ETM_BASE != 0)
 #pragma message(                                                               \
 	"PLATFORM_HAS_NO_ETM_BASE is nonzero; if an ETM is present it may be"  \
 	" accessible and could trace the hypervisor.")
@@ -86,7 +84,7 @@ vcpu_context_switch_load(void)
 		// Floating-point access should not be disabled for any VM
 #if defined(ARCH_ARM_FEAT_VHE)
 		assert_debug(CPTR_EL2_E2H1_get_FPEN(
-				     &thread->vcpu_regs_el2.cptr_el2) == 3);
+				     &thread->vcpu_regs_el2.cptr_el2) == 3U);
 		register_CPTR_EL2_E2H1_write(thread->vcpu_regs_el2.cptr_el2);
 #else
 		assert_debug(CPTR_EL2_E2H0_get_TFP(
@@ -119,7 +117,8 @@ vcpu_context_switch_load(void)
 				thread->vcpu_regs_el1.scxtnum_el1);
 		}
 #endif
-		__asm__ volatile("ldp	q0, q1, [%[q]]		;"
+		__asm__ volatile(".arch_extension fp;"
+				 "ldp	q0, q1, [%[q]]		;"
 				 "ldp	q2, q3, [%[q], 32]	;"
 				 "ldp	q4, q5, [%[q], 64]	;"
 				 "ldp	q6, q7, [%[q], 96]	;"
@@ -207,7 +206,8 @@ vcpu_context_switch_save(void)
 				register_SCXTNUM_EL1_read();
 		}
 #endif
-		__asm__ volatile("stp	q0, q1, [%[q]]		;"
+		__asm__ volatile(".arch_extension fp;"
+				 "stp	q0, q1, [%[q]]		;"
 				 "stp	q2, q3, [%[q], 32]	;"
 				 "stp	q4, q5, [%[q], 64]	;"
 				 "stp	q6, q7, [%[q], 96]	;"

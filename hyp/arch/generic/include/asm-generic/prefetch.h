@@ -26,18 +26,18 @@
 // decision by default, typically because the target CPU has a broken
 // implementation of the prefetch instructions.
 
-#ifndef prefetch_load_keep
-#define prefetch_load_keep(addr) __builtin_prefetch(addr, 0, 3)
+#ifndef arch_has_prefetch_load_keep
+#define prefetch_load_keep(addr) __builtin_prefetch((addr), 0, 3)
 #endif
 
-#ifndef prefetch_store_keep
-#define prefetch_store_keep(addr) __builtin_prefetch(addr, 1, 3)
+#ifndef arch_has_prefetch_store_keep
+#define prefetch_store_keep(addr) __builtin_prefetch((addr), 1, 3)
 #endif
 
-#ifndef prefetch_load_stream
-#define prefetch_load_stream(addr) __builtin_prefetch(addr, 0, 0)
+#ifndef arch_has_prefetch_load_stream
+#define prefetch_load_stream(addr) __builtin_prefetch((addr), 0, 0)
 #endif
 
-#ifndef prefetch_store_stream
-#define prefetch_store_stream(addr) __builtin_prefetch(addr, 1, 0)
+#ifndef arch_has_prefetch_store_stream
+#define prefetch_store_stream(addr) __builtin_prefetch((addr), 1, 0)
 #endif

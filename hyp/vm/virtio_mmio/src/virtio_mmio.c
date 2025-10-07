@@ -4,241 +4,119 @@
 
 #include <assert.h>
 #include <hyptypes.h>
-#include <string.h>
 
 #include <hypcontainers.h>
 
 #include <atomic.h>
 #include <compiler.h>
-#include <hyp_aspace.h>
-#include <log.h>
-#include <memextent.h>
-#include <object.h>
-#include <partition.h>
-#include <pgtable.h>
+#include <rcu.h>
 #include <spinlock.h>
 #include <trace.h>
 #include <util.h>
 #include <vdevice.h>
 #include <vic.h>
+#include <virq.h>
+#include <virtio.h>
 
+#include <events/virtio_backend.h>
 #include <events/virtio_mmio.h>
 
-#include <asm/cache.h>
-#include <asm/cpu.h>
-
 #include "event_handlers.h"
-#include "panic.h"
 #include "virtio_mmio.h"
 
 error_t
-virtio_mmio_handle_object_create_virtio_mmio(virtio_mmio_create_t create)
+virtio_mmio_handle_virtio_startup(virtio_t *virtio)
 {
-	virtio_mmio_t *virtio_mmio = create.virtio_mmio;
-	spinlock_init(&virtio_mmio->lock);
+	error_t ret;
+	assert(virtio != NULL);
 
-	return OK;
-}
+	// Configuration cache extent must be present and mapped.
+	if ((virtio->config_cache_me == NULL) ||
+	    (virtio->config_range.base == 0U)) {
+		TRACE(ERROR, INFO, "virtio_startup mmio: no config cache");
+		ret = ERROR_OBJECT_CONFIG;
+		goto out;
+	}
 
-error_t
-virtio_mmio_configure(virtio_mmio_t *virtio_mmio, memextent_t *memextent,
-		      count_t vqs_num, virtio_option_flags_t flags,
-		      virtio_device_type_t device_type)
-{
-	error_t ret = OK;
-
-	assert(virtio_mmio != NULL);
-	assert(memextent != NULL);
-
-	// Memextent should only cover one contiguous virtio config page
-	if ((memextent->type != MEMEXTENT_TYPE_BASIC) ||
-	    (memextent->size != PGTABLE_VM_PAGE_SIZE) ||
-	    (vqs_num > VIRTIO_MMIO_MAX_VQS)) {
+	// Device configuration offset must be at least 0x100, so we can
+	// place the read-only mirror of the common registers before it.
+	if (virtio->config_offset <
+	    offsetof(virtio_mmio_regs_t, device_config)) {
+		TRACE(ERROR, INFO,
+		      "virtio_startup mmio: bad config offset {:#x}",
+		      virtio->config_offset);
 		ret = ERROR_ARGUMENT_INVALID;
 		goto out;
 	}
-
-	if (virtio_option_flags_get_valid_device_type(&flags)) {
-		if (trigger_virtio_mmio_valid_device_type_event(device_type)) {
-			virtio_mmio->device_type = device_type;
-		} else {
-			ret = ERROR_ARGUMENT_INVALID;
-			goto out;
-		}
-	} else {
-		virtio_mmio->device_type = VIRTIO_DEVICE_TYPE_INVALID;
-	}
-
-	if (virtio_mmio->me != NULL) {
-		object_put_memextent(virtio_mmio->me);
-	}
-
-	virtio_mmio->me	     = object_get_memextent_additional(memextent);
-	virtio_mmio->vqs_num = vqs_num;
-
-out:
-	return ret;
-}
-
-error_t
-virtio_mmio_handle_object_activate_virtio_mmio(virtio_mmio_t *virtio_mmio)
-{
-	error_t ret = OK;
-
-	assert(virtio_mmio != NULL);
-
-	partition_t *partition = virtio_mmio->header.partition;
-
-	if (virtio_mmio->me == NULL) {
-		ret = ERROR_OBJECT_CONFIG;
-		goto error_no_me;
-	}
-
-	virtio_mmio->frontend_device.type = VDEVICE_TYPE_VIRTIO_MMIO;
-	ret = vdevice_attach_phys(&virtio_mmio->frontend_device,
-				  virtio_mmio->me);
-	if (ret != OK) {
-		goto error_vdevice;
-	}
-
-	// Allocate banked registers based on how many virtual queues will be
-	// used
-	size_t alloc_size = virtio_mmio->vqs_num *
-			    sizeof(virtio_mmio_banked_queue_registers_t);
-
-	void_ptr_result_t alloc_ret =
-		partition_alloc(partition, alloc_size, alignof(uint32_t *));
-	if (alloc_ret.e != OK) {
-		ret = ERROR_NOMEM;
-		goto out;
-	}
-	(void)memset_s(alloc_ret.r, alloc_size, 0, alloc_size);
-
-	virtio_mmio->banked_queue_regs =
-		(virtio_mmio_banked_queue_registers_t *)alloc_ret.r;
-
-	ret = trigger_virtio_mmio_device_config_activate_event(
-		virtio_mmio->device_type, virtio_mmio);
-	if (ret != OK) {
-		goto out;
-	}
-
-	// Allocate virtio config page
-	size_t size = virtio_mmio->me->size;
-	if (size < sizeof(*virtio_mmio->regs)) {
+	if (virtio->config_size <
+	    (sizeof(virtio_mmio_regs_t) -
+	     offsetof(virtio_mmio_regs_t, device_config))) {
+		TRACE(ERROR, INFO, "virtio_startup mmio: bad config size {:#x}",
+		      virtio->config_size);
 		ret = ERROR_ARGUMENT_SIZE;
 		goto out;
 	}
 
-	virt_range_result_t range = hyp_aspace_allocate(size);
-	if (range.e != OK) {
-		ret = range.e;
-		goto out;
+	virtio_mmio_t *virtio_mmio = &virtio->frontend_data.mmio;
+
+	spinlock_init(&virtio_mmio->banking_lock);
+#if defined(PLATFORM_NO_DEVICE_ATTR_ATOMIC_UPDATE) &&                          \
+	PLATFORM_NO_DEVICE_ATTR_ATOMIC_UPDATE
+	spinlock_init(&virtio_mmio->interrupt_lock);
+#endif
+
+	virtio_mmio->regs = virtio_mmio_regs_container_of_device_config(
+		virtio->config_cache);
+
+	// Write initial values into the config cache
+	atomic_store_relaxed(&virtio_mmio->regs->status, virtio->status);
+	if (virtio->device_type != VIRTIO_DEVICE_TYPE_INVALID) {
+		atomic_store_relaxed(&virtio_mmio->regs->dev_id,
+				     virtio->device_type);
 	}
 
-	ret = memextent_attach(partition, virtio_mmio->me, range.r.base,
-			       sizeof(*virtio_mmio->regs));
+	// Register the config cache extent as a device, so we can trap and
+	// handle accesses to read-only mappings. The management VM is expected
+	// to map this read-only somewhere in the guest's address space.
+	virtio_mmio->vdevice.type = VDEVICE_TYPE_VIRTIO_MMIO;
+	ret			  = vdevice_attach_phys(&virtio_mmio->vdevice,
+							virtio->config_cache_me);
 	if (ret != OK) {
-		hyp_aspace_deallocate(partition, range.r);
+		TRACE(ERROR, INFO,
+		      "virtio_startup mmio: failed vdevice_attach_phys: {:d}",
+		      (register_t)ret);
 		goto out;
 	}
 
-	virtio_mmio->regs = (virtio_mmio_regs_t *)range.r.base;
-	virtio_mmio->size = range.r.size;
+	ret = trigger_virtio_backend_device_config_activate_event(
+		virtio->device_type,
+		virtio_backend_container_of_virtio(virtio));
+	if (ret != OK) {
+		TRACE(ERROR, INFO,
+		      "virtio_startup mmio: failed device_config_activate: {:d}",
+		      (register_t)ret);
+		goto out_vdevice;
+	}
 
-	// Flush cache before using the uncached mapping
-	CACHE_CLEAN_OBJECT(*virtio_mmio->regs);
-
+out_vdevice:
+	if (ret != OK) {
+		vdevice_detach_phys(&virtio_mmio->vdevice,
+				    virtio->config_cache_me);
+	}
 out:
-	if (ret != OK) {
-		vdevice_detach_phys(&virtio_mmio->frontend_device,
-				    virtio_mmio->me);
-	}
-error_vdevice:
-error_no_me:
 	return ret;
 }
 
 void
-virtio_mmio_handle_object_deactivate_virtio_mmio(virtio_mmio_t *virtio_mmio)
+virtio_mmio_handle_virtio_shutdown(virtio_t *virtio)
 {
-	assert(virtio_mmio != NULL);
+	assert(virtio != NULL);
 
-	vic_unbind(&virtio_mmio->backend_source);
-	vic_unbind(&virtio_mmio->frontend_source);
+	virtio_mmio_t *virtio_mmio = &virtio->frontend_data.mmio;
 
-	vdevice_detach_phys(&virtio_mmio->frontend_device, virtio_mmio->me);
-}
+	vic_unbind(&virtio_mmio->virq_source);
 
-void
-virtio_mmio_handle_object_cleanup_virtio_mmio(virtio_mmio_t *virtio_mmio)
-{
-	assert(virtio_mmio != NULL);
-
-	partition_t *partition = virtio_mmio->header.partition;
-
-	if (virtio_mmio->regs != NULL) {
-		memextent_detach(partition, virtio_mmio->me);
-
-		virt_range_t range = { .base = (uintptr_t)virtio_mmio->regs,
-				       .size = virtio_mmio->size };
-
-		hyp_aspace_deallocate(partition, range);
-
-		virtio_mmio->regs = NULL;
-		virtio_mmio->size = 0U;
-	}
-
-	if (virtio_mmio->banked_queue_regs != NULL) {
-		size_t alloc_size =
-			virtio_mmio->vqs_num *
-			sizeof(virtio_mmio_banked_queue_registers_t);
-		void *alloc_base = (void *)virtio_mmio->banked_queue_regs;
-
-		error_t err = partition_free(partition, alloc_base, alloc_size);
-		assert(err == OK);
-
-		virtio_mmio->banked_queue_regs = NULL;
-		virtio_mmio->vqs_num	       = 0U;
-	}
-
-	(void)trigger_virtio_mmio_device_config_cleanup_event(
-		virtio_mmio->device_type, virtio_mmio);
-
-	if (virtio_mmio->me != NULL) {
-		object_put_memextent(virtio_mmio->me);
-		virtio_mmio->me = NULL;
-	}
-}
-
-void
-virtio_mmio_unwind_object_activate_virtio_mmio(virtio_mmio_t *virtio_mmio)
-{
-	virtio_mmio_handle_object_deactivate_virtio_mmio(virtio_mmio);
-	virtio_mmio_handle_object_cleanup_virtio_mmio(virtio_mmio);
-}
-
-error_t
-virtio_mmio_backend_bind_virq(virtio_mmio_t *virtio_mmio, vic_t *vic,
-			      virq_t virq)
-{
-	error_t ret = OK;
-
-	assert(virtio_mmio != NULL);
-	assert(vic != NULL);
-
-	ret = vic_bind_shared(&virtio_mmio->backend_source, vic, virq,
-			      VIRQ_TRIGGER_VIRTIO_MMIO_BACKEND);
-
-	return ret;
-}
-
-void
-virtio_mmio_backend_unbind_virq(virtio_mmio_t *virtio_mmio)
-{
-	assert(virtio_mmio != NULL);
-
-	vic_unbind_sync(&virtio_mmio->backend_source);
+	vdevice_detach_phys(&virtio_mmio->vdevice, virtio->config_cache_me);
 }
 
 error_t
@@ -250,8 +128,13 @@ virtio_mmio_frontend_bind_virq(virtio_mmio_t *virtio_mmio, vic_t *vic,
 	assert(virtio_mmio != NULL);
 	assert(vic != NULL);
 
-	ret = vic_bind_shared(&virtio_mmio->frontend_source, vic, virq,
+	ret = vic_bind_shared(&virtio_mmio->virq_source, vic, virq,
 			      VIRQ_TRIGGER_VIRTIO_MMIO_FRONTEND);
+
+	if ((ret == OK) &&
+	    (atomic_load_relaxed(&virtio_mmio->regs->interrupt_status) != 0U)) {
+		(void)virq_assert(&virtio_mmio->virq_source, false);
+	}
 
 	return ret;
 }
@@ -261,7 +144,83 @@ virtio_mmio_frontend_unbind_virq(virtio_mmio_t *virtio_mmio)
 {
 	assert(virtio_mmio != NULL);
 
-	vic_unbind_sync(&virtio_mmio->frontend_source);
+	vic_unbind_sync(&virtio_mmio->virq_source);
+}
+
+error_t
+virtio_mmio_handle_virtio_ack_features_ok(virtio_t *virtio)
+{
+	// Synchronous features_ok not implemented for MMIO.
+	(void)virtio;
+	return ERROR_UNIMPLEMENTED;
+}
+
+static void
+virtio_mmio_update_generation(virtio_t *virtio)
+{
+	rcu_read_start();
+	virtio_mmio_t *virtio_mmio = &virtio->frontend_data.mmio;
+	uint8_result_t new_gen	   = virtio_get_generation(virtio);
+	if (new_gen.e == OK) {
+		atomic_store_relaxed(&virtio_mmio->regs->config_gen, new_gen.r);
+	}
+	rcu_read_finish();
+}
+
+static void
+virtio_mmio_assert_irq(virtio_t *virtio, uint32_t set_interrupt_status)
+{
+	virtio_mmio_t *virtio_mmio = &virtio->frontend_data.mmio;
+#if defined(PLATFORM_NO_DEVICE_ATTR_ATOMIC_UPDATE) &&                          \
+	PLATFORM_NO_DEVICE_ATTR_ATOMIC_UPDATE
+	spinlock_acquire(&virtio_mmio->interrupt_lock);
+	uint32_t old_interrupt_status =
+		atomic_load_relaxed(&virtio_mmio->regs->interrupt_status);
+	uint32_t new_interrupt_status = old_interrupt_status |
+					set_interrupt_status;
+	bool raise_virq = (old_interrupt_status != new_interrupt_status);
+	atomic_store_relaxed(&virtio_mmio->regs->interrupt_status,
+			     new_interrupt_status);
+	spinlock_release(&virtio_mmio->interrupt_lock);
+#else
+	uint32_t old_interrupt_status = atomic_fetch_or_explicit(
+		&virtio_mmio->regs->interrupt_status, set_interrupt_status,
+		memory_order_relaxed);
+	bool raise_virq = (set_interrupt_status & ~old_interrupt_status) != 0U;
+#endif
+	if (raise_virq) {
+		(void)virq_assert(&virtio_mmio->virq_source, false);
+	}
+}
+
+void
+virtio_mmio_handle_virtio_config_update_begin(virtio_t *virtio)
+{
+	virtio_mmio_update_generation(virtio);
+}
+
+void
+virtio_mmio_handle_virtio_config_update_end(virtio_t *virtio)
+{
+	virtio_mmio_update_generation(virtio);
+	virtio_mmio_assert_irq(virtio, (uint32_t)util_bit(1));
+}
+
+error_t
+virtio_mmio_handle_virtio_queue_ready(virtio_t *virtio, index_t vq)
+{
+	// No per-queue VIRQ support
+	(void)vq;
+	virtio_mmio_assert_irq(virtio, (uint32_t)util_bit(0));
+	return OK;
+}
+
+void
+virtio_mmio_handle_virtio_reset_complete(virtio_t *virtio)
+{
+	virtio_mmio_t *virtio_mmio = &virtio->frontend_data.mmio;
+	atomic_store_relaxed(&virtio_mmio->regs->status,
+			     virtio_status_cast(0U));
 }
 
 bool
@@ -269,40 +228,15 @@ virtio_mmio_frontend_handle_virq_check_pending(virq_source_t *source)
 {
 	assert(source != NULL);
 
-	// Deassert backend's IRQ when get_notification has been called
-	virtio_mmio_t *virtio_mmio =
-		virtio_mmio_container_of_frontend_source(source);
-
-	virtio_mmio_notify_reason_t reason =
-		atomic_load_relaxed(&virtio_mmio->reason);
-	return !virtio_mmio_notify_reason_is_equal(
-		reason, virtio_mmio_notify_reason_default());
-}
-
-bool
-virtio_mmio_backend_handle_virq_check_pending(virq_source_t *source)
-{
-	assert(source != NULL);
-
 	// Deassert frontend's IRQ when interrupt_status is zero, meaning no
 	// interrupts are pending to be handled
 	virtio_mmio_t *virtio_mmio =
-		virtio_mmio_container_of_backend_source(source);
+		virtio_mmio_container_of_virq_source(source);
 
+	// Note: this is an atomic load, so there is no data race; we don't need
+	// to acquire interrupt_lock on targets that use it to make updates
+	// atomic; if this runs concurrently with an update, we are guaranteed
+	// to see either the old or the new status.
 	return (atomic_load_relaxed(&virtio_mmio->regs->interrupt_status) !=
 		0U);
-}
-
-error_t
-virtio_default_handle_object_activate(virtio_mmio_t *virtio_mmio)
-{
-	(void)virtio_mmio;
-	return OK;
-}
-
-error_t
-virtio_default_handle_object_cleanup(virtio_mmio_t *virtio_mmio)
-{
-	(void)virtio_mmio;
-	return OK;
 }

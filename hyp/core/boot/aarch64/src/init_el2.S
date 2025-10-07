@@ -43,7 +43,6 @@
 //
 // Input arguments:
 //    x0-x3: 256-bit RNG seed from the platform code
-//    w4: Logical CPU number from the platform code
 
 	.section .text.boot.init
 function aarch64_init, section=nosection
@@ -61,6 +60,7 @@ function aarch64_init, section=nosection
 	isb
 
 	// Save logical CPU number in w20 (call-preserved)
+	bl	aarch64_get_cpuid
 	mov	w20, w4
 
 	// Set terminating frame pointer
@@ -73,10 +73,10 @@ function aarch64_init, section=nosection
 	// Initialize the KASLR and return base virtual address
 	bl	aarch64_init_kaslr
 	// x0 return has hypervisor KASLR base address
-
 	bic	x2, x0, 0x1fffff	// relocation offset
 	adrl	x0, _DYNAMIC		// get address of _DYNAMIC
-	bic	x1, x0, 0x1fffff	// current address offset
+
+	adrl	x1, image_virt_start
 
 	// Apply ELF relocations
 	bl	boot_rel_fixup
@@ -144,7 +144,6 @@ function_end aarch64_init
 //
 // Input arguments:
 //    x0: Virtual pointer to the CPU's idle thread
-//    w1: Logical CPU number from the platform code
 
 function aarch64_secondary_init, section=nosection
 	// Disable debug, aborts and interrupts.
@@ -155,9 +154,12 @@ function aarch64_secondary_init, section=nosection
 	msr	SCTLR_EL2, x9
 	isb
 
-	// Save arguments in callee-saved registers
+	// Save idle thread pointer in x19 (call-preserved)
 	mov	x19, x0
-	mov	x20, x1
+
+	// Save logical CPU number in w20 (call-preserved)
+	bl	aarch64_get_cpuid
+	mov	w20, w4
 
 	// Set terminating frame pointer
 	mov	x29, 0
@@ -290,6 +292,58 @@ function aarch64_boot_error, section=nosection
 	wfi
 	b	9b
 function_end aarch64_boot_error
+
+// Calculate the logical CPU ID from MPDIR_EL1.
+//
+// Non-standard calling convention. Uses x4-x6; other registers preserved.
+//
+// Input arguments: none
+// Results:
+//     x4: logical CPU ID
+function aarch64_get_cpuid local nosection
+	mrs	x5, MPIDR_EL1
+	mov	x4, xzr
+#if PLATFORM_MPIDR_AFF0_MASK != 0
+	ubfx	x6, x5, MPIDR_EL1_AFF0_SHIFT, MPIDR_EL1_AFF0_BITS
+	orr	x4, x4, x6, lsl PLATFORM_MPIDR_AFF0_SHIFT
+	tst	x6, ~PLATFORM_MPIDR_AFF0_MASK
+#else
+	tst	x5, MPIDR_EL1_AFF0_MASK
+#endif
+	b.ne	LOCAL(mpidr_fail)
+
+#if PLATFORM_MPIDR_AFF1_MASK != 0
+	ubfx	x6, x5, MPIDR_EL1_AFF1_SHIFT, MPIDR_EL1_AFF1_BITS
+	orr	x4, x4, x6, lsl PLATFORM_MPIDR_AFF1_SHIFT
+	tst	x6, ~PLATFORM_MPIDR_AFF1_MASK
+#else
+	tst	x5, MPIDR_EL1_AFF1_MASK
+#endif
+	b.ne	LOCAL(mpidr_fail)
+
+#if PLATFORM_MPIDR_AFF2_MASK != 0
+	ubfx	x6, x5, MPIDR_EL1_AFF2_SHIFT, MPIDR_EL1_AFF2_BITS
+	orr	x4, x4, x6, lsl PLATFORM_MPIDR_AFF2_SHIFT
+	tst	x6, ~PLATFORM_MPIDR_AFF2_MASK
+#else
+	tst	x5, MPIDR_EL1_AFF2_MASK
+#endif
+	b.ne	LOCAL(mpidr_fail)
+
+#if PLATFORM_MPIDR_AFF3_MASK != 0
+	ubfx	x6, x5, MPIDR_EL1_AFF3_SHIFT, MPIDR_EL1_AFF3_BITS
+	orr	x4, x4, x6, lsl PLATFORM_MPIDR_AFF3_SHIFT
+	tst	x6, ~PLATFORM_MPIDR_AFF3_MASK
+#else
+	tst	x5, MPIDR_EL1_AFF3_MASK
+#endif
+	b.ne	LOCAL(mpidr_fail)
+	ret
+
+LOCAL(mpidr_fail):
+	wfe
+	b	LOCAL(mpidr_fail)
+function_end aarch64_get_cpuid
 
 	// Boot information which is passed from the linker
 const64 thread_size, tbss_size

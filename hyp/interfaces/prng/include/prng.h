@@ -5,3 +5,6 @@
 // Get 64-bits of random bits from the DRBG
 uint64_result_t
 prng_get64(void);
+
+error_t
+prng_check_rate_limit(void);

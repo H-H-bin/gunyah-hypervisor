@@ -11,7 +11,9 @@
 #include <panic.h>
 #include <partition.h>
 #include <partition_alloc.h>
+#include <preempt.h>
 #include <spinlock.h>
+#include <thread.h>
 
 #include <asm/event.h>
 
@@ -44,7 +46,7 @@ tests_spinlock_single_lock(void)
 	bool wait_all_cores_start = true;
 	bool wait_all_cores_end	  = true;
 
-	spinlock_acquire_nopreempt(&test_info.lock);
+	spinlock_acquire(&test_info.lock);
 	test_info.count++;
 	spinlock_release_nopreempt(&test_info.lock);
 
@@ -78,6 +80,8 @@ tests_spinlock_single_lock(void)
 		spinlock_release_nopreempt(&test_info.lock);
 	}
 
+	preempt_enable();
+
 	return ret;
 }
 
@@ -105,6 +109,8 @@ tests_spinlock_multiple_locks(void)
 	bool ret		  = false;
 	bool wait_all_cores_start = true;
 	bool wait_all_cores_end	  = true;
+
+	preempt_disable();
 
 	const cpu_index_t cpu = cpulocal_get_index();
 
@@ -165,6 +171,8 @@ tests_spinlock_multiple_locks(void)
 		spinlock_release_nopreempt(
 			&test_spinlock_multi_lock[left].lock);
 	}
+
+	preempt_enable();
 
 	return ret;
 }

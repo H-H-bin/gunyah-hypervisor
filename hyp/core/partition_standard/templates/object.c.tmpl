@@ -87,9 +87,9 @@ partition_destroy_${o}(rcu_entry_t *entry)
 
 	partition_t *parent = ${o}->header.partition;
 #if o == "thread"
-	(void)partition_free(parent, ${o}, thread_size);
+	partition_free(parent, ${o}, thread_size);
 #else
-	(void)partition_free(parent, ${o}, sizeof(${o}_t));
+	partition_free(parent, ${o}, sizeof(${o}_t));
 #end if
 	object_put_partition(parent);
 

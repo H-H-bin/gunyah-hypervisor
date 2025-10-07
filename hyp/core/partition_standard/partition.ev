@@ -13,6 +13,10 @@ subscribe boot_cold_init
 	// and memdb_handle_boot_cold_init (priority 10)
 	priority 9
 
+subscribe boot_cold_init
+	handler partition_standard_boot_create_root_partition()
+	priority last
+
 subscribe boot_hypervisor_start()
 	// Run this early since it can add more heap memory
 	priority 100

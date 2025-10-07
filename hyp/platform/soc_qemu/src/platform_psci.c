@@ -7,6 +7,7 @@
 
 #if !defined(UNIT_TESTS)
 #include <platform_psci.h>
+#include <qcbor.h>
 #include <util.h>
 
 #include "event_handlers.h"
@@ -26,13 +27,6 @@ platform_psci_is_cpu_poweroff(psci_cpu_state_t cpu_state)
 
 	// Powerdown not supported in QEMU, it always goes into WFI
 	return false;
-}
-
-bool
-platform_psci_is_cluster_active(psci_cluster_state_L3_t cluster_state)
-{
-	(void)cluster_state;
-	return true;
 }
 
 psci_cpu_state_t
@@ -91,14 +85,6 @@ platform_psci_suspend_state_validation(psci_suspend_powerstate_t suspend_state,
 
 	// QEMU does not care about suspend states since it only goes to WFI.
 	return PSCI_RET_SUCCESS;
-}
-
-// Returns the cluster indices
-uint32_t
-platform_psci_get_cluster_index(cpu_index_t cpu)
-{
-	(void)cpu;
-	return 0U;
 }
 
 error_t

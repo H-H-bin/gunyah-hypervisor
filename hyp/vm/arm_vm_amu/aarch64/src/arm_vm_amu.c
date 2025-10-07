@@ -12,6 +12,7 @@
 #include <panic.h>
 #include <preempt.h>
 #include <scheduler.h>
+#include <thread.h>
 #include <vcpu.h>
 
 #include <asm/barrier.h>
@@ -54,12 +55,12 @@ CPULOCAL_DECLARE_STATIC(uint64_t, amu_aux_counter_offsets)
 [PLATFORM_AMU_AUX_CNT_NUM];
 
 void
-arm_vm_amu_handle_boot_cpu_cold_init(cpu_index_t cpu_index)
+arm_vm_amu_handle_boot_cpu_cold_init(cpu_index_t cpu)
 {
 	uint64_t *amu_counter_offsets =
-		CPULOCAL_BY_INDEX(amu_counter_offsets, cpu_index);
+		CPULOCAL_BY_INDEX(amu_counter_offsets, cpu);
 	uint64_t *amu_aux_counter_offsets =
-		CPULOCAL_BY_INDEX(amu_aux_counter_offsets, cpu_index);
+		CPULOCAL_BY_INDEX(amu_aux_counter_offsets, cpu);
 
 	for (index_t i = 0; i < PLATFORM_AMU_CNT_NUM; i++) {
 		amu_counter_offsets[i] = 0;

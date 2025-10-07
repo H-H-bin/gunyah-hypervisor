@@ -85,11 +85,18 @@ vectors_exception_dispatch(kernel_trap_frame_full_t *frame)
 #if defined(ARCH_ARM_FEAT_PAuth)
 	pc = remove_pointer_auth(pc);
 #endif
+#if defined(INTERFACE_TRACE_PROFILE)
+	TRACE_PROFILE(1, 0U, PROFILE_EL2_NESTED_ENTRY,
+		      "exception preempt EL2, ESR {:#x}, ELR {:#x}",
+		      ESR_EL2_raw(esr), pc);
+#endif
+#if !defined(NDEBUG)
 	TRACE(ERROR, WARN,
 	      "EL2 exception at PC = {:x} ESR_EL2 = {:#x}, LR = {:#x}, "
 	      "SP = {:#x}, FP = {:#x}",
 	      pc, ESR_EL2_raw(esr), frame->base.x30,
 	      SP_EL2_raw(frame->base.sp_el2), frame->base.x29);
+#endif
 
 	switch (ec) {
 	case ESR_EC_UNKNOWN:
@@ -219,6 +226,11 @@ vectors_exception_dispatch(kernel_trap_frame_full_t *frame)
 		vectors_dump_regs(frame);
 		panic("Unhandled EL2 trap");
 	}
+
+#if defined(INTERFACE_TRACE_PROFILE)
+	TRACE_PROFILE(1, 0U, PROFILE_EL2_NESTED_EXIT,
+		      "exception return to EL2");
+#endif
 }
 
 SPSR_EL2_A64_t
@@ -226,10 +238,18 @@ vectors_interrupt_dispatch(void)
 {
 	SPSR_EL2_A64_t ret = { 0 };
 
+#if defined(INTERFACE_TRACE_PROFILE)
+	TRACE_PROFILE(1, 0U, PROFILE_EL2_NESTED_ENTRY, "irq preempt EL2");
+#endif
+
 	if (preempt_interrupt_dispatch()) {
 		SPSR_EL2_A64_set_I(&ret, true);
 	}
 
+#if defined(INTERFACE_TRACE_PROFILE)
+	TRACE_PROFILE(1, 0U, PROFILE_EL2_NESTED_EXIT,
+		      "irq return to EL2, {:#x}", SPSR_EL2_A64_raw(ret));
+#endif
 	return ret;
 }
 
@@ -262,7 +282,7 @@ vectors_handle_vectors_trap_unknown_el2(kernel_trap_frame_t *frame)
 		goto out;
 	}
 
-	assert(util_is_baligned(pc, 4));
+	assert(util_is_baligned(pc, 4U));
 
 	// Read the faulting EL2 instruction
 	uint32_t inst = *(uint32_t *)pc;
@@ -273,10 +293,12 @@ vectors_handle_vectors_trap_unknown_el2(kernel_trap_frame_t *frame)
 			(uint16_t)((inst & AARCH64_INST_EXCEPTION_IMM16_MASK) >>
 				   AARCH64_INST_EXCEPTION_IMM16_SHIFT);
 
-		if ((inst & AARCH64_INST_EXCEPTION_SUBTYPE_MASK) ==
-		    AARCH64_INST_EXCEPTION_SUBTYPE_HLT_VAL) {
+		// Skip "HLT #1"
+		if (((inst & AARCH64_INST_EXCEPTION_SUBTYPE_MASK) ==
+		     AARCH64_INST_EXCEPTION_SUBTYPE_HLT_VAL) &&
+		    (imm16 == 1U)) {
 			LOG(ERROR, WARN,
-			    "skipping hlt instruction at PC: {:x}, imm16: {:x}",
+			    "skipping HLT instruction at PC: {:x}, imm16: {:x}",
 			    pc, imm16);
 
 			// Adjust PC past HLT instruction

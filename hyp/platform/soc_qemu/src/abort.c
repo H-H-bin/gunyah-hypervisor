@@ -4,6 +4,7 @@
 
 #include <hyptypes.h>
 
+#include <qcbor.h>
 #include <smccc.h>
 
 #include "event_handlers.h"

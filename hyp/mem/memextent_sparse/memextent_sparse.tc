@@ -2,15 +2,16 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-define GPT_PHYS_BITS constant type count_t = 44;
-define GPT_VBASE_BITS constant type count_t = 48;
+define RANGE_MAP_PHYS_BITS constant type count_t = 44;
+define RANGE_MAP_VBASE_BITS constant type count_t = 48;
 
 extend addrspace object {
 	sparse_mapping_list	structure list;
 };
 
-define memextent_gpt_map bitfield<64> {
-	auto<GPT_VBASE_BITS>	vbase		type vmaddr_t;
+define memextent_map_range bitfield<64> {
+	auto<RANGE_MAP_VBASE_BITS>
+				vbase		type vmaddr_t;
 	auto<8>			memtype		enumeration pgtable_vm_memtype;
 	auto<3>			user_access	enumeration pgtable_access;
 	auto<3>			kernel_access	enumeration pgtable_access;
@@ -19,12 +20,12 @@ define memextent_gpt_map bitfield<64> {
 	auto			ignore_attrs	bool;
 };
 
-extend gpt_type enumeration {
+extend range_map_type enumeration {
 	memextent_mapping;
 };
 
-extend gpt_value union {
-	me_map		bitfield memextent_gpt_map;
+extend range_map_value union {
+	me_map		bitfield memextent_map_range;
 };
 
 define memextent_sparse_arg structure {
@@ -35,17 +36,14 @@ define memextent_sparse_arg structure {
 	user_access	enumeration pgtable_access;
 	kernel_access	enumeration pgtable_access;
 	fail_addr	type paddr_t;
-};
-
-define memextent_gpt_arg structure {
-	addrspace	pointer object addrspace;
+	map_flags	bitfield addrspace_map_flags;
 };
 
 define memextent_sparse_mapping structure {
 	// RCU-protected addrspace pointer
 	addrspace		pointer(atomic) object addrspace;
 	mapping_list_node	structure list_node(contained);
-	gpt			structure gpt;
+	range_map		structure range_map;
 	retained		bool;
 };
 

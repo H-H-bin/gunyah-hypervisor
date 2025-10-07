@@ -4,4 +4,22 @@
 
 module vetm_null
 
+#if defined(ARCH_ARM_FEAT_TRF) && ARCH_ARM_FEAT_TRF
+
+subscribe boot_cold_init()
+
+subscribe boot_cpu_cold_init()
+
+subscribe boot_cpu_warm_init()
+
+subscribe boot_hypervisor_start()
+
+subscribe thread_load_state()
+
+subscribe vcpu_activate_thread(thread, options)
+
+#else // !ARCH_ARM_FEAT_TRF
+
 subscribe vdevice_access_fixed_addr
+
+#endif

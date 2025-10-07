@@ -18,6 +18,9 @@
 #include <list.h>
 #include <object.h>
 #include <panic.h>
+#include <partition.h>
+#include <partition_alloc.h>
+#include <platform_cpu.h>
 #include <preempt.h>
 #include <rcu.h>
 #include <scheduler.h>
@@ -25,6 +28,8 @@
 #include <thread.h>
 #include <timer_queue.h>
 #include <trace.h>
+#include <util.h>
+
 #if defined(INTERFACE_VCPU)
 #include <vcpu.h>
 #endif
@@ -35,7 +40,7 @@
 
 #include "event_handlers.h"
 
-CPULOCAL_DECLARE_STATIC(scheduler_t, scheduler);
+CPULOCAL_DECLARE_STATIC(scheduler_t *, scheduler);
 CPULOCAL_DECLARE_STATIC(thread_t *_Atomic, primary_thread);
 CPULOCAL_DECLARE_STATIC(thread_t *, running_thread);
 CPULOCAL_DECLARE_STATIC(thread_t *, yielded_from);
@@ -200,8 +205,24 @@ can_be_scheduled(const thread_t *thread) REQUIRE_SCHEDULER_LOCK(thread)
 void
 scheduler_fprr_handle_boot_cold_init(void)
 {
+	partition_t *hyp_partition = partition_get_private();
+
 	for (cpu_index_t i = 0U; i < PLATFORM_MAX_CORES; i++) {
-		scheduler_t *scheduler = &CPULOCAL_BY_INDEX(scheduler, i);
+		if (!platform_cpu_exists(i)) {
+			continue;
+		}
+
+		scheduler_t	 *scheduler;
+		void_ptr_result_t alloc_ret = partition_alloc(
+			hyp_partition, sizeof(*scheduler), alignof(*scheduler));
+		if (alloc_ret.e != OK) {
+			panic("Unable to allocate memory for scheduler");
+		}
+		scheduler			= (scheduler_t *)alloc_ret.r;
+		CPULOCAL_BY_INDEX(scheduler, i) = scheduler;
+		(void)memset_s(scheduler, sizeof(scheduler_t), 0,
+			       sizeof(scheduler_t));
+
 		spinlock_init(&scheduler->lock);
 		timer_init_object(&scheduler->timer, TIMER_ACTION_RESCHEDULE);
 		for (index_t j = 0U; j < SCHEDULER_NUM_PRIORITIES; j++) {
@@ -331,27 +352,25 @@ out:
 }
 
 void
-scheduler_fprr_handle_vcpu_wakeup(thread_t *thread)
-	REQUIRE_SCHEDULER_LOCK(thread)
+scheduler_fprr_handle_vcpu_wakeup(thread_t *vcpu) REQUIRE_SCHEDULER_LOCK(vcpu)
 {
-	assert_spinlock_held(&thread->scheduler_lock);
-	assert(thread->kind == THREAD_KIND_VCPU);
+	assert_spinlock_held(&vcpu->scheduler_lock);
+	assert(vcpu->kind == THREAD_KIND_VCPU);
 
 	bool was_yielding = atomic_exchange_explicit(
-		&thread->scheduler_yielding, false, memory_order_relaxed);
+		&vcpu->scheduler_yielding, false, memory_order_relaxed);
 	if (compiler_unexpected(was_yielding)) {
-		cpu_index_t affinity = thread->scheduler_affinity;
+		cpu_index_t affinity = vcpu->scheduler_affinity;
 
 		// The thread must have a valid affinity in order to perform
 		// a directed yield; see remove_thread_from_scheduler().
 		assert(cpulocal_index_valid(affinity));
 
-		scheduler_t *scheduler =
-			&CPULOCAL_BY_INDEX(scheduler, affinity);
-		bool is_active;
+		scheduler_t *scheduler = CPULOCAL_BY_INDEX(scheduler, affinity);
+		bool	     is_active;
 
 		spinlock_acquire_nopreempt(&scheduler->lock);
-		is_active = scheduler->active_thread == thread;
+		is_active = scheduler->active_thread == vcpu;
 		spinlock_release_nopreempt(&scheduler->lock);
 
 		if (is_active) {
@@ -367,11 +386,11 @@ scheduler_fprr_handle_vcpu_wakeup(thread_t *thread)
 }
 
 bool
-scheduler_fprr_handle_vcpu_expects_wakeup(const thread_t *thread)
+scheduler_fprr_handle_vcpu_expects_wakeup(const thread_t *vcpu)
 {
-	assert(thread->kind == THREAD_KIND_VCPU);
+	assert(vcpu->kind == THREAD_KIND_VCPU);
 
-	return atomic_load_relaxed(&thread->scheduler_yielding);
+	return atomic_load_relaxed(&vcpu->scheduler_yielding);
 }
 #endif
 
@@ -586,7 +605,7 @@ scheduler_schedule(void)
 	preempt_disable();
 
 	while (must_schedule) {
-		scheduler_t *scheduler = &CPULOCAL(scheduler);
+		scheduler_t *scheduler = CPULOCAL(scheduler);
 		ticks_t	     curticks  = timer_get_current_timer_ticks();
 		thread_t    *current   = thread_get_self();
 		thread_t    *target;
@@ -756,9 +775,9 @@ add_thread_to_scheduler(thread_t *thread) REQUIRE_SCHEDULER_LOCK(thread)
 	cpu_index_t affinity = thread->scheduler_affinity;
 
 	if (cpulocal_index_valid(affinity)) {
-		cpu_index_t  cpu = cpulocal_get_index();
-		scheduler_t *scheduler =
-			&CPULOCAL_BY_INDEX(scheduler, affinity);
+		cpu_index_t  cpu       = cpulocal_get_index();
+		scheduler_t *scheduler = CPULOCAL_BY_INDEX(scheduler, affinity);
+		assert(scheduler != NULL);
 
 		spinlock_acquire_nopreempt(&scheduler->lock);
 
@@ -817,9 +836,8 @@ remove_thread_from_scheduler(thread_t *thread) REQUIRE_SCHEDULER_LOCK(thread)
 	if (cpulocal_index_valid(affinity)) {
 		assert(sched_state_get_queued(&thread->scheduler_state));
 
-		scheduler_t *scheduler =
-			&CPULOCAL_BY_INDEX(scheduler, affinity);
-		bool was_active = false;
+		scheduler_t *scheduler = CPULOCAL_BY_INDEX(scheduler, affinity);
+		bool	     was_active = false;
 
 		spinlock_acquire_nopreempt(&scheduler->lock);
 		if (scheduler->active_thread == thread) {

@@ -16,7 +16,7 @@
 #include <trace.h>
 #include <util.h>
 
-// FIXME:
+// FIXME 
 #if !defined(MODULE_PLATFORM_SOC_QCOM)
 // Platforms may override this with their own implementation
 core_id_t WEAK

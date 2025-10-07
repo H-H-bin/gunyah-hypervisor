@@ -4,14 +4,6 @@
 
 define MEMEXTENT_MAX_MAPS constant type count_t = 4;
 
-extend cap_rights_memextent bitfield {
-	0	map	bool;
-	1	derive	bool;
-	2	attach	bool;
-	3	lookup	bool;
-	4	donate	bool;
-};
-
 extend addrspace object {
 	basic_mapping_list	structure list;
 };
@@ -20,6 +12,7 @@ define memextent_basic_arg structure {
 	me		pointer object memextent;
 	map		array(MEMEXTENT_MAX_MAPS) pointer structure memextent_basic_mapping;
 	failed_address	type paddr_t;
+	map_flags	bitfield addrspace_map_flags;
 };
 
 define memextent_basic_mapping structure {
@@ -46,6 +39,9 @@ extend memextent object {
 	mappings		union memextent_map_ptr;
 	active			bool;
 	device_mem		bool;
+#if !defined(PLATFORM_RAM_NO_SANITISE_ON_RESET)
+	sanitise_on_reset	bool;
+#endif
 	attached_address	uintptr;
 	attached_size		size;
 };

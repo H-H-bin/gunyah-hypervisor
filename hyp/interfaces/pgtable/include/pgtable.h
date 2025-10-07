@@ -61,9 +61,9 @@
 
 // Returns false if the specified address is unmapped.
 bool
-pgtable_hyp_lookup(uintptr_t virt, paddr_t *mapped_base, size_t *mapped_size,
-		   pgtable_hyp_memtype_t *mapped_memtype,
-		   pgtable_access_t	 *mapped_access);
+pgtable_hyp_lookup(uintptr_t virtual_address, paddr_t *mapped_base,
+		   size_t *mapped_size, pgtable_hyp_memtype_t *mapped_memtype,
+		   pgtable_access_t *mapped_access);
 
 // Returns false if there is no mapping in the specified range. If a mapping
 // is found and can be efficiently determined to be the last mapping in the
@@ -83,7 +83,8 @@ pgtable_hyp_lookup_range(uintptr_t virt_base, size_t virt_size,
 // anything. This is intended for preallocating levels using the hypervisor's
 // private allocator, but might be more generally useful.
 error_t
-pgtable_hyp_preallocate(partition_t *partition, uintptr_t virt, size_t size);
+pgtable_hyp_preallocate(partition_t *partition, uintptr_t virtual_address,
+			size_t size);
 
 extern opaque_lock_t pgtable_hyp_map_lock;
 
@@ -110,8 +111,8 @@ pgtable_hyp_start(void) ACQUIRE_LOCK(pgtable_hyp_map_lock);
 // of any hypervisor thread, or any other address that may be touched during the
 // handling of a transient hypervisor fault.
 error_t
-pgtable_hyp_map_merge(partition_t *partition, uintptr_t virt, size_t size,
-		      paddr_t phys, pgtable_hyp_memtype_t memtype,
+pgtable_hyp_map_merge(partition_t *partition, uintptr_t virtual_address,
+		      size_t size, paddr_t phys, pgtable_hyp_memtype_t memtype,
 		      pgtable_access_t access, vmsa_shareability_t shareability,
 		      size_t merge_limit) REQUIRE_LOCK(pgtable_hyp_map_lock);
 
@@ -130,9 +131,9 @@ pgtable_hyp_map(partition_t *partition, uintptr_t virt, size_t size,
 // possibly merging adjacent mappings into large blocks. The merge_limit
 // argument has the same semantics as for @see pgtable_hyp_map_merge().
 error_t
-pgtable_hyp_remap_merge(partition_t *partition, uintptr_t virt, size_t size,
-			paddr_t phys, pgtable_hyp_memtype_t memtype,
-			pgtable_access_t    access,
+pgtable_hyp_remap_merge(partition_t *partition, uintptr_t virtual_address,
+			size_t size, paddr_t phys,
+			pgtable_hyp_memtype_t memtype, pgtable_access_t access,
 			vmsa_shareability_t shareability, size_t merge_limit)
 	REQUIRE_LOCK(pgtable_hyp_map_lock);
 
@@ -153,8 +154,9 @@ pgtable_hyp_remap(partition_t *partition, uintptr_t virt, size_t size,
 // be used to prevent freeing of levels created by a previous hyp_preallocate
 // call to the specified partition.
 void
-pgtable_hyp_unmap(partition_t *partition, uintptr_t virt, size_t size,
-		  size_t preserved_prealloc) REQUIRE_LOCK(pgtable_hyp_map_lock);
+pgtable_hyp_unmap(partition_t *partition, uintptr_t virtual_address,
+		  size_t size, size_t preserved_prealloc)
+	REQUIRE_LOCK(pgtable_hyp_map_lock);
 #define PGTABLE_HYP_UNMAP_PRESERVE_ALL	0U
 #define PGTABLE_HYP_UNMAP_PRESERVE_NONE util_bit((sizeof(uintptr_t) * 8U) - 1U)
 
@@ -177,10 +179,11 @@ pgtable_vm_destroy(partition_t *partition, pgtable_vm_t *pgtable);
 
 // Returns false if the specified address is unmapped.
 bool
-pgtable_vm_lookup(pgtable_vm_t *pgtable, vmaddr_t virt, paddr_t *mapped_base,
-		  size_t *mapped_size, pgtable_vm_memtype_t *mapped_memtype,
-		  pgtable_access_t *mapped_vm_kernel_access,
-		  pgtable_access_t *mapped_vm_user_access);
+pgtable_vm_lookup(pgtable_vm_t *pgtable, vmaddr_t virtual_address,
+		  paddr_t *mapped_base, size_t *mapped_size,
+		  pgtable_vm_memtype_t *mapped_memtype,
+		  pgtable_access_t     *mapped_vm_kernel_access,
+		  pgtable_access_t     *mapped_vm_user_access);
 
 // Returns false if there is no mapping in the specified range. If a mapping
 // is found and can be efficiently determined to be the last mapping in the
@@ -210,32 +213,94 @@ pgtable_vm_start(pgtable_vm_t *pgtable) ACQUIRE_LOCK(pgtable)
 // try_map is false, any existing mappings in the specified range are removed or
 // updated.
 //
+// If the operation fails, it will remove any mappings that were created, unless
+// the protected option is set. If try_map is false, this will not restore any
+// mappings that were removed.
+//
 // If allow_merge is true, then any page table levels that become congruent as a
 // result of this operation will be merged into larger pages.
 //
+// If protected is true, then the page will be marked with the protected option,
+// which prevents a subsequent unmap call removing the page unless
+// pgtable_vm_modify_protected() is called with the unlock flag. Also, if an
+// error occurs, the mapping may have been partially created; explicit unlock
+// and unmap calls are required to guarantee that it has been removed.
+//
 // pgtable_vm_start() must have been called before this call.
 error_t
-pgtable_vm_map(partition_t *partition, pgtable_vm_t *pgtable, vmaddr_t virt,
-	       size_t size, paddr_t phys, pgtable_vm_memtype_t memtype,
-	       pgtable_access_t vm_kernel_access,
-	       pgtable_access_t vm_user_access, bool try_map, bool allow_merge)
-	REQUIRE_LOCK(pgtable) REQUIRE_LOCK(pgtable_vm_map_lock);
+pgtable_vm_map(partition_t *partition, pgtable_vm_t *pgtable,
+	       vmaddr_t virtual_address, size_t size, paddr_t phys,
+	       pgtable_vm_memtype_t memtype, pgtable_access_t vm_kernel_access,
+	       pgtable_access_t vm_user_access, bool try_map, bool allow_merge,
+	       bool protected) REQUIRE_LOCK(pgtable)
+	REQUIRE_LOCK(pgtable_vm_map_lock);
 
-// Removes all mappings in the given range. pgtable_vm_start() must have been
-// called before this call.
-void
-pgtable_vm_unmap(partition_t *partition, pgtable_vm_t *pgtable, vmaddr_t virt,
-		 size_t size) REQUIRE_LOCK(pgtable)
+// Removes all mappings in the given range.
+//
+// pgtable_vm_start() must have been called before this call.
+error_t
+pgtable_vm_unmap(partition_t *partition, pgtable_vm_t *pgtable,
+		 vmaddr_t virtual_address, size_t size) REQUIRE_LOCK(pgtable)
 	REQUIRE_LOCK(pgtable_vm_map_lock);
 
 // Remove only mappings that match the physical address within the specified
-// range
-void
+// range.
+//
+// If protected is true, this operation will fail with ERROR_DENIED if it
+// encounters a matching page that was mapped with the protected option set
+// and was not subsequently unlocked by a pgtable_vm_modify_protected() call
+// with the unlock flag set.
+//
+// pgtable_vm_start() must have been called before this call.
+error_t
 pgtable_vm_unmap_matching(partition_t *partition, pgtable_vm_t *pgtable,
-			  vmaddr_t virt, paddr_t phys, size_t size)
-	REQUIRE_LOCK(pgtable) REQUIRE_LOCK(pgtable_vm_map_lock);
+			  vmaddr_t virtual_address, paddr_t phys, size_t size,
+			  bool protected) REQUIRE_LOCK(pgtable)
+	REQUIRE_LOCK(pgtable_vm_map_lock);
 
-// Ensure that all previous VM map and unmap calls are complete.
+// Find and update any protected pages in the address space.
+//
+// If the unlock flag is set, protected pages will be unlocked, so that a
+// protected unmap operation can remove them. This must also make the pages
+// inaccessible, at least for write accesses, though any TLB invalidation for
+// this purpose can be deferred if the sync argument is not set. It is
+// implementation defined whether unlocked pages are inaccessible for read
+// accesses.
+//
+// If the sanitise flag is set, this will zero and cache flush locked
+// protected pages up to a fixed size limit (in addition to unlocking them if
+// requested), and then terminate the operation early. This is done so the page
+// table lock can be dropped by the caller to provide preemption points in a
+// large sanitise operation. Note that this requires the page to be mapped with
+// write permissions; it will return ERROR_DENIED if an attempt is made to
+// sanitise a read-only page.
+//
+// The result is the size of the region that was successfully modified,
+// including any pages that were already unlocked or unmapped. The size result
+// is valid regardless of whether an error is returned.
+//
+// pgtable_vm_start() must have been called before this call.
+size_result_t
+pgtable_vm_modify_protected(partition_t *partition, pgtable_vm_t *pgtable,
+			    vmaddr_t virtual_address, size_t size, bool unlock,
+			    bool sanitise, bool sync)
+	REQUIRE_LOCK(pgtable_vm_map_lock);
+
+// Mark a protected page in the address space as having been accessed.
+//
+// Given the address of a faulting access in a page table, this function will
+// look up the address to see whether it is marked as protected and unlocked,
+// and would have the specified permissions if it was locked. If it is, then the
+// page table will be updated to allow the operation to proceed and to mark the
+// page as locked, and the function returns success. Otherwise, the function
+// returns ERROR_DENIED.
+//
+// pgtable_vm_start() must have been called before this call.
+error_t
+pgtable_vm_access_protected(pgtable_vm_t *pgtable, vmaddr_t virtual_address,
+			    bool write) REQUIRE_LOCK(pgtable_vm_map_lock);
+
+// Ensure that all preceding VM map, unmap and unlock calls are complete.
 void
 pgtable_vm_commit(pgtable_vm_t *pgtable) RELEASE_LOCK(pgtable)
 	RELEASE_LOCK(pgtable_vm_map_lock);

@@ -157,11 +157,32 @@ out:
 }
 
 error_t
-hypercall_vcpu_set_affinity(cap_id_t cap_id, cpu_index_t affinity)
+hypercall_vcpu_set_affinity(cap_id_t cap_id, register_t arg1,
+			    vcpu_affinity_type_t type)
 {
 	error_t		    ret;
 	cspace_t	   *cspace = cspace_get_self();
 	cap_rights_thread_t required_rights;
+	cpu_index_t	    affinity;
+
+	switch (type) {
+	case VCPU_AFFINITY_TYPE_CPU_INDEX:
+		affinity = (cpu_index_t)arg1;
+		break;
+	case VCPU_AFFINITY_TYPE_PLATFORM_CPU_INDEX: {
+		// AArch64 platforms use MPIDR_EL1 encoding.
+		MPIDR_EL1_t mpidr = MPIDR_EL1_cast(arg1);
+		if (!platform_cpu_mpidr_valid(mpidr)) {
+			ret = ERROR_ARGUMENT_INVALID;
+			goto out;
+		}
+		affinity = (cpu_index_t)platform_cpu_mpidr_to_index(mpidr);
+		break;
+	}
+	default:
+		ret = ERROR_ARGUMENT_INVALID;
+		goto out;
+	}
 
 	if (affinity == CPU_INDEX_INVALID) {
 #if SCHEDULER_CAN_MIGRATE
@@ -172,7 +193,8 @@ hypercall_vcpu_set_affinity(cap_id_t cap_id, cpu_index_t affinity)
 		ret = ERROR_UNIMPLEMENTED;
 		goto out;
 #endif
-	} else if (!platform_cpu_exists(affinity)) {
+	} else if (!cpulocal_index_valid(affinity) ||
+		   !platform_cpu_exists(affinity)) {
 		ret = ERROR_ARGUMENT_INVALID;
 		goto out;
 	} else {

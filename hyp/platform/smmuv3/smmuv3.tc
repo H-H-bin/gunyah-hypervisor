@@ -1,0 +1,67 @@
+// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define smmu_v3 structure(aligned(SMMU_V3_PAGE_SIZE)) {
+	smmu_page0 @ 0x00000	structure smmu_v3_page0;
+	smmu_page1 @ 0x10000	structure smmu_v3_page1;
+};
+
+// TCU page 0 registers
+define smmu_v3_page0 structure(aligned(SMMU_V3_PAGE_SIZE)) {
+	iidr	@ 0x0018	bitfield SMMU_V3_IIDR(atomic);
+	aidr	@ 0x001C	bitfield SMMU_V3_AIDR(atomic);
+
+	cr0	@ 0x0020	bitfield SMMU_V3_CR0(atomic);
+	cr0ack	@ 0x0024	bitfield SMMU_V3_CR0(atomic);
+
+	gbpa	@ 0x0044	bitfield SMMU_V3_GBPA(atomic);
+};
+
+// TCU page 1 registers - TODO
+define smmu_v3_page1 structure(aligned(SMMU_V3_PAGE_SIZE)) {
+	eventq_prod	@ 0x00A8	uint32(atomic);
+	eventq_cons	@ 0x00AC	uint32(atomic);
+	priq_prod	@ 0x00C8	uint32(atomic);
+	priq_cons	@ 0x00CC	uint32(atomic);
+};
+
+define SMMU_V3_IIDR bitfield<32>(const) {
+	11:0		Implementer	uint16;
+	15:12		Revision	uint8;
+	19:16		Variant		uint8;
+	31:20		ProductID	uint16;
+};
+
+define SMMU_V3_AIDR bitfield<32>(const) {
+	3:0		ArchMinorRev	uint8;
+	7:4		ArchMajorRev	uint8;
+	31:8		unknown=0;
+};
+
+define SMMU_V3_CR0 bitfield<32> {
+	0		SMMUEN		bool;
+	1		PRIQEN		bool;
+	2		EVENTQEN	bool;
+	3		CMDQEN		bool;
+	4		ATSCHK		bool;
+	5		unknown=0;
+	8:6		VMW		type count_t;
+	9		unknown=0;
+	10		DPT_WALK_EN	bool;
+	31:11		unknown=0;
+};
+
+define SMMU_V3_GBPA bitfield<32> {
+	3:0		MemAttr		uint8;
+	4		MTCFG		bool;
+	7:5		unknown=0;
+	11:8		ALLOCCFG	uint8;
+	13:12		SHCFG		uint8;
+	15:14		unknown=0;
+	17:16		PRIVCFG		uint8;
+	19:18		INSTCFG		uint8;
+	20		ABORT		bool;
+	30:21		unknown=0;
+	31		Update		bool;
+};

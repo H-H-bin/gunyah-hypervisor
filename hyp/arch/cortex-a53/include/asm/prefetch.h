@@ -6,7 +6,9 @@
 // allocation in the L1 cache. In most cases it is better to do a regular
 // keep-prefetch instead. Note that there is a bit in CPUACTLR that has the
 // same effect, and it is set by default at reset on r0p4 and later.
-#define prefetch_load_stream(addr)  prefetch_load_keep(addr)
+#define arch_has_prefetch_load_stream
+#define prefetch_load_stream(addr) prefetch_load_keep(addr)
+#define arch_has_prefetch_store_stream
 #define prefetch_store_stream(addr) prefetch_store_keep(addr)
 
 #include <asm-generic/prefetch.h>

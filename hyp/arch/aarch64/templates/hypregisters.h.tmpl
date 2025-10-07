@@ -8,11 +8,13 @@
 \#pragma clang diagnostic ignored "-Wshorten-64-to-32"
 \#pragma clang diagnostic ignored "-Wimplicit-int-conversion"
 
-#def cast(t, v)
+#set global macros = set()
+
+#def cast(t, s, v)
 #if t.startswith('int') or t.startswith('uint')
 (${t}_t)(${v})
 #else
-${t}_cast(${v})#slurp
+${t}_cast((uint${s * 8}_t)${v})#slurp
 #end if
 #end def
 #def raw(t, v)
@@ -23,13 +25,36 @@ ${t}_raw(${v})#slurp
 #end if
 #end def
 
-#def register_read(r, vt, vn, volatile, ordered)
+#def register_read(r, vt, vn, vs, volatile, ordered, barrier)
 #set $suffix = ""
 #if volatile
 #set $suffix = $suffix + "_volatile"
 #end if
 #if ordered
 #set $suffix = $suffix + "_ordered"
+#end if
+#if barrier
+#set $suffix = $suffix + "_barrier"
+#end if
+#set macro_name = 'register_' + $r.name + '_read' + $suffix + '_raw'
+#if $macro_name not in $macros
+\#define ${macro_name}(val) __asm__${' volatile' if volatile else ''} ("#slurp
+#for f in $r.features
+.arch_extension ${f}; #slurp
+#end for
+mrs %0, $r.name#slurp
+#for f in $r.features
+; .arch_extension no${f}#slurp
+#end for
+" : "=r" (val)#slurp
+#if ordered
+, "+m"(*ordering_var)#slurp
+#end if
+#if barrier
+:: "memory" #slurp
+#end if
+)
+#silent $macros.add($macro_name)
 #end if
 static inline ${vt}_t
 register_${vn}_read${suffix}(
@@ -40,18 +65,13 @@ void
 #end if
 )
 {
-	register_t val;
-	__asm__
-#if volatile
-	volatile
-#end if
-		("mrs %0, $r.name	;"
-		: "=r" (val)
-#if ordered
-		  , "+m"(*ordering_var)
-#end if
-	);
-	return ${cast(vt, 'val')};
+	register_t raw;
+	// Read#slurp
+${' volatile' if volatile else ''}#slurp
+${' ordered' if ordered else ''}#slurp
+ register ${r.name} as type ${vt}_t
+	${macro_name}(raw);
+	return ${cast(vt, vs, 'raw')};
 }
 
 #end def
@@ -64,6 +84,27 @@ void
 #if ordered
 #set $suffix = $suffix + "_ordered"
 #end if
+#set macro_name = 'register_' + $r.name + '_write' + $suffix + '_raw'
+#if $macro_name not in $macros
+\#define ${macro_name}(val) __asm__ volatile("#slurp
+#for f in $r.features
+.arch_extension ${f}; #slurp
+#end for
+msr $r.name, %[r]#slurp
+#for f in $r.features
+; .arch_extension no${f}#slurp
+#end for
+" : #slurp
+#if ordered
+"+m"(*ordering_var) #slurp
+#end if
+: [r] "rz" (val) #slurp
+#if barrier
+: "memory" #slurp
+#end if
+)
+#silent $macros.add($macro_name)
+#end if
 static inline void
 register_${vn}_write${suffix}(const ${vt}_t val
 #if ordered
@@ -72,36 +113,35 @@ register_${vn}_write${suffix}(const ${vt}_t val
 )
 {
 	register_t raw = (register_t)${raw(vt, 'val')};
-	__asm__ volatile("msr $r.name, %[r]" :
-#if ordered
-		  "+m"(*ordering_var)
-#end if
-		: [r] "rz" (raw)
-#if barrier
-		: "memory"
-#end if
-	);
+	// Write#slurp
+${' memory-barrier' if barrier else ''}#slurp
+${' ordered' if ordered else ''}#slurp
+ register ${r.name} as type ${vt}_t
+	${macro_name}(raw);
 }
 #end def
 
 #for r in $registers
-#for vn, vt in $r.variants
+#for vn, vt, vs in $r.variants
 ##
 #if $r.is_readable
 #if $r.need_non_ordered
-${register_read(r, vt, vn, False, False)}
+${register_read(r, vt, vn, vs, False, False, False)}
 #end if
 #if $r.need_ordered
-${register_read(r, vt, vn, False, True)}
+${register_read(r, vt, vn, vs, False, True, False)}
 #end if
+#end if
+#if $r.is_readable_barrier
+${register_read(r, vt, vn, vs, False, False, True)}
 #end if
 ##
 #if $r.is_volatile
 #if $r.need_non_ordered
-${register_read(r, vt, vn, True, False)}
+${register_read(r, vt, vn, vs, True, False, False)}
 #end if
 #if $r.need_ordered
-${register_read(r, vt, vn, True, True)}
+${register_read(r, vt, vn, vs, True, True, False)}
 #end if
 #end if
 ##

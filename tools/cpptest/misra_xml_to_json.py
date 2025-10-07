@@ -50,6 +50,9 @@ deviation_map = {
     # False positives due to __c11 builtins taking int memory order arguments
     # instead of enum in the Clang implementation.
     'MISRAC2012-RULE_10_3-b': [
+        (None, re.compile(r"number '1'.*'essentially Enum'.*"
+                          r"'__c11_atomic_(thread|signal)_fence'.*"
+                          r"'essentially signed'")),
         (None, re.compile(r"number '2'.*'essentially Enum'.*"
                           r"'__c11_atomic_load'.*'essentially signed'")),
         (None, re.compile(r"number '3'.*'essentially Enum'.*"
@@ -83,13 +86,18 @@ deviation_map = {
     'MISRAC2012-RULE_14_3-ac': [
         (re.compile(r'^build/.*/events/src/.*\.c$'), None),
     ],
-    # Could-be-const pointers are expected and unavoidable in generated event
-    # triggers because the object may or may not be modified depending on the
-    # handlers and the module configuration. The const qualifier is used to
-    # specify whether the handlers are allowed to modify the objects, rather
-    # than whether they actually do.
     'MISRAC2012-RULE_8_13-a': [
+        # Could-be-const pointers are expected and unavoidable in generated
+        # event triggers because the object may or may not be modified
+        # depending on the handlers and the module configuration. The const
+        # qualifier is used to specify whether the handlers are allowed to
+        # modify the objects, rather than whether they actually do.
         (re.compile(r'^build/.*/events/src/.*\.c$'), None),
+        # False positives due to the could-be-const check not understanding
+        # that an inline assembly output constraint that dereferences a
+        # pointer is a write to that pointer.
+        (re.compile(r'^build/.*/accessors\.c$'),
+         re.compile(r'parameter "b1"')),
     ],
     # The generated type-generic object functions terminate non-empty default
     # clauses with a _Noreturn function, panic(), to indicate that the object
@@ -116,13 +124,41 @@ deviation_map = {
     # does not matter (e.g. __builtin_prefetch).
     'MISRAC2012-RULE_11_8-a': [
         (None, re.compile(r"to the 'const void \*' type which removes the "
-                          r"'_Atomic' qualifiers")),
+                          r"'_Atomic'")),
     ],
     # Compliance with rule 21.25 would have a significant performance impact.
     # All existing uses have been thoroughly analysed and tested, so we will
     # seek a project-wide deviation for this rule.
     'MISRAC2012-RULE_21_25-a': [
         (None, None),
+    ],
+    # A cast from a void or object pointer to uintptr_t is well-defined, so
+    # the rationales of rules 11.4 and 11.6 are not applicable in these cases.
+    # Casts in the other direction or to other types are potentially unsafe,
+    # and might be used to circumvent rule 11.3, so they need specific
+    # deviations. Note that Parasoft's messages show the underlying type, not
+    # the typedef name, so we must assume that uintptr_t is unsigned long or
+    # unsigned long long.
+    'MISRAC2012-RULE_11_4-a': [
+        (None, re.compile(
+            r"converted to integral type 'unsigned (long ?)long'")),
+    ],
+    'MISRAC2012-RULE_11_6-a': [
+        (None, re.compile(
+            r"converted to arithmetic type 'unsigned (long ?)long'")),
+    ],
+    # Rule 8.5 is downgraded to Advisory in generated code, and we can't
+    # comply with it easily for event handler prototypes which are duplicated
+    # in the calling module's genereted events.c and the handling module's
+    # private generated event_handlers.h. Both prototypes are generated from
+    # the same Python dictionary entry, so they are always consistent.
+    'MISRAC2012-RULE_8_5-a': [
+        (re.compile(r'^build/.*/events/'), None),
+    ],
+    # Rule 20.5 is downgraded to Readability (i.e. no need to even document a
+    # deviation) for generated code.
+    'MISRAC2012-RULE_20_5-a': [
+        (re.compile(r'^build/'), None),
     ],
 }
 

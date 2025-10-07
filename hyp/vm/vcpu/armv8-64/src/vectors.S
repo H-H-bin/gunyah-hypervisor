@@ -29,10 +29,18 @@
 	// Adjust in regards to the base hypercall number
 	sub	x18, x18, HYPERCALL_BASE
 
-	b.ne	LOCAL(\el\()_non_hypercall)
+#ifndef HYPVM_WITH_COVERAGE
+	b.ne    LOCAL(\el\()_non_hypercall)
+#else
+	b.eq 1f; b    LOCAL(\el\()_non_hypercall); 1:
+#endif
 	// Is it a valid hypercall?
 	cmp	x18, HYPERCALL_NUM
+#ifndef HYPVM_WITH_COVERAGE
 	b.hs	LOCAL(\el\()_non_hypercall)
+#else
+	b.lo 2f; b    LOCAL(\el\()_non_hypercall); 2:
+#endif
 
 	// FIXME:
 	// Temporarily preserve x8 for backwards compatibility.
@@ -46,9 +54,13 @@
 	// passed as-is to the C code to prevent EL1 targeting EL2 gadgets.
 	// Note: x19 saved above
 	stp	x20, x21, [sp, #-16]!
+#ifndef HYPVM_WITH_COVERAGE
 	clear_guest_registers "15,16,17"
+#endif
 	stp	x22, x23, [sp, #-16]!
+#ifndef HYPVM_WITH_COVERAGE
 	clear_guest_registers "8,19"
+#endif
 	stp	x24, x25, [sp, #-16]!
 	clear_guest_registers "20,21"
 	stp	x26, x27, [sp, #-16]!
@@ -187,6 +199,10 @@ function_end vector_guest32_panic
 //      x9, x10, x11    - not zeroed/overwritten yet
 //      x24..x29        - need to be zeroed
 function hypercall_64_entry local, align=(1 << CPU_L1D_LINE_BITS)
+#ifdef HYPVM_WITH_COVERAGE
+	clear_guest_registers "20,21"
+	clear_guest_registers "22,23"
+#endif
 	mrs	x10, elr_el2
 	clear_guest_registers "24"
 	mrs	x11, spsr_el2
@@ -195,7 +211,11 @@ function hypercall_64_entry local, align=(1 << CPU_L1D_LINE_BITS)
 	clear_guest_registers "25,26,27"
 
 	// Get the hypercall table handler base address.
+#ifndef HYPVM_WITH_COVERAGE
 	adr	x9, hypercall_table
+#else
+	adrl	x9, hypercall_table
+#endif
 
 	// Save ELR_EL2 and SPSR_EL2.
 	stp	x10, x11, [sp, #-16]!

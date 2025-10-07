@@ -9,6 +9,7 @@
 
 #include <compiler.h>
 #include <cpulocal.h>
+#include <globals.h>
 #include <preempt.h>
 #include <scheduler.h>
 #include <thread.h>
@@ -24,18 +25,25 @@ vtrbe_handle_boot_cpu_cold_init(void)
 {
 	ID_AA64DFR0_EL1_t id_aa64dfr0 = register_ID_AA64DFR0_EL1_read();
 	// NOTE: ID_AA64DFR0.TraceBuffer just indicates if trace buffer is
-	// implemented, so here we use equal for assertion.
-	assert(ID_AA64DFR0_EL1_get_TraceBuffer(&id_aa64dfr0) == 1U);
+	// implemented, so here we use equal for assertion, but only if ETE is
+	// present.
+	assert((ID_AA64DFR0_EL1_get_TraceBuffer(&id_aa64dfr0) == 1U) ||
+	       (ID_AA64DFR0_EL1_get_TraceVer(&id_aa64dfr0) == 0U));
 }
 
 error_t
 vtrbe_handle_object_create_thread(thread_create_t thread_create)
 {
-	thread_t *thread = thread_create.thread;
+	thread_t	       *thread	= thread_create.thread;
+	const global_options_t *options = globals_get_options();
 
-	// MDCR_EL2.E2TB == 0b10 to prohibit trace EL2
-	MDCR_EL2_set_E2TB(&thread->vcpu_regs_el2.mdcr_el2, 0x2);
-
+	if (global_options_get_ete_present(options)) {
+		// MDCR_EL2.E2TB == 0b10 to prohibit trace EL2
+		MDCR_EL2_set_E2TB(&thread->vcpu_regs_el2.mdcr_el2, 0x2);
+	} else {
+		// No EL1 access
+		MDCR_EL2_set_E2TB(&thread->vcpu_regs_el2.mdcr_el2, 0x0);
+	}
 	return OK;
 }
 
@@ -168,14 +176,19 @@ vtrbe_handle_vcpu_trap_sysreg(ESR_EL2_ISS_MSR_MRS_t iss)
 		// This VCPU isn't allowed to trace. Fault immediately.
 		ret = VCPU_TRAP_RESULT_FAULT;
 	} else if (!current->vet_trace_buffer_enabled) {
-		// Lazily enable trace buffer register access and restore
-		// context.
-		current->vet_trace_buffer_enabled = true;
+		const global_options_t *options = globals_get_options();
+		if (global_options_get_ete_present(options)) {
+			// Lazily enable trace buffer register access and
+			// restore context.
+			current->vet_trace_buffer_enabled = true;
 
-		// only enable the register access
-		vtrbe_prohibit_registers_access(false);
+			// only enable the register access
+			vtrbe_prohibit_registers_access(false);
 
-		ret = VCPU_TRAP_RESULT_RETRY;
+			ret = VCPU_TRAP_RESULT_RETRY;
+		} else {
+			ret = VCPU_TRAP_RESULT_UNHANDLED;
+		}
 	} else {
 		// Probably an attempted OS lock; fall back to default RAZ/WI.
 		ret = VCPU_TRAP_RESULT_UNHANDLED;

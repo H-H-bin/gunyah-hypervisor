@@ -6,15 +6,23 @@
 
 // Struct and object member offsets
 
+#set global ofs_macros = set()
+
 #def print_offsets(prefix, base, d)
 #for $name, $type, $ofs in $d.layout
 #set upper_name = $name.upper()
+#set macro_name = $prefix + '_' + $upper_name
 #set offset = base + ofs
-#if not $type.is_array
-\#define ${prefix}_${upper_name} $offset
+#if len($macro_name) > 63
+// ${macro_name} too long, not defined
+#elif $macro_name in $ofs_macros
+\#undef ${macro_name} // Conflicting macro name
+#elif not $type.is_array
+\#define ${macro_name} $offset
 #else
-\#define ${prefix}_${upper_name}(n) ($offset + ($type.base_type.size * (n)))
+\#define ${macro_name}(n) (${offset}U + (${type.base_type.size}U * (n)))
 #end if
+#silent $ofs_macros.add($macro_name)
 #if $type != $type.basic_type
 #set d = getattr($type.basic_type, 'definition', None)
 #if $d and $d.is_container
@@ -79,7 +87,8 @@ $print_offsets(prefix, 0, d)
 
 #for $d in $definitions
 #if $d.category == "constant"
-\#define ${d.type_name} ${int(d.value)}
+#set val = d.get_value()
+\#define ${d.type_name} ${val} // ${hex(val)}
 #end if
 #end for
 

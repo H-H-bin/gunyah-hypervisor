@@ -5,10 +5,12 @@
 #include <assert.h>
 #include <hyptypes.h>
 
+#include <atomic.h>
 #include <cpulocal.h>
 #include <ipi.h>
 #include <list.h>
 #include <spinlock.h>
+#include <util.h>
 
 #include "event_handlers.h"
 #include "psci_pm_list.h"

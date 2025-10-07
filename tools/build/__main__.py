@@ -15,7 +15,6 @@ variables to the build graph.
 import os
 import sys
 import logging
-import inspect
 import re
 from collections import namedtuple
 from io import open
@@ -86,6 +85,15 @@ test_programs = set()
 sa_html = set()
 asts = set()
 defmap_frags = set()
+deferred_aliases = []
+
+
+def deferred_alias(alias):
+    dep_list = []
+    future_alias = graph.future_alias(alias)
+    deferred_aliases.append((future_alias, dep_list))
+    return (future_alias, dep_list)
+
 
 event_sources = set()
 modules_with_events = set()
@@ -93,6 +101,11 @@ interfaces_with_events = set()
 
 template_engines = {}
 TemplateEngine = namedtuple('TemplateEngine', ['sources', 'config'])
+
+simple_templates = list()
+
+template_engines['simple'] = \
+    TemplateEngine(simple_templates, None)
 
 first_class_objects = Items()
 first_class_templates = list()
@@ -203,11 +216,20 @@ def process_variant_conf(variant_key, conf, basename):
                 modules.add(words[1])
             elif words[0] == 'flags':
                 variant_cflags.extend(map(var_subst, words[1:]))
+            elif words[0] == 'cppflags':
+                variant_cppflags.extend(map(var_subst, words[1:]))
+            elif words[0] == 'cc_wrapper':
+                variant_cc_wrapper.clear()
+                variant_cc_wrapper.append(list(map(var_subst, words[1:]))[0])
             elif words[0] == 'ldflags':
                 variant_ldflags.extend(map(var_subst, words[1:]))
             elif words[0] == 'configs':
                 for c in map(var_subst, words[1:]):
                     add_global_define(c)
+            elif words[0] == 'arch_configs_override':
+                if arch_match(words[1]):
+                    for c in map(var_subst, words[2:]):
+                        add_global_define_override(c)
             elif allow_arch and words[0] == 'arch_module':
                 if arch_match(words[1]):
                     modules.add(words[2])
@@ -244,9 +266,10 @@ abi_arch = None
 link_arch = None
 target_triple = None
 target_arch_names = []
+variant_cc_wrapper = []
 variant_cflags = []
 variant_cppflags = []
-variant_defines = []
+variant_defines = {}
 variant_ldflags = []
 
 featureset_platforms = ['*']
@@ -254,7 +277,7 @@ featureset_platforms = ['*']
 #
 # Configs sanity checking
 #
-configs = {}
+seen_configs = {}
 
 
 def check_global_define(d):
@@ -263,19 +286,40 @@ def check_global_define(d):
     except ValueError:
         logger.warning("invalid configuration: %s", d)
 
-    if define in configs:
-        if configs[define] == val:
+    if define in seen_configs:
+        if seen_configs[define] == val:
             logger.warning("Duplicate configuration: %s", d)
         else:
             logger.error("Conflicting configuration: %s and %s",
-                         '='.join([define, configs[define]]), d)
+                         '='.join([define, seen_configs[define]]), d)
             sys.exit(-1)
-    configs[define] = val
+    seen_configs[define] = val
+
+
+def check_global_define_override(d):
+    try:
+        define, val = d.split('=')
+    except ValueError:
+        logger.warning("invalid configuration: %s", d)
+
+    if define in seen_configs:
+        # logger.warning("Duplicate configuration: %s", d)
+        seen_configs[define] = val
+    else:
+        logger.error("config doesn't exit so cannot override %s", d)
+        sys.exit(-1)
 
 
 def add_global_define(d):
     check_global_define(d)
-    variant_defines.append(d)
+    define, val = d.split('=')
+    variant_defines[define] = val
+
+
+def add_global_define_override(d):
+    check_global_define_override(d)
+    define, val = d.split('=')
+    variant_defines[define] = val
 
 
 for variant_key in ('platform', 'featureset', 'quality'):
@@ -416,7 +460,11 @@ graph.add_env('FORMATTER', os.path.join(llvm_root, 'bin', 'clang-format'))
 
 # Use Clang to compile.
 graph.add_env('TARGET_TRIPLE', target_triple)
-graph.add_env('TARGET_CC', '${CLANG} -target ${TARGET_TRIPLE}')
+if variant_cc_wrapper:
+    graph.add_env('TARGET_CC', ' '.join(variant_cc_wrapper))
+    graph.append_env('TARGET_CC', '${CLANG} -target ${TARGET_TRIPLE}')
+else:
+    graph.add_env('TARGET_CC', '${CLANG} -target ${TARGET_TRIPLE}')
 
 # Use Clang with LLD to link.
 graph.add_env('TARGET_LD', '${TARGET_CC} -fuse-ld=lld')
@@ -431,6 +479,8 @@ graph.append_env('CFLAGS', '-std=gnu18')
 # Turn all warnings on as errors by default
 graph.append_env('CFLAGS', '-Weverything')
 graph.append_env('CFLAGS', '-Werror')
+# Permit disabling warnings added in future compiler releases
+graph.append_env('CFLAGS', '-Wno-unknown-warning-option')
 # Unused macros are expected
 graph.append_env('CFLAGS', '-Wno-unused-macros')
 # MISRA rule 16.4 requires default: in every switch, even if it is covered
@@ -444,11 +494,17 @@ graph.append_env('CFLAGS', '-Wno-declaration-after-statement')
 graph.append_env('CFLAGS', '-Wno-gcc-compat')
 # Allow GCC's _Alignof(lvalue) as a project deviation from MISRA rule 1.2.
 graph.append_env('CFLAGS', '-Wno-gnu-alignof-expression')
+# Allow GCC's case ranges as a project deviation from MISRA rule 1.2
+graph.append_env('CFLAGS', '-Wno-gnu-case-range')
 # Allow Clang nullability as a project deviation from MISRA rule 1.2.
 graph.append_env('CFLAGS', '-Wno-nullability-extension')
 # Automatically requiring negative capabilities breaks analysis of reentrant
 # locks, like the preemption count.
 graph.append_env('CFLAGS', '-Wno-thread-safety-negative')
+# The unsafe buffer usage check is impractical for C code at present. We may be
+# able to enable it in future if we generate and call bounds-checked accessors
+# for every buffer.
+graph.append_env('CFLAGS', '-Wno-unsafe-buffer-usage')
 
 # We depend on section garbage collection; otherwise there are undefined and
 # unused symbols that will be pulled in and cause link failures
@@ -472,7 +528,6 @@ if variant_cflags:
     graph.append_env('CFLAGS', ' '.join(variant_cflags))
 if variant_cppflags:
     graph.append_env('CPPFLAGS', ' '.join(variant_cppflags))
-    graph.append_env('CODEGEN_CONFIGS', ' '.join(variant_cppflags))
 if variant_ldflags:
     graph.append_env('TARGET_LDFLAGS', ' '.join(variant_ldflags))
 
@@ -492,9 +547,9 @@ compdb_file = os.path.join(build_dir, 'compile_commands.json')
 graph.add_compdb(compdb_file, form='clang')
 # Compile a target C file.
 graph.add_rule('cc',
-               '$TARGET_CC $CFLAGS $CPPFLAGS $TARGET_CFLAGS $TARGET_CPPFLAGS '
-               '$LOCAL_CFLAGS $LOCAL_CPPFLAGS -MD -MF ${out}.d '
-               '-c -o ${out} ${in}',
+               '$TARGET_CC $CFLAGS $CPPFLAGS $TARGET_CFLAGS '
+               '$TARGET_CPPFLAGS $LOCAL_CFLAGS $LOCAL_CPPFLAGS -MD -MF '
+               '${out}.d -c -o ${out} ${in}',
                depfile='${out}.d', compdbs=[compdb_file])
 # Preprocess a DSL file.
 graph.add_rule('cpp-dsl', '${CPP} $CPPFLAGS $TARGET_CPPFLAGS $LOCAL_CPPFLAGS '
@@ -510,7 +565,7 @@ ctu_dir = os.path.join(build_dir, "ctu")
 graph.add_env('CTU_DIR', relpath(ctu_dir))
 graph.add_rule('cc-ctu-ast',
                '$TARGET_CC $CFLAGS $CPPFLAGS $TARGET_CFLAGS $TARGET_CPPFLAGS '
-               '$LOCAL_CFLAGS $LOCAL_CPPFLAGS '
+               '$LOCAL_CFLAGS $LOCAL_CPPFLAGS -DCLANG_CTU_AST '
                '-MD -MF ${out}.d -Wno-unused-command-line-argument '
                '-emit-ast -o${out} ${in}',
                depfile='${out}.d')
@@ -556,15 +611,18 @@ def process_dir(d, handler):
         graph.add_gen_source(conf)
 
 
+def module_local_headers_path(d):
+    return os.path.join(build_dir, d, 'local_headers_gen')
+
+
 def module_local_headers_gen(d):
-    return graph.future_alias(os.path.join(build_dir, d, 'local_headers_gen'))
+    return deferred_alias(module_local_headers_path(d))
 
 
 def parse_module_conf(d, f):
     local_env = {}
     module = os.path.basename(d)
-    local_headers_gen = module_local_headers_gen(d)
-    local_headers = []
+    local_headers_gen, local_headers = module_local_headers_gen(d)
     add_include_dir(get_event_local_inc_dir(module), local_env)
     src_requires = (
         hyptypes_header,
@@ -574,10 +632,9 @@ def parse_module_conf(d, f):
         typed_headers_gen,
         event_headers_gen,
         hypercalls_headers_gen,
-        objects_headers_gen,
+        interface_headers_gen,
         local_headers_gen,
     )
-    objs = []
     have_events = False
 
     for s in f.readlines():
@@ -587,6 +644,12 @@ def parse_module_conf(d, f):
             pass
         elif words[0] == 'interface':
             for w in map(var_subst, words[1:]):
+                # Temporarily exclude legacy interface duplicates
+                # FIXME:
+                if w in interfaces and w not in ['platform', 'platform_qcom',
+                                                 'smccc', 'watchdog', 'psci']:
+                    raise KeyError(
+                        "duplicate interface: {:s}, in {}".format(w, f.name))
                 interfaces.add(w)
         elif words[0] == 'types':
             for w in map(var_subst, words[1:]):
@@ -602,13 +665,13 @@ def parse_module_conf(d, f):
             for w in map(var_subst, words[1:]):
                 f = os.path.join(d, w)
                 if f in registers:
-                    raise KeyError("duplicate {:s}".format(f))
+                    raise KeyError("duplicate registers: {:s}".format(f))
                 registers.append(f)
         elif words[0] == 'local_include':
             add_include(d, 'include', local_env)
         elif words[0] == 'source':
             for w in map(var_subst, words[1:]):
-                objs.append(add_source(d, w, src_requires, local_env))
+                add_source(d, w, src_requires, local_env)
         elif words[0] == 'external_object':
             if not do_partial_link:
                 for w in map(var_subst, words[1:]):
@@ -642,7 +705,8 @@ def parse_module_conf(d, f):
                 for w in map(var_subst, words[2:]):
                     f = os.path.join(d, words[1], w)
                     if f in registers:
-                        raise KeyError("duplicate {:s}".format(f))
+                        raise KeyError(
+                            "duplicate arch_registers: {:s}".format(f))
                     registers.append(f)
         elif words[0] == 'arch_local_include':
             if arch_match(words[1]):
@@ -650,8 +714,8 @@ def parse_module_conf(d, f):
         elif words[0] == 'arch_source':
             if arch_match(words[1]):
                 for w in map(var_subst, words[2:]):
-                    objs.append(add_source(os.path.join(d, words[1]),
-                                           w, src_requires, local_env))
+                    add_source(os.path.join(d, words[1]),
+                               w, src_requires, local_env)
         elif words[0] == 'arch_external_object':
             if not do_partial_link:
                 if arch_match(words[1]):
@@ -673,7 +737,8 @@ def parse_module_conf(d, f):
         elif words[0] == 'base_module':
             for w in map(var_subst, words[1:]):
                 # Require the base module's generated headers
-                local_headers.append(module_local_headers_gen(w))
+                local_headers.append(graph.future_alias(
+                    module_local_headers_path(w)))
                 # FIXME: We can't properly determine whether there are
                 # local_includes or not unless we do two-pass parsing of the
                 # build configs, so we just add them all.
@@ -690,37 +755,34 @@ def parse_module_conf(d, f):
                 modules.add(os.path.relpath(w, module_base))
                 if w not in module_dirs:
                     module_dirs.append(w)
-        elif words[0] == 'template' and words[1] == 'simple':
-            for w in map(var_subst, words[2:]):
-                add_simple_template(d, w, src_requires, local_env,
-                                    local_headers=True, headers=local_headers,
-                                    objects=objs)
         elif words[0] == 'template':
             ts = template_match(words[1], d)
             for w in map(var_subst, words[2:]):
                 if add_template(ts, d, '', w, src_requires, local_env,
-                                module):
+                                module, local_headers):
                     have_events = True
-        elif words[0] == 'arch_template' and words[1] == 'simple':
-            if arch_match(words[2]):
-                for w in map(var_subst, words[3:]):
-                    add_simple_template(d, w, src_requires, local_env,
-                                        local_headers=True,
-                                        headers=local_headers,
-                                        objects=objs, arch=words[2])
         elif words[0] == 'arch_template':
             ts = template_match(words[1], d)
             if arch_match(words[2]):
                 for w in map(var_subst, words[3:]):
                     if add_template(ts, d, words[2], w, src_requires,
-                                    local_env, module):
+                                    local_env, module, local_headers):
                         have_events = True
         elif words[0] == 'assert_config':
             test = ' '.join(words[1:])
 
-            result = eval(test, {}, configs_as_ints)
-            if result is True:
-                continue
+            try:
+                result = eval(
+                    test, {'configs': variant_defines}, configs_as_ints)
+                if result is True:
+                    continue
+            except (NameError, SyntaxError) as e:
+                print('eval error:', e)
+                pass
+            print('with:')
+            print('\tplatform:', graph.get_env('VARIANT_platform'))
+            print('\tfeatureset:', graph.get_env('VARIANT_featureset'))
+            print('\tquality:', graph.get_env('VARIANT_quality'))
             logger.error('assert_config failed "%s" in module conf for %s',
                          test, d)
             sys.exit(1)
@@ -734,7 +796,6 @@ def parse_module_conf(d, f):
         local_headers.append(get_event_local_inc_file(module))
         modules_with_events.add(module)
         add_event_handlers(module)
-    graph.add_alias(local_headers_gen, local_headers)
 
 
 def parse_interface_conf(d, f):
@@ -787,13 +848,10 @@ def parse_interface_conf(d, f):
                     add_macro_include(os.path.join(d, words[1], 'include', w))
         elif words[0] == 'first_class_object':
             first_class_objects.add(words[1], words[2:])
-        elif words[0] == 'template' and words[1] == 'simple':
-            for w in map(var_subst, words[2:]):
-                add_simple_template(d, w, src_requires, local_env)
         elif words[0] == 'template':
             ts = template_match(words[1], d)
             for w in map(var_subst, words[2:]):
-                if add_template(ts, d, '', w, None, local_env, None):
+                if add_template(ts, d, '', w, None, local_env, None, None):
                     have_events = True
         else:
             # TODO: dependencies, configuration variables, etc
@@ -896,50 +954,25 @@ def add_event_dsl(module_dir, src, local_env):
                            DSL_DEFINES='-D__EVENTS_DSL__', **local_env)
 
 
-def add_template(ts, d, arch, tmpl_file, requires, local_env, module):
+def add_template(ts, d, arch, tmpl_file, requires, local_env, module, headers):
     ext = os.path.splitext(tmpl_file)[1]
-    is_event = False
     is_module = module is not None
-    if ext == '.h' and is_module:
-        mod_gen_dir = os.path.join(objects_build_dir, module)
-        add_include(mod_gen_dir, 'include', local_env)
+
+    if ext == '.h' and not headers:
+        if is_module:
+            mod_gen_dir = os.path.join(build_dir, d, arch)
+            add_include(mod_gen_dir, 'include', local_env)
+        else:
+            assert headers is None
+            headers = interface_gen_headers
+
     if ext == '.c' and not is_module:
         logger.error('C template specified for interface %s', d)
         sys.exit(1)
-    else:
-        ts.sources.append((d, tmpl_file, arch, requires, is_module, local_env))
-        if ext == '.ev':
-            is_event = True
-    return is_event
 
-
-def add_simple_template(d, t, requires, local_env, local_headers=False,
-                        headers=None, objects=None, arch=''):
-    i = os.path.join(d, arch, 'templates', t)
-    out_name, ext = os.path.splitext(t)
-    if ext != '.tmpl':
-        logger.warning("Template filename does not end in .tmpl: %s", t)
-    out_ext = os.path.splitext(out_name)[1]
-    if out_ext == '.h' and headers is not None:
-        if local_headers:
-            out_dir = os.path.join(build_dir, d, arch, 'include')
-            add_include_dir(out_dir, local_env)
-        else:
-            assert not arch
-            out_dir = interface_gen_dir
-        o = os.path.join(out_dir, out_name)
-        headers.append(o)
-    elif out_ext in ('.c', '.S') and objects is not None:
-        out_dir = os.path.join(build_dir, d, arch, 'src')
-        o = os.path.join(out_dir, out_name)
-        oo = o + '.o'
-        add_source_file(o, oo, requires, local_env)
-        objects.append(oo)
-    else:
-        logger.error("Unsupported template output: %s", out_name)
-        sys.exit(1)
-    graph.add_target([o], 'code_gen_asm' if out_ext == '.S' else 'code_gen',
-                     [i])
+    ts.sources.append((d, tmpl_file, arch, requires, is_module, local_env,
+                       headers))
+    return ext == '.ev'
 
 
 event_handler_modules = set()
@@ -964,16 +997,18 @@ interface_gen_dir = os.path.join(build_dir, 'interface', 'include')
 graph.append_env('CPPFLAGS', '-I ' + relpath(interface_gen_dir))
 objects_build_dir = os.path.join(build_dir, 'objects')
 events_inc_dir = os.path.join(build_dir, 'events', 'include')
-objects_headers_gen = graph.future_alias(
-    os.path.join(build_dir, 'objects_headers_gen'))
+
+# Autogenerated interface headers
+interface_headers_gen, interface_gen_headers = deferred_alias(
+    os.path.join(build_dir, 'interface_headers_gen'))
 
 # Support for the event generator
 graph.append_env('CPPFLAGS', '-I ' + relpath(events_inc_dir))
-event_headers_gen = graph.future_alias(
+event_headers_gen, event_headers = deferred_alias(
     os.path.join(build_dir, 'event_headers_gen'))
 
 # Support for the hypercalls generator
-hypercalls_headers_gen = graph.future_alias(
+hypercalls_headers_gen, hypercalls_headers = deferred_alias(
     os.path.join(build_dir, 'hypercalls_headers_gen'))
 
 
@@ -1026,10 +1061,10 @@ guestapis.add(hypguest_interface_src)
 #
 codegen_script = os.path.join('tools', 'codegen', 'codegen.py')
 graph.add_env('CODEGEN', relpath(codegen_script))
-graph.add_rule('code_gen', '${CODEGEN} ${CODEGEN_ARCHS} ${CODEGEN_CONFIGS} '
+graph.add_rule('code_gen_c', '${CODEGEN} ${CODEGEN_ARCHS} ${CODEGEN_CONFIGS} '
                '-f ${FORMATTER} -o ${out} -d ${out}.d ${in}',
                depfile='${out}.d')
-graph.add_rule('code_gen_asm', '${CODEGEN} ${CODEGEN_ARCHS} '
+graph.add_rule('code_gen', '${CODEGEN} ${CODEGEN_ARCHS} '
                '${CODEGEN_CONFIGS} -o ${out} -d ${out}.d ${in}',
                depfile='${out}.d')
 
@@ -1046,13 +1081,13 @@ configs_as_ints = dict()
 
 def configs_get_int(c):
     try:
-        s = configs[c].strip('uU')
+        s = variant_defines[c].strip('uU')
         return int(s, 0)
     except ValueError:
-        return configs[c]
+        return variant_defines[c]
 
 
-for c in configs:
+for c in variant_defines:
     configs_as_ints[c] = configs_get_int(c)
 
 #
@@ -1086,9 +1121,9 @@ graph.add_gen_output(define_file)
 
 with GenFile(define_file, 'w') as f:
     if variant_defines:
-        for define_arg in variant_defines:
-            define, val = define_arg.split('=')
-            f.write(u"#define {:s} {:s}\n".format(define, val))
+        for define_arg in variant_defines.keys():
+            f.write(u"#define {:s} {:s}\n".format(
+                define_arg, variant_defines[define_arg]))
     for i in sorted(interfaces):
         f.write(u"#define INTERFACE_{:s} 1\n".format(i.upper()))
     for i in sorted(modules):
@@ -1098,6 +1133,45 @@ with GenFile(define_file, 'w') as f:
 graph.append_env('CPPFLAGS', '-imacros {:s}'.format(relpath(define_file)))
 graph.append_env('CODEGEN_CONFIGS',
                  '-imacros {:s}'.format(relpath(define_file)))
+
+
+#
+# Generate simple templates that only depend on the build configuration
+#
+
+for module_dir, target, arch, src_requires, is_module, local_env, headers \
+        in simple_templates:
+    ext = os.path.splitext(target)[1]
+    module = os.path.basename(module_dir)
+    template = os.path.join(module_dir, arch, 'templates', target + '.tmpl')
+    if ext == '.h':
+        if is_module:
+            out_dir = os.path.join(build_dir, module_dir, arch, 'include')
+            add_include_dir(out_dir, local_env)
+        else:
+            assert not arch
+            out_dir = interface_gen_dir
+        out_source = os.path.join(out_dir, target)
+        headers.append(out_source)
+    elif ext in ('.c', '.S') and objects is not None:
+        out_dir = os.path.join(build_dir, module_dir, arch, 'src')
+        out_source = os.path.join(out_dir, target)
+        out_obj = out_source + '.o'
+        add_source_file(out_source, out_obj, src_requires, local_env)
+    elif ext == '.ev':
+        out_dir = os.path.join(build_dir, module_dir)
+        out_source = os.path.join(out_dir, target)
+        event_sources.add(out_source)
+    elif ext == '.tc':
+        out_dir = os.path.join(build_dir, module_dir)
+        out_source = os.path.join(out_dir, target)
+        types.add(add_type_dsl(out_dir, target, local_env))
+    else:
+        logger.error("Unsupported template output: %s", target)
+        sys.exit(1)
+    graph.add_target([out_source],
+                     'code_gen_c' if ext in ('.c', '.h') else 'code_gen',
+                     [template], depends=[codegen_script])
 
 
 #
@@ -1113,30 +1187,30 @@ def add_object_c_template(module, template, requires, object_str, target,
 
 
 def add_object_h_template(module, template, requires, object_str, target,
-                          is_module, local_env):
+                          is_module, local_env, headers):
     if is_module:
-        out = os.path.join(objects_build_dir, module, 'include', target)
+        out = os.path.join(build_dir, module, 'include', target)
     else:
         out = os.path.join(objects_incl_dir, target)
-    # For now, add all headers here, in future, dependencies for local headers
-    # could be more contrained to the module's source files
-    objects_headers.append(out)
+    headers.append(out)
     graph.add_target([out], 'object_gen_c', [template], OBJ=object_str,
                      depends=[objects_script])
 
 
-def add_object_event_template(module, template, object_str, target):
-    object_ev = os.path.join(objects_build_dir, module, target)
+def add_object_event_template(module, template, object_str, target, local_env):
+    out_dir = os.path.join(objects_build_dir, module)
+    object_ev = os.path.join(out_dir, target)
     graph.add_target([object_ev], 'object_gen', [template], OBJ=object_str,
                      depends=[objects_script])
-    event_sources.add(object_ev)
+    event_sources.add(add_event_dsl(out_dir, target, local_env))
 
 
-def add_object_type_template(module, template, object_str, target):
-    object_tc = os.path.join(objects_build_dir, module, target)
+def add_object_type_template(module, template, object_str, target, local_env):
+    out_dir = os.path.join(objects_build_dir, module)
+    object_tc = os.path.join(out_dir, target)
     graph.add_target([object_tc], 'object_gen', [template], OBJ=object_str,
                      depends=[objects_script])
-    types.add(object_tc)
+    types.add(add_type_dsl(out_dir, target, local_env))
 
 
 objects_script = os.path.join('tools', 'objects', 'object_gen.py')
@@ -1153,23 +1227,24 @@ for x in sorted(first_class_objects):
     fc_objects.append(','.join([x] + first_class_objects[x]))
 fc_objects = ' '.join(fc_objects)
 have_object_incl = False
-objects_headers = []
 
-for module_dir, target, arch, src_requires, is_module, local_env in \
-        first_class_templates:
+for module_dir, target, arch, src_requires, is_module, local_env, headers \
+        in first_class_templates:
     ext = os.path.splitext(target)[1]
     module = os.path.basename(module_dir)
     template = os.path.join(module_dir, arch, 'templates', target + '.tmpl')
     if ext == '.ev':
-        add_object_event_template(module, template, fc_objects, target)
+        add_object_event_template(module, template, fc_objects, target,
+                                  local_env)
     elif ext == '.tc':
-        add_object_type_template(module, template, fc_objects, target)
+        add_object_type_template(module, template, fc_objects, target,
+                                 local_env)
     elif ext == '.c':
         add_object_c_template(module, template, src_requires, fc_objects,
                               target, local_env)
     elif ext == '.h':
         add_object_h_template(module, template, src_requires, fc_objects,
-                              target, is_module, local_env)
+                              target, is_module, local_env, headers)
         if not is_module:
             have_object_incl = True
     else:
@@ -1179,9 +1254,6 @@ for module_dir, target, arch, src_requires, is_module, local_env in \
 
 if have_object_incl:
     graph.append_env('CPPFLAGS', '-I ' + relpath(objects_incl_dir))
-
-# An alias target is used to order header generation before source compliation
-graph.add_alias(objects_headers_gen, objects_headers)
 
 
 #
@@ -1215,8 +1287,8 @@ graph.add_rule('gen_public_types_tmpl', '${TYPED} --public -a ${ABI} '
                depfile='${out}.d')
 
 typed_headers = []
-for module_dir, target, arch, src_requires, is_module, local_env in \
-        typed_templates:
+for module_dir, target, arch, src_requires, is_module, local_env, headers \
+        in typed_templates:
     ext = os.path.splitext(target)[1]
     template = os.path.join(module_dir, arch, 'templates', target + '.tmpl')
     if ext == '.h':
@@ -1240,7 +1312,7 @@ for module_dir, target, arch, src_requires, is_module, local_env in \
 
 graph.add_alias(typed_headers_gen, typed_headers)
 
-for module_dir, target, arch, src_requires, is_module, local_env in \
+for module_dir, target, arch, src_requires, is_module, local_env, headers in \
         typed_guestapi_templates:
     assert (is_module)
     ext = os.path.splitext(target)[1]
@@ -1282,9 +1354,7 @@ graph.add_rule('hypercalls_gen', 'LANG=C.UTF-8'
                ' -d ${out}.d -t ${TEMPLATE} -p ${TYPES_PICKLE} ${in}'
                ' -o ${out}', depfile='${out}.d')
 
-hypercalls_headers = []
-
-for module_dir, target, arch, src_requires, is_module, local_env in \
+for module_dir, target, arch, src_requires, is_module, local_env, headers in \
         hypercalls_templates:
     template = os.path.join(module_dir, arch, 'templates', target + '.tmpl')
     out_ext = os.path.splitext(target)[1]
@@ -1309,9 +1379,7 @@ for module_dir, target, arch, src_requires, is_module, local_env in \
             typed_headers_gen,
             event_headers_gen
         )
-        local_env = {}
         add_source_file(out, oo, requires, local_env)
-graph.add_alias(hypercalls_headers_gen, hypercalls_headers)
 
 # FIXME: provide a better/standalone way to generate guest headers
 for tmpl, out_name in hypercalls_guest_templates:
@@ -1345,7 +1413,6 @@ graph.add_rule('event_gen', '${EVENTS} -t ${TEMPLATE} -m ${MODULE} ${OPTIONS}'
                '${INCLUDES} -d ${out}.d -p ${in} -o ${out}',
                depfile='${out}.d', restat=True)
 
-event_headers = []
 for module in sorted(interfaces_with_events | modules_with_events):
     event_out = get_event_inc_file(module)
     event_headers.append(event_out)
@@ -1357,9 +1424,6 @@ for module in sorted(interfaces_with_events | modules_with_events):
                      MODULE=module, TEMPLATE=relpath(event_src_tmpl),
                      depends=[event_src_tmpl])
 #                     OPTIONS='-f ${FORMATTER}',
-
-# An alias target is used to order header generation before source compliation
-graph.add_alias(event_headers_gen, event_headers)
 
 for module in sorted(modules_with_events):
     # Gen handler headers
@@ -1379,7 +1443,7 @@ graph.add_alias(ast_gen, sorted(asts))
 registers_script = os.path.join('tools', 'registers', 'register_gen.py')
 graph.add_env('REGISTERS', relpath(registers_script))
 graph.add_rule('registers_gen', '${REGISTERS} -t ${TEMPLATE} -f ${FORMATTER} '
-               '-o ${out} ${in}')
+               '-o ${out} -p ${TYPES_PICKLE} ${in}')
 
 registers_pp = list()
 
@@ -1389,14 +1453,18 @@ for f in registers:
     graph.add_target([f_pp], 'cpp-dsl', [f])
     registers_pp.append(f_pp)
 
-for module_dir, target, arch, src_requires, is_module, local_env in \
+for module_dir, target, arch, src_requires, is_module, local_env, headers in \
         registers_templates:
     template = os.path.join(module_dir, arch, 'templates', target + '.tmpl')
 
     header = os.path.join(build_includes, target)
     graph.add_target([header], 'registers_gen', registers_pp,
                      TEMPLATE=relpath(template),
-                     depends=[template, registers_script])
+                     TYPES_PICKLE=relpath(types_pickle),
+                     depends=[types_pickle, template, registers_script])
+
+for alias, deps in deferred_aliases:
+    graph.add_alias(alias, deps)
 
 #
 # Build version setup
@@ -1462,19 +1530,3 @@ else:
 graph.add_target([hyp_elf], 'ld', sorted(objects | external_objects),
                  depends=[linker_script])
 graph.add_default_target(hyp_elf)
-
-
-#
-# Python dependencies
-#
-for m in list(sys.modules.values()) + [relpath]:
-    try:
-        f = inspect.getsourcefile(m)
-    except TypeError:
-        continue
-    if f is None:
-        continue
-    f = os.path.relpath(f)
-    if f.startswith('../'):
-        continue
-    graph.add_gen_source(f)

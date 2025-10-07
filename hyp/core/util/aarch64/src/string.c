@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <assert.h>
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdnoreturn.h>
 #include <string.h>
@@ -105,44 +107,58 @@ memmove_bytes_reverse(uint8_t *dst, const uint8_t *src, size_t n)
 {
 	assert((uintptr_t)src < (uintptr_t)dst);
 
+	size_t num = n;
 	// move to a higher address, copy backwards
 	const uint8_t *srcr;
 	uint8_t	      *dstr;
-	srcr = src + (n - 1U);
-	dstr = dst + (n - 1U);
+	srcr = src + (num - 1U);
+	dstr = dst + (num - 1U);
 
-	for (; n != 0; n--) {
+	for (; num != 0U; num--) {
 		*dstr = *srcr;
 		dstr--;
 		srcr--;
 	}
 }
 
-void *
-memmove(void *dst, const void *src, size_t n)
+size_t
+memsmove(void *dst, size_t dst_sz, const void *src, size_t n)
 {
-	if (n == 0) {
+	if (compiler_unexpected((src == NULL) || (dst == NULL))) {
+		panic("memsmove: null arg");
+	}
+	if (n == 0U) {
 		goto out;
 	}
-
-	if (util_add_overflows((uintptr_t)dst, n - 1U) ||
-	    util_add_overflows((uintptr_t)src, n - 1U)) {
-		panic("memmove_bytes addr overflow");
+	if (compiler_unexpected(
+		    (dst_sz < n) || (dst_sz == 0U) ||
+		    util_add_overflows((uintptr_t)dst, dst_sz - 1U) ||
+		    util_add_overflows((uintptr_t)src, n - 1U))) {
+		panic("memsmove: invalid arg");
 	}
 
 	if ((uintptr_t)dst == (uintptr_t)src) {
 		// Nothing to do.
 	} else if ((uintptr_t)dst < (uintptr_t)src) {
-		(void)memcpy(dst, src, n);
-	} else if ((uintptr_t)src + (n - 1) < (uintptr_t)dst) {
-		(void)memcpy(dst, src, n);
+		(void)memscpy(dst, dst_sz, src, n);
+	} else if (((uintptr_t)src + (n - 1U)) < (uintptr_t)dst) {
+		(void)memscpy(dst, dst_sz, src, n);
 	} else {
-		(void)memmove_bytes_reverse(dst, src, n);
+		memmove_bytes_reverse(dst, src, n);
 	}
 
 out:
+	return n;
+}
+
+#if defined(HYP_STANDALONE_TEST)
+void *
+memmove(void *dst, const void *src, size_t n)
+{
+	(void)memsmove(dst, n, src, n);
 	return dst;
 }
+#endif
 
 errno_t
 memset_s(void *s, rsize_t smax, int c, rsize_t n)
@@ -206,28 +222,40 @@ memset(void *s, int c, size_t n)
 	return s;
 }
 
-size_t
-strlen(const char *str)
+rsize_t
+util_strnlen(const char *str, rsize_t maxlen)
 {
-	const char *end = str;
+	const char *pos = str;
+	rsize_t	    len = 0U;
 
 	assert(str != NULL);
+	assert(maxlen != 0U);
 
-	for (; *end != '\0'; end++) {
+	while (pos[len] != '\0') {
+		len++;
+		if (len == maxlen) {
+			break;
+		}
 	}
 
-	return (size_t)((uintptr_t)end - (uintptr_t)str);
+	return len;
 }
 
 char *
-strchr(const char *str, int c)
+util_strnchr(const char *str, int32_t c, rsize_t maxlen)
 {
 	uintptr_t   ret = (uintptr_t)NULL;
-	const char *end = str;
+	const char *pos = str;
 
-	for (; *end != '\0'; end++) {
-		if (*end == (char)c) {
-			ret = (uintptr_t)end;
+	assert(str != NULL);
+	assert(maxlen != 0U);
+
+	for (rsize_t len = 0U; len < maxlen; len++) {
+		if (pos[len] == '\0') {
+			break;
+		}
+		if (pos[len] == (char)c) {
+			ret = (uintptr_t)&pos[len];
 			break;
 		}
 	}

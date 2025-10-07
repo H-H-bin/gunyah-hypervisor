@@ -40,3 +40,18 @@ platform_ram_probe(void);
 bool
 platform_pgtable_undergoing_bbm(void);
 #endif
+
+#if !defined(PLATFORM_RAM_NO_SANITISE_ON_RESET)
+// Register a region of memory to be sanitised on device reset.
+//
+// If the boolean argument is true, the specified range must be sanitised by the
+// firmware after a warm reset of the device. If it is false, the specified
+// range no longer requires sanitisation.
+//
+// An implementation that has fixed sanitisation ranges may simply check the
+// requested range, and return OK if the range is within one of the fixed ranges
+// or if the boolean argument is false. For example, this may be a wrapper for
+// PSCI_MEM_PROTECT_CHECK_RANGE.
+error_t
+platform_ram_sanitise_on_reset(paddr_t phys, size_t size, bool sanitise);
+#endif

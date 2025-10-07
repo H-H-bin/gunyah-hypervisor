@@ -8,3 +8,6 @@ subscribe boot_runtime_first_init()
 	require_preempt_disabled
 
 subscribe boot_hypervisor_start()
+
+subscribe timer_action[TIMER_ACTION_PRNG_UPDATE_RETRY]()
+	require_preempt_disabled

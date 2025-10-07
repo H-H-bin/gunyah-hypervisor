@@ -11,6 +11,7 @@
 #include <enum.h>
 #include <idle.h>
 #include <ipi.h>
+#include <platform_cpu.h>
 #include <preempt.h>
 #include <rcu.h>
 #include <scheduler.h>
@@ -47,6 +48,7 @@ void
 rcu_read_start(void) LOCK_IMPL
 {
 	preempt_disable();
+	assert_debug(CPULOCAL(rcu_state).is_active);
 	trigger_rcu_read_start_event();
 }
 
@@ -58,19 +60,19 @@ rcu_read_finish(void) LOCK_IMPL
 }
 
 static void
-rcu_bitmap_refresh_active(void)
+rcu_bitmap_refresh_active(cpu_index_t caller) REQUIRE_PREEMPT_DISABLED
 {
 	uint32_t active_cpus = atomic_load_relaxed(&rcu_state.active_cpus);
+
+	// The calling CPU is truly active, so there is no need to refresh it.
+	active_cpus &= ~(uint32_t)util_bit(caller);
+
 	while (active_cpus != 0U) {
 		cpu_index_t cpu = (cpu_index_t)compiler_ctz(active_cpus);
-		// Request a reschedule, since it will either switch threads,
-		// or trigger a scheduler quiescent event. We don't directly
-		// send an IPI_REASON_RCU_QUIESCE here since when in the idle
-		// thread, it may not return true and won't exit the fast-IPI
-		// loop, so the idle_yield event won't be rerun and the CPU
-		// won't be deactivated.
-		ipi_one(IPI_REASON_RESCHEDULE, cpu);
-		active_cpus &= (uint32_t)(~util_bit(cpu));
+		// Ask the CPU to quiesce. This will also deactivate the CPU
+		// when it exits or blocks the hypervisor afterwards.
+		ipi_one(IPI_REASON_RCU_QUIESCE, cpu);
+		active_cpus &= ~(uint32_t)util_bit(cpu);
 	}
 }
 
@@ -96,8 +98,19 @@ rcu_enqueue(rcu_entry_t *rcu_entry, rcu_update_class_t rcu_update_class)
 
 	if (atomic_fetch_add_explicit(&my_state->update_count, 1U,
 				      memory_order_relaxed) == 0U) {
-		if (atomic_fetch_add_explicit(&rcu_state.waiter_count, 1U,
-					      memory_order_relaxed) == 0U) {
+		if (compiler_unexpected(atomic_fetch_add_explicit(
+						&rcu_state.waiter_count, 1U,
+						memory_order_relaxed) == 0U)) {
+			// Ensure that we only read the set of active CPUs after
+			// RCU has been marked globally enabled, so that any
+			// remote rcu_bitmap_maybe_deactivate_cpu() either sees
+			// RCU as active and deactivates itself, or else has
+			// already marked itself active so we refresh it below.
+			// This must be a seq_cst fence to order the above store
+			// before the load of the active set. It matches the
+			// fence in rcu_bitmap_activate_cpu().
+			atomic_thread_fence(memory_order_seq_cst);
+
 			// CPUs may have stopped tracking quiescent states
 			// because there were no waiters, so prod them all.
 			//
@@ -105,7 +118,7 @@ rcu_enqueue(rcu_entry_t *rcu_entry, rcu_update_class_t rcu_update_class)
 			// a lower EL will take itself out of both the current
 			// and active sets in response to this, allowing us
 			// to ignore it until it starts doing something.
-			rcu_bitmap_refresh_active();
+			rcu_bitmap_refresh_active(cpu);
 		}
 	}
 
@@ -120,14 +133,67 @@ rcu_enqueue(rcu_entry_t *rcu_entry, rcu_update_class_t rcu_update_class)
 	preempt_enable();
 }
 
-// Events that activate a CPU (i.e. mark it as needing to ack GPs)
-static void
-rcu_bitmap_activate_cpu(void) REQUIRE_PREEMPT_DISABLED
+void
+rcu_expedite(void)
 {
-	assert_cpulocal_safe();
-	cpu_index_t	 cpu	  = cpulocal_get_index();
-	uint32_t	 cpu_bit  = (uint32_t)util_bit(cpu);
-	rcu_cpu_state_t *my_state = &CPULOCAL_BY_INDEX(rcu_state, cpu);
+	preempt_disable();
+
+	// Our goal is to try to complete any updates that are currently in
+	// next_batch, without a context switch. If any earlier RCU update
+	// handler forces a reschedule and switches contexts, we have failed to
+	// do that, so we bail out afterwards.
+
+	// The rcu_enqueue() that added our target updates to next_batch should
+	// have triggered a notify to request a new GP. Handle it now.
+	if (ipi_clear(IPI_REASON_RCU_NOTIFY)) {
+		if (rcu_bitmap_notify()) {
+			if (scheduler_schedule()) {
+				goto out;
+			}
+		}
+	}
+
+	// Try to end the GP in which the updates were enqueued. If successful,
+	// the updates will move to waiting_batch.
+	(void)ipi_clear(IPI_REASON_RCU_QUIESCE);
+	if (rcu_bitmap_quiesce()) {
+		if (scheduler_schedule()) {
+			goto out;
+		}
+	}
+
+	// If the first GP ended, there will be another quiesce pending. Try to
+	// end the GP that the updates are waiting for. If successful, the
+	// updates will move to ready_batch.
+	if (ipi_clear(IPI_REASON_RCU_QUIESCE)) {
+		if (rcu_bitmap_quiesce()) {
+			if (scheduler_schedule()) {
+				goto out;
+			}
+		}
+	}
+
+	// If we have successfully expedited our updates, they will be in
+	// ready_batch now, so try to process them.
+	if (ipi_clear(IPI_REASON_RCU_UPDATE)) {
+		if (rcu_bitmap_update()) {
+			(void)scheduler_schedule();
+		}
+	}
+
+out:
+	preempt_enable();
+}
+
+// Events that activate a CPU (i.e. mark it as needing to ack GPs)
+//
+// Note: this may be called when the CPU is already active, and is expected in
+// cases such as the warm-boot handler called during cold boot.
+static void
+rcu_bitmap_activate_cpu(cpu_index_t cpu_index) REQUIRE_PREEMPT_DISABLED
+{
+	uint32_t	 cpu_bit  = (uint32_t)util_bit(cpu_index);
+	rcu_cpu_state_t *my_state = &CPULOCAL_BY_INDEX(rcu_state, cpu_index);
 
 	if (compiler_unexpected(!my_state->is_active)) {
 		// We're not in the active CPU set. Add ourselves.
@@ -136,54 +202,43 @@ rcu_bitmap_activate_cpu(void) REQUIRE_PREEMPT_DISABLED
 		(void)atomic_fetch_or_explicit(&rcu_state.active_cpus, cpu_bit,
 					       memory_order_relaxed);
 
-		// Fence to ensure that we are in the active CPU set before
-		// any other memory access that might cause this CPU to actually
-		// need to be in that set (i.e. loads in RCU critical sections),
-		// so that any new grace period that starts after such accesses
-		// will see this CPU as active. This must be a seq_cst fence to
-		// order loads after stores.
+		// Ensure that we are in the active CPU set before any critical
+		// sections start, so that any new grace period that starts
+		// after such accesses will see this CPU as active. This must be
+		// a seq_cst fence to order loads in critical sections after the
+		// above store. The matching fence is in rcu_bitmap_quiesce(),
+		// before active_cpus is read.
 		//
-		// The matching fence is in rcu_bitmap_quiesce(), when (and if)
-		// it reads the active bitmap to copy it to the current bitmap.
+		// Also, ensure that we are in the active CPU set before any
+		// future deactivation of this CPU checks whether RCU should
+		// run, so that we are guaranteed to either see RCU as enabled
+		// and deactivate this CPU, or else get an IPI from the next CPU
+		// that enables RCU. The matching fence is in rcu_enqueue(),
+		// after RCU is enabled.
 		atomic_thread_fence(memory_order_seq_cst);
 	}
 }
 
 void
-rcu_bitmap_handle_thread_entry_from_user(void)
+rcu_bitmap_handle_boot_cold_init(cpu_index_t boot_cpu_index)
 {
-	rcu_bitmap_activate_cpu();
+	rcu_bitmap_activate_cpu(boot_cpu_index);
+}
+
+void
+rcu_bitmap_activate_current(void)
+{
+	assert_cpulocal_safe();
+	cpu_index_t cpu = cpulocal_get_index();
+	rcu_bitmap_activate_cpu(cpu);
 }
 
 bool
 rcu_bitmap_handle_preempt_interrupt(void)
 {
-	rcu_bitmap_activate_cpu();
+	rcu_bitmap_activate_current();
 
 	return false;
-}
-
-error_t
-rcu_bitmap_handle_thread_context_switch_pre(void)
-{
-	if (thread_get_self()->kind == THREAD_KIND_IDLE) {
-		rcu_bitmap_activate_cpu();
-	}
-
-	if (compiler_unexpected(rcu_bitmap_should_run())) {
-		(void)ipi_clear(IPI_REASON_RCU_QUIESCE);
-		if (rcu_bitmap_quiesce()) {
-			scheduler_trigger();
-		}
-	}
-
-	return OK;
-}
-
-void
-rcu_bitmap_handle_power_cpu_online(void)
-{
-	rcu_bitmap_activate_cpu();
 }
 
 // Events that deactivate a CPU (i.e. mark it as not needing to ack GPs)
@@ -192,24 +247,28 @@ rcu_bitmap_deactivate_cpu(void) REQUIRE_PREEMPT_DISABLED
 {
 	assert_preempt_disabled();
 	cpu_index_t	 cpu	  = cpulocal_get_index();
-	uint32_t	 cpu_bit  = (uint32_t)util_bit(cpu);
 	rcu_cpu_state_t *my_state = &CPULOCAL_BY_INDEX(rcu_state, cpu);
 
-	my_state->is_active = false;
+	if (compiler_expected(my_state->is_active)) {
+		uint32_t cpu_bit    = (uint32_t)util_bit(cpu);
+		my_state->is_active = false;
 
-	// Remove ourselves from the active set. Release ordering is needed to
-	// ensure that it is done after the end of any critical sections.
-	// However, it does not need ordering relative to the quiesce below;
-	// if it happens late then at worst we might get a redundant IPI.
-	(void)atomic_fetch_and_explicit(&rcu_state.active_cpus, ~cpu_bit,
-					memory_order_relaxed);
+		// Remove ourselves from the active set. Release ordering is
+		// needed to ensure that it is done after the end of any
+		// critical sections. However, it does not need ordering
+		// relative to the quiesce below; if it happens late then at
+		// worst we might get a redundant IPI.
+		(void)atomic_fetch_and_explicit(&rcu_state.active_cpus,
+						~cpu_bit, memory_order_relaxed);
 
-	// This sequential consistency fence matches the one in
-	// rcu_bitmap_quiesce when a new grace period starts, to ensure that
-	// either this CPU goes first and clears its active bit (and the other
-	// CPU sends us a quiesce IPI), or the other CPU goes first and starts
-	// the new grace period before the quiesce.
-	atomic_thread_fence(memory_order_seq_cst);
+		// This sequential consistency fence matches the one in
+		// rcu_bitmap_quiesce when a new grace period starts, to ensure
+		// that either this CPU goes first and clears its active bit
+		// (and the other CPU sends us a quiesce IPI), or the other CPU
+		// goes first and starts the new grace period before the
+		// quiesce.
+		atomic_thread_fence(memory_order_seq_cst);
+	}
 
 	(void)ipi_clear(IPI_REASON_RCU_QUIESCE);
 	if (rcu_bitmap_quiesce()) {
@@ -217,26 +276,8 @@ rcu_bitmap_deactivate_cpu(void) REQUIRE_PREEMPT_DISABLED
 	}
 }
 
-idle_state_t
-rcu_bitmap_handle_idle_yield(void)
-{
-	if (compiler_unexpected(rcu_bitmap_should_run())) {
-		rcu_bitmap_deactivate_cpu();
-	}
-
-	return IDLE_STATE_IDLE;
-}
-
-#if defined(INTERFACE_VCPU)
 void
-rcu_bitmap_handle_vcpu_block_finish(void)
-{
-	rcu_bitmap_activate_cpu();
-}
-#endif
-
-void
-rcu_bitmap_handle_thread_exit_to_user(void)
+rcu_bitmap_maybe_deactivate_cpu(void)
 {
 	if (compiler_unexpected(rcu_bitmap_should_run())) {
 		rcu_bitmap_deactivate_cpu();
@@ -244,7 +285,7 @@ rcu_bitmap_handle_thread_exit_to_user(void)
 }
 
 error_t
-rcu_bitmap_handle_power_cpu_suspend(void)
+rcu_bitmap_try_deactivate_cpu(void)
 {
 	error_t ret = OK;
 
@@ -264,12 +305,22 @@ rcu_bitmap_handle_power_cpu_suspend(void)
 }
 
 // Events that quiesce a CPU but don't activate or deactivate it
+error_t
+rcu_bitmap_handle_thread_context_switch_pre(void)
+{
+	rcu_bitmap_handle_scheduler_quiescent();
+
+	return OK;
+}
+
 void
 rcu_bitmap_handle_scheduler_quiescent(void)
 {
-	(void)ipi_clear(IPI_REASON_RCU_QUIESCE);
-	if (rcu_bitmap_quiesce()) {
-		scheduler_trigger();
+	if (compiler_unexpected(rcu_bitmap_should_run())) {
+		(void)ipi_clear(IPI_REASON_RCU_QUIESCE);
+		if (rcu_bitmap_quiesce()) {
+			scheduler_trigger();
+		}
 	}
 }
 
@@ -327,7 +378,8 @@ rcu_bitmap_quiesce(void)
 		memory_order_acq_rel, memory_order_acquire));
 
 	if (new_period) {
-		// This matches the thread fence in rcu_bitmap_deactivate_cpu.
+		// This matches the thread fences in rcu_bitmap_deactivate_cpu
+		// and rcu_bitmap_request_grace_period.
 		atomic_thread_fence(memory_order_seq_cst);
 
 		// Check the CPUs that have raced with us in deactivate.
@@ -338,12 +390,12 @@ rcu_bitmap_quiesce(void)
 		// Successfully started a new period. Look for any remote CPUs
 		// that may be waiting for it, and IPI them.
 		for (cpu_index_t cpu = 0U; cpu < PLATFORM_MAX_CORES; cpu++) {
-			if (cpu == this_cpu) {
+			if ((cpu == this_cpu) || !platform_cpu_exists(cpu)) {
 				continue;
 			}
 			count_t target = atomic_load_relaxed(
 				&CPULOCAL_BY_INDEX(rcu_state, cpu).target);
-			if (!is_before(next_period.generation, target)) {
+			if (target == next_period.generation) {
 				ipi_one(IPI_REASON_RCU_NOTIFY, cpu);
 			}
 			// Handle any new CPUs needing quiesce due to a race
@@ -355,11 +407,22 @@ rcu_bitmap_quiesce(void)
 			}
 		}
 
-		// Process the grace period completion on the current CPU.
-		reschedule = rcu_bitmap_notify();
+		rcu_cpu_state_t *my_state = &CPULOCAL(rcu_state);
+		if (compiler_expected(my_state->is_active)) {
+			// Process the grace period completion.
+			reschedule = rcu_bitmap_notify();
 
-		// Trigger another quiesce on the current CPU.
-		ipi_one_relaxed(IPI_REASON_RCU_QUIESCE, this_cpu);
+			// Trigger another quiesce on the current CPU.
+			ipi_one_relaxed(IPI_REASON_RCU_QUIESCE, this_cpu);
+		} else if (atomic_load_relaxed(&my_state->update_count) != 0U) {
+			// Trigger an IRQ to reactivate the CPU and process the
+			// grace period completion. We can't do this while
+			// inactive because the updates might have RCU critical
+			// sections in them.
+			ipi_one(IPI_REASON_RCU_NOTIFY, this_cpu);
+		} else {
+			// Inactive with no updates; nothing more to do.
+		}
 	}
 
 	return reschedule;
@@ -377,16 +440,45 @@ rcu_bitmap_request_grace_period(rcu_cpu_state_t *my_state, count_t current_gen)
 	count_t target = current_gen + 2U;
 	atomic_store_relaxed(&my_state->target, target);
 
-	// Update the max target period to be at least our new target.
-	count_t old_max_target = atomic_load_relaxed(&rcu_state.max_target);
-	do {
-		if (is_before(target, old_max_target)) {
-			// We don't need to update the max target.
-			break;
+	// Since other CPUs may have completed one or more grace periods
+	// between our read of current_gen and the target update above, we need
+	// to check the current generation again and either notify the current
+	// CPU (in case our target was reached before we updated it) or quiesce
+	// the current CPU (in case the old max_target was reached).
+	//
+	// We need a fence here to order the new_period read after the target
+	// update. This synchronises with the fence in rcu_bitmap_quiesce().
+	atomic_thread_fence(memory_order_seq_cst);
+
+	rcu_grace_period_t new_period =
+		atomic_load_relaxed(&rcu_state.current_period);
+
+	if (compiler_unexpected(!is_before(new_period.generation, target))) {
+		// Another core has already completed our requested grace
+		// period. It may have done so before this core updated the
+		// target variable, in which case it won't have sent a
+		// GP end notification. So, send a local notification.
+		ipi_one_relaxed(IPI_REASON_RCU_NOTIFY, cpulocal_get_index());
+	} else {
+		// Update the max target period to be at least our new target.
+		count_t old_max_target =
+			atomic_load_relaxed(&rcu_state.max_target);
+		do {
+			if (is_before(target, old_max_target)) {
+				// We don't need to update the max target.
+				break;
+			}
+		} while (!atomic_compare_exchange_weak_explicit(
+			&rcu_state.max_target, &old_max_target, target,
+			memory_order_relaxed, memory_order_relaxed));
+
+		if (new_period.cpu_bitmap == 0U) {
+			// RCU reached its old max target on another core; we
+			// may need to start the new grace period ourselves.
+			ipi_one_relaxed(IPI_REASON_RCU_QUIESCE,
+					cpulocal_get_index());
 		}
-	} while (!atomic_compare_exchange_weak_explicit(
-		&rcu_state.max_target, &old_max_target, target,
-		memory_order_relaxed, memory_order_relaxed));
+	}
 }
 
 bool
@@ -457,11 +549,6 @@ rcu_bitmap_notify(void)
 	if (waiting_updates) {
 		rcu_bitmap_request_grace_period(my_state,
 						current_period.generation);
-
-		if (current_period.cpu_bitmap == 0U) {
-			ipi_one_relaxed(IPI_REASON_RCU_QUIESCE,
-					cpulocal_get_index());
-		}
 	}
 
 out:

@@ -31,7 +31,7 @@
 // update batches, deferral of batch processing using a software interrupt
 // (i.e. ipi_relaxed()), and a generation count.
 
-#include <types/bitmap.h>
+#include <bitmap.h>
 #include <asm/cpu.h>
 
 extend rcu_entry structure {

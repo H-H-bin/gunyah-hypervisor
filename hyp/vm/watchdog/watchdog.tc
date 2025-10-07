@@ -1,0 +1,18 @@
+// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+extend thread object
+{
+	// Reference-counted virtual watchdog pointer
+	watchdog pointer object watchdog;
+};
+
+define watchdog_control bitfield<32>
+{
+	0	enable bool;
+	1	hw_sleep_enable bool;
+	2	count_in_suspend bool;
+	30:3	unknown = 0;
+	31	expired bool;
+};

@@ -2,9 +2,15 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include <bitmap.h>
+
 define cpu_index_t public newtype uint16;
 
 define CPU_INDEX_INVALID public constant type cpu_index_t = -1;
+
+define cpuid_set structure {
+	bitmap	BITMAP(PLATFORM_MAX_CORES);
+};
 
 extend thread object module cpulocal {
 	current_cpu type cpu_index_t;

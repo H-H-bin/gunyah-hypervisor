@@ -5,6 +5,8 @@
 module irq
 
 subscribe boot_cold_init()
+	// Ensure we run before any interrupt controller drivers
+	priority 1
 
 subscribe object_create_hwirq
 	priority last
@@ -16,6 +18,6 @@ subscribe object_activate_hwirq
 subscribe object_deactivate_hwirq
 	priority first
 
-#if IRQ_HAS_MSI
-subscribe object_cleanup_hwirq(hwirq)
-#endif
+subscribe irq_dispatch[IRQ_RANGE_TYPE_HWIRQ](irq, range, offset)
+	require_rcu_read
+	require_preempt_disabled

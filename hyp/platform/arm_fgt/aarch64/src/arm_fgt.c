@@ -13,6 +13,7 @@
 #include <compiler.h>
 #include <globals.h>
 #include <platform_features.h>
+#include <thread.h>
 
 #include "event_handlers.h"
 

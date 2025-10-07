@@ -1,0 +1,61 @@
+// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define VIRTIO_MAX_VQS constant type count_t = 16;
+
+// Feature bits
+define VIRTIO_F_VERSION_1 constant type index_t = 32;
+define VIRTIO_F_ACCESS_PLATFORM constant type index_t = 33;
+define VIRTIO_F_NOTIFICATION_DATA constant type index_t = 38;
+
+// Virtio 1.2 does not define any feature bits above 63, so two 32-bit words of
+// feature bits are sufficient
+define VIRTIO_FEAT_WORDS constant type count_t = 2;
+
+// Legacy MMIO backends might not specify which queue is ready
+define VIRTIO_QUEUE_UNSPECIFIED constant type index_t = -1;
+
+// Device Status
+define virtio_status public bitfield<8> {
+	0	acknowledge		bool;
+	1	driver			bool;
+	2	driver_ok		bool;
+	3	features_ok		bool;
+	6	device_needs_reset	bool = 1;
+	7	failed			bool;
+	others	unknown=0;
+};
+
+define virtio_backend_type enumeration {
+	INVALID = 0;
+};
+
+define virtio_transport_type public enumeration(explicit) {
+};
+
+// Frontend modules may extend this union with either a small structure
+// containing private data, or a pointer to separately allocated private data.
+define virtio_frontend union {
+};
+
+// Maximum size of the device-specific configuration area. This is one page,
+// minus 0x100 to leave room for common registers when using the MMIO transport.
+define VIRTIO_MAX_DEVICE_CONFIG_BYTES constant type count_t =
+	PGTABLE_HYP_PAGE_SIZE - 0x100;
+
+define virtio_config_space union {
+	raw		array(VIRTIO_MAX_DEVICE_CONFIG_BYTES) uint8(atomic);
+};
+
+define virtio_device_type public enumeration(explicit) {
+	INVALID = 0;
+};
+
+define virtio_queue_info structure {
+	size		type count_t;
+	ready		bool;
+	desc		type paddr_t;
+	drv		type paddr_t;
+	dev		type paddr_t;
+};

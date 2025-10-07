@@ -34,7 +34,7 @@ hypercall_vrtc_configure(cap_id_t vrtc_cap, vmaddr_t ipa)
 
 	vrtc_ptr_result_t vrtc_r = cspace_lookup_vrtc_any(
 		cspace, vrtc_cap, CAP_RIGHTS_VRTC_CONFIGURE);
-	if (compiler_unexpected(vrtc_r.e) != OK) {
+	if (compiler_unexpected(vrtc_r.e != OK)) {
 		err = vrtc_r.e;
 		goto out;
 	}
@@ -62,7 +62,7 @@ hypercall_vrtc_set_time_base(cap_id_t vrtc_cap, nanoseconds_t time_base,
 
 	vrtc_ptr_result_t vrtc_r = cspace_lookup_vrtc(
 		cspace, vrtc_cap, CAP_RIGHTS_VRTC_SET_TIME_BASE);
-	if (compiler_unexpected(vrtc_r.e) != OK) {
+	if (compiler_unexpected(vrtc_r.e != OK)) {
 		err = vrtc_r.e;
 		goto out;
 	}
@@ -107,7 +107,7 @@ hypercall_vrtc_attach_addrspace(cap_id_t vrtc_cap, cap_id_t addrspace_cap)
 
 	vrtc_ptr_result_t vrtc_r = cspace_lookup_vrtc(
 		cspace, vrtc_cap, CAP_RIGHTS_VRTC_ATTACH_ADDRSPACE);
-	if (compiler_unexpected(vrtc_r.e) != OK) {
+	if (compiler_unexpected(vrtc_r.e != OK)) {
 		err = vrtc_r.e;
 		goto out;
 	}

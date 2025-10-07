@@ -5,7 +5,9 @@
 #include <assert.h>
 #include <hyptypes.h>
 
+#include <atomic.h>
 #include <list.h>
+#include <util.h>
 
 void
 list_init(list_t *list)
@@ -165,8 +167,7 @@ list_delete_node(list_t *list, list_node_t *node)
 
 	bool new_head = false;
 
-	if ((atomic_load_relaxed(&node->next) == NULL) ||
-	    (node->prev == NULL)) {
+	if (node->prev == NULL) {
 		goto out;
 	}
 
@@ -181,9 +182,11 @@ list_delete_node(list_t *list, list_node_t *node)
 		new_head = true;
 	}
 
-	// Note: we do not zero the node's pointers here, because there might
-	// be a list_foreach_container_consume() that still holds a pointer to
-	// the node.
+	// Note: we do not zero the node's next pointer here, because there
+	// might be a list_foreach_container_consume() that still holds a
+	// pointer to the node.
+	node->prev = NULL;
+
 out:
 	return new_head;
 }

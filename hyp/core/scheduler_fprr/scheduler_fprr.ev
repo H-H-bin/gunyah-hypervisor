@@ -61,7 +61,6 @@ subscribe tests_init
 
 subscribe tests_start
 	handler tests_scheduler_start()
-	require_preempt_disabled
 
 subscribe thread_get_entry_fn[THREAD_KIND_SCHED_TEST]
 	handler sched_test_get_entry_fn

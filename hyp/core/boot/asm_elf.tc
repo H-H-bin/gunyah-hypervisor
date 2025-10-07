@@ -1,0 +1,40 @@
+// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+// Defining a small subset of ELF definitions, so the assembly code can use the
+// auto-generated constants and offsets.
+
+define asm_elf64_xword_t newtype uint64;
+define asm_elf64_sxword_t newtype sint64;
+define asm_elf64_addr_t newtype size;
+
+define ASM_ELF_DT_REL constant = 17;
+define ASM_ELF_DT_RELSZ constant = 18;
+define ASM_ELF_DT_RELA constant = 7;
+define ASM_ELF_DT_RELASZ constant = 8;
+
+define ASM_ELF_R_AARCH64_NONE		constant = 0;
+define ASM_ELF_R_AARCH64_NULL		constant = 256;
+define ASM_ELF_R_AARCH64_RELATIVE	constant = 1027;
+
+define asm_elf64_d_un union {
+	d_val		type asm_elf64_xword_t;
+	d_ptr		type asm_elf64_addr_t;
+};
+
+define asm_elf64_dyn structure {
+	d_tag		type asm_elf64_sxword_t;
+	d_un		union asm_elf64_d_un;
+};
+
+define asm_elf64_rel structure {
+	r_offset	type asm_elf64_addr_t;
+	r_info		type asm_elf64_xword_t;
+};
+
+define asm_elf64_rela structure {
+	r_offset	type asm_elf64_addr_t;
+	r_info		type asm_elf64_xword_t;
+	r_addend	type asm_elf64_sxword_t;
+};

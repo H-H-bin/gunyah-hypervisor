@@ -13,9 +13,14 @@
 // address space might be concurrently modified to unmap the physical address,
 // this must be called from an RCU critical section to ensure that the physical
 // address is not reused before it has finished.
+//
+// However, vdevice access handlers may need to drop the RCU critical section in
+// order to block. Therefore, this function also drops the RCU critical section,
+// to indicate to the caller that it is not safe to retain RCU-protected
+// pointers across it.
 vcpu_trap_result_t
 vdevice_access_phys(paddr_t pa, size_t size, register_t *val, bool is_write)
-	REQUIRE_RCU_READ;
+	RELEASE_RCU_READ;
 
 // Emulate an access to a virtual device that is not backed by physical memory.
 //

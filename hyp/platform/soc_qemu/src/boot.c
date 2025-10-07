@@ -13,8 +13,11 @@
 #include <partition.h>
 #include <partition_alloc.h>
 #include <platform_mem.h>
+#include <platform_memory_layout.h>
+#include <qcbor.h>
 #include <spinlock.h>
 #include <trace.h>
+#include <util.h>
 
 #include "event_handlers.h"
 
@@ -94,10 +97,8 @@ create_memextent(partition_t *root_partition, cspace_t *root_cspace,
 		 paddr_t phys_base, size_t size, pgtable_access_t access,
 		 memextent_memtype_t memtype, cap_id_t *new_cap_id)
 {
-	bool device_mem = (memtype == MEMEXTENT_MEMTYPE_DEVICE);
-
-	memextent_create_t     params_me = { .memextent = NULL,
-					     .memextent_device_mem = device_mem };
+	memextent_create_t     params_me = { .memextent		   = NULL,
+     .memextent_device_mem = true };
 	memextent_ptr_result_t me_ret;
 	me_ret = partition_allocate_memextent(root_partition, params_me);
 	if (me_ret.e != OK) {
@@ -108,11 +109,10 @@ create_memextent(partition_t *root_partition, cspace_t *root_cspace,
 	memextent_attrs_t attrs = memextent_attrs_default();
 	memextent_attrs_set_access(&attrs, access);
 	memextent_attrs_set_memtype(&attrs, memtype);
-#if defined(MODULE_MEM_MEMEXTENT_SPARSE)
-	if (device_mem) {
-		memextent_attrs_set_type(&attrs, MEMEXTENT_TYPE_SPARSE);
-	}
-#endif
+
+	static_assert(MODULE_MEM_MEMEXTENT_SPARSE,
+		      "SPARSE type must be defined");
+	memextent_attrs_set_type(&attrs, MEMEXTENT_TYPE_SPARSE);
 
 	spinlock_acquire(&me->header.lock);
 	error_t ret = memextent_configure(me, phys_base, size, attrs);
@@ -167,10 +167,6 @@ soc_qemu_handle_rootvm_init(partition_t *root_partition, cspace_t *root_cspace,
 				   HLOS_DT_BASE);
 	QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt, "hlos_ramfs_base",
 				   HLOS_RAM_FS_BASE);
-	QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt, "device_me_base",
-				   PLATFORM_DEVICES_BASE);
-	QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt, "device_me_size",
-				   PLATFORM_DEVICES_SIZE);
 
 #if defined(WATCHDOG_DISABLE)
 	QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt, "watchdog_supported", false);
@@ -182,13 +178,43 @@ soc_qemu_handle_rootvm_init(partition_t *root_partition, cspace_t *root_cspace,
 	// Long term the intention is for a system device-tree to allow fine
 	// grained memextent creation.
 
-	memextent_t *me = create_memextent(
-		root_partition, root_cspace, PLATFORM_DEVICES_BASE,
-		PLATFORM_DEVICES_SIZE, PGTABLE_ACCESS_RW,
-		MEMEXTENT_MEMTYPE_DEVICE, &hyp_env->device_me_capid);
+	paddr_t phys_address_start = 0U;
+	size_t	phys_address_size  = util_bit(PLATFORM_PHYS_ADDRESS_BITS);
+
+	memextent_t *me = create_memextent(root_partition, root_cspace,
+					   phys_address_start,
+					   phys_address_size, PGTABLE_ACCESS_RW,
+					   MEMEXTENT_MEMTYPE_DEVICE,
+					   &hyp_env->device_me_capid);
 
 	QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt, "device_me_capid",
 				   hyp_env->device_me_capid);
+
+	// Donate all devices to root memextent
+	const phys_range_t *device_layouts;
+	count_t		    device_count;
+
+	device_layouts = platform_get_device_layouts(&device_count);
+	assert((device_layouts != NULL) && (device_count > 0U));
+
+	QCBOREncode_OpenArrayInMap(qcbor_enc_ctxt, "device_ranges");
+
+	for (count_t i = 0U; i < device_count; i++) {
+		paddr_t phys_base = device_layouts[i].base;
+		size_t	size	  = device_layouts[i].size;
+
+		error_t ret = memextent_donate_device(
+			me, phys_base - phys_address_start, size);
+		if (ret != OK) {
+			panic("Error donate device memory to root memextent");
+		}
+		QCBOREncode_OpenArray(qcbor_enc_ctxt);
+		QCBOREncode_AddUInt64(qcbor_enc_ctxt, phys_base);
+		QCBOREncode_AddUInt64(qcbor_enc_ctxt, size);
+		QCBOREncode_CloseArray(qcbor_enc_ctxt);
+	}
+
+	QCBOREncode_CloseArray(qcbor_enc_ctxt);
 
 	// Derive memextents for GICD, GICR and watchdog to effectively remove
 	// them from the device memextent we provide to the rootvm.

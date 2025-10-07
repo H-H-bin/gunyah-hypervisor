@@ -7,11 +7,13 @@
 
 #include <compiler.h>
 #include <cpulocal.h>
+#include <globals.h>
 #include <log.h>
 #include <platform_features.h>
 #include <preempt.h>
 #include <rcu.h>
 #include <scheduler.h>
+#include <thread.h>
 #include <trace.h>
 #include <vet.h>
 
@@ -19,15 +21,14 @@
 
 asm_ordering_dummy_t vet_ordering;
 
-static bool trace_disabled = false;
-
 void
 vet_handle_boot_cold_init(void)
 {
 	platform_cpu_features_t features = platform_get_cpu_features();
 
-	trace_disabled = platform_cpu_features_get_trace_disable(&features);
-	if (trace_disabled) {
+	bool vet_trace_disabled_by_firmware =
+		platform_cpu_features_get_trace_disable(&features);
+	if (vet_trace_disabled_by_firmware) {
 		LOG(ERROR, INFO, "trace disabled");
 	}
 }
@@ -85,22 +86,28 @@ vet_handle_vcpu_activate_thread(thread_t *thread, vcpu_option_flags_t options)
 
 	assert(thread->kind == THREAD_KIND_VCPU);
 
+	const global_options_t *global_options = globals_get_options();
+	bool ete_present = global_options_get_ete_present(global_options);
+
 	bool hlos	   = vcpu_option_flags_get_hlos_vm(&options);
 	bool trace_allowed = vcpu_option_flags_get_trace_allowed(&options);
 
-	// TODO: currently we always give HLOS trace access.
-	if (trace_allowed && trace_disabled) {
-		// Not permitted
+	// TODO: currently we always give HLOS trace access, if ETE is present
+
+	if (!hlos && trace_allowed) {
+		// Not supported, fail
 		ret = false;
-	} else if (hlos && !trace_disabled) {
+	} else if (!ete_present) {
+		// ETE is not present. Succeed without enabling trace for any of
+		// the vCPUs.
+		ret = true;
+	} else if (hlos && trace_allowed) {
 		// Give HLOS threads trace access
 		vcpu_option_flags_set_trace_allowed(&thread->vcpu_options,
 						    true);
 		ret = true;
-	} else if (!hlos && trace_allowed) {
-		// Not supported
-		ret = false;
 	} else {
+		// Nothing to do
 		ret = true;
 	}
 

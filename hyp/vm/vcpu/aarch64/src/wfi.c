@@ -7,6 +7,7 @@
 
 #include <hypregisters.h>
 
+#include <atomic.h>
 #include <compiler.h>
 #include <idle.h>
 #include <log.h>
@@ -58,24 +59,26 @@ vcpu_handle_vcpu_trap_wfi(ESR_EL2_ISS_WFI_WFE_t iss)
 	(void)iss;
 #endif
 
+	scheduler_lock_nopreempt(current);
 #if !defined(PREEMPT_NULL)
-	bool vcpu_interrupted =
-		vcpu_runtime_flags_get_vcpu_interrupted(&current->vcpu_flags);
+	bool vcpu_interrupted = atomic_load_relaxed(&current->vcpu_interrupted);
 #if !defined(VCPU_IDLE_IN_EL1) || !VCPU_IDLE_IN_EL1
 	if (vcpu_runtime_flags_get_vcpu_can_idle(&current->vcpu_flags) &&
 	    !vcpu_interrupted) {
 		if (vcpu_block_start()) {
+			scheduler_unlock_nopreempt(current);
 			goto out;
 		}
 
 		bool need_schedule;
 		do {
+			scheduler_unlock_nopreempt(current);
 			need_schedule = idle_yield();
+			scheduler_lock_nopreempt(current);
 			// We may have received a wakeup while idle, so recheck
 			// the interrupted flag.
 			vcpu_interrupted =
-				vcpu_runtime_flags_get_vcpu_interrupted(
-					&current->vcpu_flags);
+				atomic_load_relaxed(&current->vcpu_interrupted);
 		} while (!need_schedule && !vcpu_interrupted);
 
 		vcpu_block_finish();
@@ -84,7 +87,9 @@ vcpu_handle_vcpu_trap_wfi(ESR_EL2_ISS_WFI_WFE_t iss)
 		// otherwise the reschedule is handled by the yield below after
 		// setting the WFI block flag.
 		if (need_schedule && vcpu_interrupted) {
-			scheduler_schedule();
+			scheduler_unlock_nopreempt(current);
+			(void)scheduler_schedule();
+			goto out;
 		}
 	}
 #endif // !VCPU_IDLE_IN_EL1
@@ -93,11 +98,11 @@ vcpu_handle_vcpu_trap_wfi(ESR_EL2_ISS_WFI_WFE_t iss)
        // preempt_disable() above, or by an IPI during the idle_yield() in the
        // WFI fastpath (if it is enabled).
 	if (vcpu_interrupted) {
+		scheduler_unlock_nopreempt(current);
 		goto out;
 	}
 #endif // !PREEMPT_NULL
 
-	scheduler_lock_nopreempt(current);
 	scheduler_block(current, SCHEDULER_BLOCK_VCPU_WFI);
 	scheduler_unlock_nopreempt(current);
 
@@ -140,11 +145,8 @@ vcpu_wakeup(thread_t *vcpu)
 	assert(vcpu->kind == THREAD_KIND_VCPU);
 
 #if !defined(PREEMPT_NULL)
-	if (vcpu == thread_get_self()) {
-		// Inhibit sleep in preempted WFI handlers (see above)
-		vcpu_runtime_flags_set_vcpu_interrupted(&vcpu->vcpu_flags,
-							true);
-	}
+	// Inhibit sleep in preempted WFI handlers (see above)
+	atomic_store_relaxed(&vcpu->vcpu_interrupted, true);
 #endif
 
 	trigger_vcpu_wakeup_event(vcpu);
@@ -162,7 +164,7 @@ vcpu_wakeup_self(void)
 
 #if !defined(PREEMPT_NULL)
 	// Inhibit sleep in preempted WFI handlers (see above)
-	vcpu_runtime_flags_set_vcpu_interrupted(&current->vcpu_flags, true);
+	atomic_store_relaxed(&current->vcpu_interrupted, true);
 #endif
 
 	trigger_vcpu_wakeup_self_event();
@@ -179,12 +181,11 @@ vcpu_expects_wakeup(const thread_t *thread)
 
 #if defined(MODULE_VM_VCPU_RUN)
 vcpu_run_state_t
-vcpu_arch_handle_vcpu_run_check(const thread_t *thread,
-				register_t     *state_data_0,
-				register_t     *state_data_1)
+vcpu_arch_handle_vcpu_run_check(const thread_t *vcpu, register_t *state_data_0,
+				register_t *state_data_1)
 {
 	vcpu_run_state_t state = VCPU_RUN_STATE_BLOCKED;
-	if (scheduler_is_blocked(thread, SCHEDULER_BLOCK_VCPU_WFI)) {
+	if (scheduler_is_blocked(vcpu, SCHEDULER_BLOCK_VCPU_WFI)) {
 		state	      = VCPU_RUN_STATE_EXPECTS_WAKEUP;
 		*state_data_0 = 0U;
 		*state_data_1 = (register_t)VCPU_RUN_WAKEUP_FROM_STATE_WFI;
@@ -202,7 +203,7 @@ vcpu_pending_wakeup(void)
 #if defined(PREEMPT_NULL)
 	return trigger_vcpu_pending_wakeup_event();
 #else
-	return vcpu_runtime_flags_get_vcpu_interrupted(&current->vcpu_flags) ||
+	return atomic_load_relaxed(&current->vcpu_interrupted) ||
 	       trigger_vcpu_pending_wakeup_event();
 #endif
 }
@@ -242,6 +243,6 @@ vcpu_handle_thread_exit_to_user(void)
 	thread_t *current = thread_get_self();
 
 	// Don't inhibit sleep in new WFI traps
-	vcpu_runtime_flags_set_vcpu_interrupted(&current->vcpu_flags, false);
+	atomic_store_relaxed(&current->vcpu_interrupted, false);
 #endif
 }

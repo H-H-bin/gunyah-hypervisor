@@ -33,45 +33,57 @@ extern register_t      trace_public_class_flags;
 	do {                                                                   \
 		register_t class_enabled_ = atomic_load_explicit(              \
 			&hyp_trace.enabled_class_flags, memory_order_relaxed); \
-		if (compiler_unexpected((class_enabled_ & classes) != 0U)) {   \
-			X;                                                     \
+		if (compiler_unexpected((class_enabled_ & (classes)) != 0U)) { \
+			(X);                                                   \
 		}                                                              \
 	} while (0)
 
-// Used for single class trace
+// Macros for tracing with a single trace class
 #if defined(PARASOFT_CYCLO)
 #define TRACE(tclass, id, ...)
+#define TRACE_LOCAL(tclass, id, ...)
 #else
 #define TRACE(tclass, id, ...)                                                 \
+	TRACE_EVENT(TRACE_CLASS_BITS(tclass), id, TRACE_ACTION_TRACE,          \
+		    __VA_ARGS__)
+#define TRACE_LOCAL(tclass, id, ...)                                           \
+	TRACE_EVENT(TRACE_CLASS_BITS(tclass), id, TRACE_ACTION_TRACE_LOCAL,    \
+		    __VA_ARGS__)
+#endif
+
+#if defined(INTERFACE_TRACE_PROFILE)
+#define TRACE_PROFILE(level, tclass, id, ...)                                  \
+	TRACE_EVENT(TRACE_CLASS_BITS(PROFILE_LEVEL##level) | (tclass), id,     \
+		    TRACE_ACTION_TRACE, __VA_ARGS__)
+#else
+#define TRACE_PROFILE(level, tclass, id, ...)                                  \
 	TRACE_EVENT(tclass, id, TRACE_ACTION_TRACE, __VA_ARGS__)
 #endif
-#define TRACE_LOCAL(tclass, id, ...)                                           \
-	TRACE_EVENT(tclass, id, TRACE_ACTION_TRACE_LOCAL, __VA_ARGS__)
 
-#define TRACE_EVENT(tclass, id, action, ...)                                   \
-	TRACE_MAYBE(TRACE_CLASS_BITS(tclass),                                  \
-		    TRACE_FUNC(id, action, __VA_ARGS__))
+#define TRACE_EVENT(classes, id, action, ...)                                  \
+	TRACE_MAYBE(classes, TRACE_FUNC(id, (action), __VA_ARGS__))
 
 #define TRACE_ADD0(id, action, ...)                                            \
-	trigger_trace_log_event(id, action, 0, 0, 0, 0, 0, 0)
+	trigger_trace_log_event((id), (action), 0, 0, 0, 0, 0, 0)
 
 #define TRACE_ADD1(id, action, a1, ...)                                        \
-	trigger_trace_log_event(id, action, a1, 0, 0, 0, 0, 0)
+	trigger_trace_log_event((id), (action), (a1), 0, 0, 0, 0, 0)
 
 #define TRACE_ADD2(id, action, a1, a2, ...)                                    \
-	trigger_trace_log_event(id, action, a1, a2, 0, 0, 0, 0)
+	trigger_trace_log_event((id), (action), (a1), (a2), 0, 0, 0, 0)
 
 #define TRACE_ADD3(id, action, a1, a2, a3, ...)                                \
-	trigger_trace_log_event(id, action, a1, a2, a3, 0, 0, 0)
+	trigger_trace_log_event((id), (action), (a1), (a2), (a3), 0, 0, 0)
 
 #define TRACE_ADD4(id, action, a1, a2, a3, a4, ...)                            \
-	trigger_trace_log_event(id, action, a1, a2, a3, a4, 0, 0)
+	trigger_trace_log_event((id), (action), (a1), (a2), (a3), (a4), 0, 0)
 
 #define TRACE_ADD5(id, action, a1, a2, a3, a4, a5, ...)                        \
-	trigger_trace_log_event(id, action, a1, a2, a3, a4, a5, 0)
+	trigger_trace_log_event((id), (action), (a1), (a2), (a3), (a4), (a5), 0)
 
 #define TRACE_ADD6(id, action, a1, a2, a3, a4, a5, a6, ...)                    \
-	trigger_trace_log_event(id, action, a1, a2, a3, a4, a5, a6)
+	trigger_trace_log_event((id), (action), (a1), (a2), (a3), (a4), (a5),  \
+				(a6))
 
 // Enable a set of trace classes.
 //
@@ -105,7 +117,8 @@ trace_get_class_flags(void);
 void
 trace_init(partition_t *partition, size_t size) REQUIRE_PREEMPT_DISABLED;
 
-#if defined(PLATFORM_TRACE_STANDALONE_REGION)
+#if defined(PLATFORM_TRACE_STANDALONE_REGION) &&                               \
+	PLATFORM_TRACE_STANDALONE_REGION
 // Use pre-allocated memory for trace buffer
 //
 // It stops using the trace boot buffer and starts using a pre-allocated

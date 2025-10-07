@@ -39,6 +39,11 @@ define arm_pv_time structure {
 	// should only be accessed while holding a reference to the thread.
 	data			pointer structure pv_time_data;
 
+	// Address of the VM's read-only mapping of the stolen time.
+	//
+	// This is only valid if data is non-NULL.
+	ipa			type vmaddr_t;
+
 	// Stolen time in ticks. Must only be accessed by the thread.
 	stolen_ticks		type ticks_t;
 
@@ -64,8 +69,4 @@ extend thread object {
 extend smccc_standard_hyp_function enumeration {
 	PV_TIME_FEATURES = 0x20;
 	PV_TIME_ST = 0x21;
-};
-
-extend addrspace_info_area_layout structure {
-	pv_time_data	array(PLATFORM_MAX_CORES) structure pv_time_data;
 };

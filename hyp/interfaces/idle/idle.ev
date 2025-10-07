@@ -21,4 +21,17 @@ setup_event idle_yield
 	return: idle_state_t = IDLE_STATE_IDLE
 	success: IDLE_STATE_IDLE
 
+// Called immediately before halting EL2 execution of the calling CPU.
+// Handlers can assume that this is a low-latency halt, so they can take
+// low-cost measures to avoid future wakeups, but do not need to fail or do
+// non-trivial work.
+//
+// Note that if a VCPU is current, it has already called vcpu_block_start() at
+// this point.
+event idle_block_start
+
+// Called after EL2 execution of the calling CPU is unblocked.
+event idle_block_finish
+
+// Called once the first time an idle thread starts at boot time.
 event idle_start

@@ -9,7 +9,8 @@
 // sections are permitted to nest; each call to this function must be balanced
 // by exactly one matching call to rcu_read_finish().
 //
-// The caller must not assume that this function disables preemption.
+// The caller must not assume that this function disables or does not disable
+// preemption.
 void
 rcu_read_start(void) ACQUIRE_RCU_READ;
 
@@ -40,7 +41,7 @@ rcu_enqueue(rcu_entry_t *rcu_entry, rcu_update_class_t rcu_update_class);
 // finish before this function can return, but other currently queued updates or
 // rcu_sync() calls may not have completed.
 void
-rcu_sync(void);
+rcu_sync(void) EXCLUDE_RCU_READ;
 
 // Block until the next grace period ends or the caller is killed.
 //
@@ -51,7 +52,25 @@ rcu_sync(void);
 // Note that if this returns false, the caller has preemption disabled and may
 // be running while blocked and/or on a CPU it does not have affinity to.
 bool
-rcu_sync_killable(void);
+rcu_sync_killable(void) EXCLUDE_RCU_READ;
+
+// Attempt to expedite completion of a recently enqueued update.
+//
+// This may be called to immediately perform any work on the local CPU that is
+// necessary for completion of any updates that have already been queued, if it
+// is possible to do so. Note that this does not affect other CPUs, so the grace
+// period is not guaranteed to complete before the function returns.
+//
+// This is used by the rcu_sync() implementation to avoid unnecessary
+// rescheduling.
+//
+// This function:
+// - May run RCU update handlers, so it must not be called from an RCU read-side
+//   critical section.
+// - May call scheduler_yield(), so it must not be called with locks held.
+// - May call ipi_clear(), so it must not be called from an IPI handler.
+void
+rcu_expedite(void) EXCLUDE_RCU_READ;
 
 // Check for pending updates on the calling CPU.
 //

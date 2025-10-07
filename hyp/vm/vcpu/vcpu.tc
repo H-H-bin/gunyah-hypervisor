@@ -49,3 +49,8 @@ extend vcpu_virq_type enumeration {
 extend virq_trigger enumeration {
 	vcpu_halt;
 };
+
+define vcpu_affinity_type public enumeration(explicit) {
+	cpu_index = -1;
+	platform_cpu_index = 0;
+};

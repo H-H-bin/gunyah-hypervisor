@@ -20,52 +20,30 @@
 #include "vic_base.h"
 
 error_t
-hypercall_hwirq_bind_virq(cap_id_t hwirq_cap, cap_id_t vic_cap, virq_t virq)
+hypercall_vic_bind_virq(cap_id_t irq_obj_cap, cap_id_t vic_cap, virq_t virq,
+			index_t index)
 {
 	error_t	  err;
 	cspace_t *cspace = cspace_get_self();
 
-	hwirq_ptr_result_t hwirq_r = cspace_lookup_hwirq(
-		cspace, hwirq_cap, CAP_RIGHTS_HWIRQ_BIND_VIC);
-	if (compiler_unexpected(hwirq_r.e) != OK) {
-		err = hwirq_r.e;
+	vic_ptr_result_t vic_r =
+		cspace_lookup_vic(cspace, vic_cap, CAP_RIGHTS_VIC_BIND_SOURCE);
+	if (compiler_unexpected(vic_r.e != OK)) {
+		err = vic_r.e;
 		goto out;
 	}
 
-	vic_ptr_result_t vic_r =
-		cspace_lookup_vic(cspace, vic_cap, CAP_RIGHTS_VIC_BIND_SOURCE);
-	if (compiler_unexpected(vic_r.e) != OK) {
-		err = vic_r.e;
-		goto out_release_hwirq;
-	}
-
-	err = trigger_vic_bind_hwirq_event(hwirq_r.r->action, vic_r.r,
-					   hwirq_r.r, virq);
-
+	err = trigger_vic_bind_virq_event(irq_obj_cap, vic_r.r, index, virq);
 	object_put_vic(vic_r.r);
-out_release_hwirq:
-	object_put_hwirq(hwirq_r.r);
 out:
 	return err;
 }
 
 error_t
-hypercall_hwirq_unbind_virq(cap_id_t hwirq_cap)
+hypercall_vic_unbind_virq(cap_id_t irq_obj_cap, index_t index)
 {
-	error_t	  err;
-	cspace_t *cspace = cspace_get_self();
+	error_t err = trigger_vic_unbind_virq_event(irq_obj_cap, index);
 
-	hwirq_ptr_result_t hwirq_r = cspace_lookup_hwirq(
-		cspace, hwirq_cap, CAP_RIGHTS_HWIRQ_BIND_VIC);
-	if (compiler_unexpected(hwirq_r.e) != OK) {
-		err = hwirq_r.e;
-		goto out;
-	}
-
-	err = trigger_vic_unbind_hwirq_event(hwirq_r.r->action, hwirq_r.r);
-
-	object_put_hwirq(hwirq_r.r);
-out:
 	return err;
 }
 
@@ -125,7 +103,7 @@ hypercall_vic_attach_vcpu(cap_id_t vic_cap, cap_id_t vcpu_cap, index_t index)
 
 	vic_ptr_result_t vic_r =
 		cspace_lookup_vic(cspace, vic_cap, CAP_RIGHTS_VIC_ATTACH_VCPU);
-	if (compiler_unexpected(vic_r.e) != OK) {
+	if (compiler_unexpected(vic_r.e != OK)) {
 		err = vic_r.e;
 		goto out;
 	}
@@ -167,7 +145,7 @@ hypercall_vic_bind_msi_source(cap_id_t vic_cap, cap_id_t msi_source_cap)
 
 	vic_ptr_result_t vic_r =
 		cspace_lookup_vic(cspace, vic_cap, CAP_RIGHTS_VIC_BIND_SOURCE);
-	if (compiler_unexpected(vic_r.e) != OK) {
+	if (compiler_unexpected(vic_r.e != OK)) {
 		err = vic_r.e;
 		goto out;
 	}

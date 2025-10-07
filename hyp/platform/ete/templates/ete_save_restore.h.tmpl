@@ -62,10 +62,10 @@ ete_save_registers(ete_context_t *context,
         #end while
     #else
         #if d.member_name == "TRCSTALLCTLR"
-            TRCIDR3_t trcidr3 = register_TRCIDR3_read();
+            TRCIDR3_t trcidr3 = register_TRCIDR3_read_barrier();
             if (TRCIDR3_get_STALLCTL(&trcidr3)) {
         #else if d.member_name == "TRCQCTLR"
-            TRCIDR0_t trcidr0 = register_TRCIDR0_read();
+            TRCIDR0_t trcidr0 = register_TRCIDR0_read_barrier();
             if (TRCIDR0_get_QFILT(&trcidr0)) {
         #end if
 
@@ -140,10 +140,10 @@ ete_restore_registers(ete_context_t *context,
         #end while
     #else
         #if d.member_name == "TRCSTALLCTLR"
-            TRCIDR3_t trcidr3 = register_TRCIDR3_read();
+            TRCIDR3_t trcidr3 = register_TRCIDR3_read_barrier();
             if (TRCIDR3_get_STALLCTL(&trcidr3)) {
         #else if d.member_name == "TRCQCTLR"
-            TRCIDR0_t trcidr0 = register_TRCIDR0_read();
+            TRCIDR0_t trcidr0 = register_TRCIDR0_read_barrier();
             if (TRCIDR0_get_QFILT(&trcidr0)) {
         #end if
 

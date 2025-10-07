@@ -22,7 +22,7 @@ define platform_ram_info structure {
 define platform_cpu_features bitfield<32> {
 };
 
-#if IRQ_HAS_MSI
+#if PLATFORM_HAS_MSI_TABLE
 
 define platform_msi_controller_id_t newtype uint32;
 define platform_msi_event_id_t newtype uint32;
@@ -44,7 +44,7 @@ define platform_msi_controller structure {
 	devices		pointer structure platform_msi_device;
 };
 
-#endif // IRQ_HAS_MSI
+#endif // PLATFORM_HAS_MSI_TABLE
 
 #if defined(ARCH_ARM)
 define platform_mpidr_mapping structure {

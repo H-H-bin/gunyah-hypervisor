@@ -47,6 +47,24 @@ error_t
 memextent_donate_sibling(memextent_t *from, memextent_t *to, size_t offset,
 			 size_t size);
 
+// Donate memory from a protected guest back to its host.
+//
+// This can only be used for sparse memory extents. The memory is reclaimed by
+// the parent extent.
+//
+// The donated memory must not currently be mapped to any address space by the
+// source extent, or ERROR_BUSY will be returned.
+error_t
+memextent_donate_protected_reclaim(memextent_t *from, size_t offset,
+				   size_t size);
+
+// Donate device memory to a extent.
+//
+// This can only be used for sparse memory extents. The memory extent must
+// be configured to MEMEXTENT_MEMTYPE_DEVICE and have no parent.
+error_t
+memextent_donate_device(memextent_t *me, size_t offset, size_t size);
+
 // Map a memory extent into a specified address space. The entire range is
 // mapped, except for any carveouts contained within the extent.
 //
@@ -55,8 +73,9 @@ memextent_donate_sibling(memextent_t *from, memextent_t *to, size_t offset,
 // mappings. These are RCU read operations and are guaranteed to complete (or
 // start using the new mapping) by the end of the next grace period.
 error_t
-memextent_map(memextent_t *me, addrspace_t *addrspace, vmaddr_t vm_base,
-	      memextent_mapping_attrs_t map_attrs);
+memextent_map(memextent_t *extent, addrspace_t *addrspace, vmaddr_t vm_base,
+	      memextent_mapping_attrs_t map_attrs,
+	      addrspace_map_flags_t	map_flags);
 
 // Map a portion of a memory extent into a specified address space. Only the
 // range specified by offset and size is mapped, excluding any carveouts
@@ -67,9 +86,10 @@ memextent_map(memextent_t *me, addrspace_t *addrspace, vmaddr_t vm_base,
 // mappings. These are RCU read operations and are guaranteed to complete (or
 // start using the new mapping) by the end of the next grace period.
 error_t
-memextent_map_partial(memextent_t *me, addrspace_t *addrspace, vmaddr_t vm_base,
-		      size_t offset, size_t size,
-		      memextent_mapping_attrs_t map_attrs);
+memextent_map_partial(memextent_t *extent, addrspace_t *addrspace,
+		      vmaddr_t vm_base, size_t offset, size_t size,
+		      memextent_mapping_attrs_t map_attrs,
+		      addrspace_map_flags_t	map_flags);
 
 // Unmap a memory extent from a specified address space. The entire range is
 // unmapped, except for any carveouts contained within the extent.
@@ -78,7 +98,8 @@ memextent_map_partial(memextent_t *me, addrspace_t *addrspace, vmaddr_t vm_base,
 // These are RCU read operations and are guaranteed to complete (or fault due to
 // the unmap) by the end of the next grace period.
 error_t
-memextent_unmap(memextent_t *me, addrspace_t *addrspace, vmaddr_t vm_base);
+memextent_unmap(memextent_t *extent, addrspace_t *addrspace, vmaddr_t vm_base,
+		addrspace_map_flags_t map_flags);
 
 // Unmap a portion of a memory extent from a specified address space. Only the
 // range specified by offset and size is unmapped, except for any carveouts
@@ -88,8 +109,9 @@ memextent_unmap(memextent_t *me, addrspace_t *addrspace, vmaddr_t vm_base);
 // These are RCU read operations and are guaranteed to complete (or fault due to
 // the unmap) by the end of the next grace period.
 error_t
-memextent_unmap_partial(memextent_t *me, addrspace_t *addrspace,
-			vmaddr_t vm_base, size_t offset, size_t size);
+memextent_unmap_partial(memextent_t *extent, addrspace_t *addrspace,
+			vmaddr_t vm_base, size_t offset, size_t size,
+			addrspace_map_flags_t map_flags);
 
 // Unmap a memory extent from all address spaces. The entire range is unmapped,
 // except for any carveouts contained within the extent.
@@ -97,12 +119,14 @@ memextent_unmap_partial(memextent_t *me, addrspace_t *addrspace,
 // There may still be in-progress EL2 operations using the removed mappings.
 // These are RCU read operations and are guaranteed to complete (or fault due to
 // the unmap) by the end of the next grace period.
-void
-memextent_unmap_all(memextent_t *me);
+error_t
+memextent_unmap_all(memextent_t *extent);
 
 // Zero all owned regions of a memory extent in the given range.
+//
+// The zeroed memory will be cleaned from the caches to the point of coherency.
 error_t
-memextent_zero_range(memextent_t *me, size_t offset, size_t size);
+memextent_zero_range(memextent_t *extent, size_t offset, size_t size);
 
 // Cache clean all owned regions of a memory extent in the given range.
 error_t
@@ -118,9 +142,9 @@ memextent_cache_flush_range(memextent_t *me, size_t offset, size_t size);
 // These are RCU read operations and are guaranteed to complete (or fault due to
 // reduced access rights) by the end of the next grace period.
 error_t
-memextent_update_access(memextent_t *me, addrspace_t *addrspace,
-			vmaddr_t		 vm_base,
-			memextent_access_attrs_t access_attrs);
+memextent_update_access(memextent_t *extent, addrspace_t *addrspace,
+			vmaddr_t vm_base, memextent_access_attrs_t access_attrs,
+			addrspace_map_flags_t map_flags);
 
 // Update the access rights on part of an existing mapping.
 //
@@ -128,9 +152,10 @@ memextent_update_access(memextent_t *me, addrspace_t *addrspace,
 // These are RCU read operations and are guaranteed to complete (or fault due to
 // reduced access rights) by the end of the next grace period.
 error_t
-memextent_update_access_partial(memextent_t *me, addrspace_t *addrspace,
+memextent_update_access_partial(memextent_t *extent, addrspace_t *addrspace,
 				vmaddr_t vm_base, size_t offset, size_t size,
-				memextent_access_attrs_t access_attrs);
+				memextent_access_attrs_t access_attrs,
+				addrspace_map_flags_t	 map_flags);
 
 // Returns true if a memextent is mapped in an addrspace.
 //
@@ -224,4 +249,8 @@ memextent_detach(partition_t *owner, memextent_t *extent);
 // physical address range is outside the memextent (including in a gap in a
 // sparse memextent), it will return an error.
 size_result_t
-memextent_get_offset_for_pa(memextent_t *me, paddr_t pa, size_t size);
+memextent_get_offset_for_pa(memextent_t *memextent, paddr_t pa, size_t size);
+
+// Register an extent to be sanitised on reset, if supported by the target.
+error_t
+memextent_sanitise_on_reset(memextent_t *me);

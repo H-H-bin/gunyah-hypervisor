@@ -29,7 +29,7 @@ thread_get_self(void);
 // This function will fail if the specified thread is already running on another
 // CPU. The scheduler is responsible for guaranteeing this.
 error_t
-thread_switch_to(thread_t *thread, ticks_t curticks) REQUIRE_PREEMPT_DISABLED;
+thread_switch_to(thread_t *thread, ticks_t schedtime) REQUIRE_PREEMPT_DISABLED;
 
 // Kill a thread. This marks it as exiting, sends an interrupt to any CPU that
 // is currently running it, and switches to it on the current CPU if it is not
@@ -101,7 +101,7 @@ thread_join_killable(thread_t *thread);
 // this should only be called by a thread that has strict affinity to the CPU
 // that is potentially powering off. This will typically be an idle thread.
 register_t
-thread_freeze(register_t (*fn)(register_t), register_t param,
+thread_freeze(register_t (*fn)(register_t input_param), register_t param,
 	      register_t resumed_result) REQUIRE_PREEMPT_DISABLED;
 
 // Reset the current thread's stack.
@@ -113,7 +113,7 @@ thread_freeze(register_t (*fn)(register_t), register_t param,
 // be unwound to clean anything up: no locks held, no stack variables on global
 // queues, etc.
 noreturn void
-thread_reset_stack(void (*fn)(register_t), register_t param);
+thread_reset_stack(void (*fn)(register_t input_param), register_t param);
 
 // Exit the current thread.
 //
@@ -121,3 +121,21 @@ thread_reset_stack(void (*fn)(register_t), register_t param);
 // stack if it is either in killed state or has no user context.
 noreturn void
 thread_exit(void);
+
+// Enter the current thread from a lower privilege level.
+//
+// This should be called by exception vectors to perform any maintenance tasks
+// necessary for entry into the hypervisor. The entry reason should identify the
+// reason the CPU entered the exception vector, and must not be NONE.
+void
+thread_entry_from_user(thread_entry_reason_t reason) RELEASE_PREEMPT_DISABLED;
+
+// Exit the current thread to a lower privilege level.
+//
+// This should be called by exception vectors to perform any maintenance tasks
+// necessary before exiting the hypervisor. The specified reason must match the
+// last entry reason for the calling thread. If the calling thread is newly
+// created and has never exited before, the reason must be NONE.
+void
+thread_exit_to_user(thread_entry_reason_t reason)
+	ACQUIRE_PREEMPT_DISABLED EXCLUDE_PREEMPT_DISABLED;

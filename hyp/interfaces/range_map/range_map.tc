@@ -1,0 +1,36 @@
+// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define range_map structure {
+};
+
+define range_map_type enumeration {
+	empty = 0;
+};
+
+define range_map_value union {
+};
+
+define range_map_entry structure {
+	type	enumeration range_map_type;
+	value	union range_map_value;
+};
+
+define range_map_lookup_result structure {
+	entry	structure range_map_entry;
+	size	size;
+};
+
+define range_map_callback enumeration {
+	reserved = 0;
+};
+
+define range_map_arg union {
+	raw	uintptr;
+};
+
+define range_map_config bitfield<32> {
+	7:0	max_bits	type count_t;
+	8	rcu_read	bool;
+};

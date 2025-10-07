@@ -6,10 +6,13 @@
 #include <hyptypes.h>
 #if !defined(NDEBUG)
 #include <string.h>
+#else
+#include <memclear.h>
 #endif
 
 #include <atomic.h>
 #include <compiler.h>
+#include <ipi.h>
 #include <object.h>
 #include <panic.h>
 #include <partition.h>
@@ -47,7 +50,8 @@ thread_standard_handle_object_create_thread(thread_create_t thread_create)
 	size_t stack_size = (thread_create.stack_size != 0U)
 				    ? thread_create.stack_size
 				    : thread_stack_size_default;
-	if (stack_size > THREAD_STACK_MAX_SIZE) {
+	if ((stack_size > THREAD_STACK_MAX_SIZE) ||
+	    (stack_size < THREAD_STACK_MIN_SIZE)) {
 		err = ERROR_ARGUMENT_SIZE;
 		goto out;
 	}
@@ -68,6 +72,8 @@ thread_standard_handle_object_create_thread(thread_create_t thread_create)
 	// Fill the stack with a pattern so we can detect maximum stack
 	// depth
 	(void)memset_s(stack.r, stack_size, 0x57, stack_size);
+#else
+	memclear(stack.r, stack_size);
 #endif
 
 	thread->stack_mem  = (uintptr_t)stack.r;
@@ -81,17 +87,16 @@ out:
 
 void
 thread_standard_unwind_object_create_thread(error_t	    result,
-					    thread_create_t create)
+					    thread_create_t thread_create)
 {
-	thread_t *thread = create.thread;
+	thread_t *thread = thread_create.thread;
 	assert(thread != NULL);
 	assert(result != OK);
 	assert(atomic_load_relaxed(&thread->state) == THREAD_STATE_INIT);
 
 	if (thread->stack_mem != 0U) {
-		(void)partition_free(thread->header.partition,
-				     (void *)thread->stack_mem,
-				     thread->stack_size);
+		partition_free(thread->header.partition,
+			       (void *)thread->stack_mem, thread->stack_size);
 		thread->stack_mem = 0U;
 	}
 }
@@ -152,9 +157,8 @@ thread_standard_handle_object_deactivate_thread(thread_t *thread)
 	}
 
 	if (thread->stack_mem != 0U) {
-		(void)partition_free(thread->header.partition,
-				     (void *)thread->stack_mem,
-				     thread->stack_size);
+		partition_free(thread->header.partition,
+			       (void *)thread->stack_mem, thread->stack_size);
 		thread->stack_mem = 0U;
 	}
 }
@@ -179,8 +183,14 @@ thread_switch_to(thread_t *thread, ticks_t schedtime)
 	thread_t *current = thread_get_self();
 	assert(thread != current);
 
+	// Trace to the cpu local buffer for improved per-core history
 	TRACE_LOCAL(INFO, INFO, "thread: ctx switch from: {:#x} to: {:#x}",
 		    (uintptr_t)current, (uintptr_t)thread);
+#if defined(INTERFACE_TRACE_PROFILE)
+	// The profile level 2 trace class will add this to the global trace
+	TRACE_PROFILE(2, 0U, INFO, "thread: ctx switch from: {:#x} to: {:#x}",
+		      (uintptr_t)current, (uintptr_t)thread);
+#endif
 
 	trigger_thread_save_state_event();
 	error_t err =
@@ -272,15 +282,46 @@ thread_exit(void)
 }
 
 void
-thread_standard_handle_thread_exit_to_user(void)
+thread_entry_from_user(thread_entry_reason_t reason)
+{
+	// It is important that only handlers without side-effects run here.
+	trigger_thread_entry_from_user_trace_event(reason);
+
+	trigger_thread_entry_from_user_event(reason);
+}
+
+void
+thread_exit_to_user(thread_entry_reason_t reason)
 {
 	thread_t *thread = thread_get_self();
-	assert(thread != NULL);
+	assert_safety(thread != NULL);
+
+	trigger_thread_exit_to_user_event(reason);
 
 	thread_state_t state = atomic_load_relaxed(&thread->state);
+
+	// Ensure that we reschedule if necessary before returning to userspace.
+	// This might happen more than once.
+	while (ipi_check_relaxed() &&
+	       compiler_expected(state == THREAD_STATE_READY)) {
+		trigger_thread_entry_from_user_event(
+			THREAD_ENTRY_REASON_INTERRUPT);
+		preempt_disable_in_irq();
+		if (ipi_handle_relaxed()) {
+			(void)scheduler_schedule();
+		}
+		preempt_enable_in_irq();
+		trigger_thread_exit_to_user_event(
+			THREAD_ENTRY_REASON_INTERRUPT);
+
+		state = atomic_load_relaxed(&thread->state);
+	}
+
 	if (compiler_unexpected(state == THREAD_STATE_KILLED)) {
 		thread_exit();
-	} else {
-		assert(state == THREAD_STATE_READY);
 	}
+	assert(state == THREAD_STATE_READY);
+
+	// It is important that only handlers without side-effects run here.
+	trigger_thread_exit_to_user_trace_event(reason);
 }

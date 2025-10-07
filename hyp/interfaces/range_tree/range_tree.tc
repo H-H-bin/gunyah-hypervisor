@@ -1,0 +1,20 @@
+// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define range_tree structure {
+};
+
+define range_tree_node structure {
+	base	size;
+	size	size;
+};
+
+define range_tree_lookup_result structure {
+	node	pointer structure range_tree_node;
+	size	size;
+};
+
+define range_tree_node_type enumeration {
+	none;
+};

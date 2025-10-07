@@ -4,5 +4,5 @@
 
 module allocator_list
 
-subscribe allocator_add_ram_range
+subscribe allocator_add_ram_range(owner, virt_base, size, attr)
 	priority last

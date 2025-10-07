@@ -20,6 +20,22 @@ idle_is_current(void) REQUIRE_PREEMPT_DISABLED;
 bool
 idle_yield(void) REQUIRE_PREEMPT_DISABLED;
 
+extern opaque_lock_t idle_blocked;
+
+// Prepare to block EL2 execution on the calling CPU.
+//
+// The block may take the form of a halting instruction such as WFI or WFE, or a
+// call into a higher exception level that is sensitive to wakeup events, such
+// as an SMCCC interruptible call.
+void
+idle_block_start(void) REQUIRE_PREEMPT_DISABLED ACQUIRE_LOCK(idle_blocked)
+	EXCLUDE_RCU_READ;
+
+// Clean up after resuming execution after blocking on the calling CPU.
+void
+idle_block_finish(void) REQUIRE_PREEMPT_DISABLED RELEASE_LOCK(idle_blocked)
+	EXCLUDE_RCU_READ;
+
 // Handle a wakeup event received during idle.
 idle_state_t
 idle_wakeup(void) REQUIRE_PREEMPT_DISABLED;

@@ -94,29 +94,37 @@ platform_timer_set_timeout(ticks_t timeout)
 ticks_t
 platform_timer_convert_ns_to_ticks(nanoseconds_t ns)
 {
-	return (ticks_t)((ns * PLATFORM_TIMER_NS_TO_FREQ_MULT) /
-			 PLATFORM_TIMER_FREQ_TO_NS_MULT);
+	__uint128_t ticks = ((__uint128_t)ns * PLATFORM_TIMER_NS_FREQ_SCALE) >>
+			    (64 - PLATFORM_TIMER_NS_SHIFT);
+
+	return (ticks_t)ticks;
 }
 
 nanoseconds_t
 platform_timer_convert_ticks_to_ns(ticks_t ticks)
 {
-	return (nanoseconds_t)((ticks * PLATFORM_TIMER_FREQ_TO_NS_MULT) /
-			       PLATFORM_TIMER_NS_TO_FREQ_MULT);
+	__uint128_t ns = ((__uint128_t)ticks * PLATFORM_TIMER_NS_SCALE) >>
+			 (64 - PLATFORM_TIMER_NSFREQ_SHIFT);
+
+	return (nanoseconds_t)ns;
 }
 
 ticks_t
 platform_timer_convert_ms_to_ticks(milliseconds_t ms)
 {
-	return (ticks_t)((ms * PLATFORM_TIMER_MS_TO_FREQ_MULT) /
-			 PLATFORM_TIMER_FREQ_TO_MS_MULT);
+	__uint128_t ticks = ((__uint128_t)ms * PLATFORM_TIMER_MS_FREQ_SCALE) >>
+			    (64 - PLATFORM_TIMER_MS_SHIFT);
+
+	return (ticks_t)ticks;
 }
 
 milliseconds_t
 platform_timer_convert_ticks_to_ms(ticks_t ticks)
 {
-	return (milliseconds_t)((ticks * PLATFORM_TIMER_FREQ_TO_MS_MULT) /
-				PLATFORM_TIMER_MS_TO_FREQ_MULT);
+	__uint128_t ms = ((__uint128_t)ticks * PLATFORM_TIMER_MS_SCALE) >>
+			 (64 - PLATFORM_TIMER_MSFREQ_SHIFT);
+
+	return (milliseconds_t)ms;
 }
 
 void

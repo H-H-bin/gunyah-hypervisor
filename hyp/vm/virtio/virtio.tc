@@ -1,0 +1,35 @@
+// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define virtio structure {
+	transport_type	enumeration virtio_transport_type;
+	backend_type	enumeration virtio_backend_type;
+
+	device_type	enumeration virtio_device_type;
+
+	config_cache_me	pointer object memextent;
+	config_range	structure virt_range;
+	config_size	size;
+	config_offset	size;
+	config_cache	pointer union virtio_config_space;
+
+	status_lock	structure spinlock;
+	status		bitfield virtio_status;
+	features_ok_set	bool;
+	reset_request	bool;
+
+	shutdown	bool;
+
+	config_update	bool(atomic);
+	config_gen	uint8(atomic);
+
+	dev_feat	array(VIRTIO_FEAT_WORDS) uint32;
+	drv_feat	array(VIRTIO_FEAT_WORDS) uint32;
+
+	vqs		type count_t;
+	queue_size_max	array(VIRTIO_MAX_VQS) uint32;
+	queue_info	array(VIRTIO_MAX_VQS) structure virtio_queue_info;
+
+	frontend_data	union virtio_frontend(contained);
+};

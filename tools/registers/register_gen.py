@@ -6,21 +6,37 @@
 
 from Cheetah.Template import Template
 
+import os
 import argparse
 import itertools
 import subprocess
 import logging
 import sys
+import pickle
+
+
+# Determine the location of this script.
+__loc__ = os.path.realpath(os.path.join(os.getcwd(),
+                                        os.path.dirname(__file__)))
+
+# The typed directory is added to the sys path so that when the pickle is
+# loaded it can find the corresponding ast nodes.
+typed_path = os.path.join(__loc__, '..', 'typed')
+sys.path.append(typed_path)
+
+
+type_size = dict()
+
 
 logger = logging.getLogger(__name__)
 
 valid_access_strs = \
     set([''.join(x) for x in itertools.chain.from_iterable(
-        itertools.combinations('oOrwRW', r) for r in range(1, 6))])
+        itertools.combinations('oOrwRWm', r) for r in range(1, 7))])
 
 
 class register:
-    def __init__(self, name, type_name, variants=[], access='rw'):
+    def __init__(self, name, type_name, features=[], variants=[], access='rw'):
         if access in ['o', 'O']:
             access += 'rw'
         if access not in valid_access_strs:
@@ -28,6 +44,7 @@ class register:
             sys.exit(1)
         self.name = name
         self.type_name = type_name
+        self._features = tuple(features)
         self._variants = variants
         self._read = 'r' in access
         self._write = 'w' in access
@@ -35,6 +52,11 @@ class register:
         self._barrier_write = 'W' in access
         self._ordered = 'O' in access
         self._non_ordered = 'o' in access or 'O' not in access
+        self._barrier_read = 'm' in access
+
+    @property
+    def features(self):
+        return self._features
 
     @property
     def variants(self):
@@ -46,14 +68,20 @@ class register:
             if v.endswith('!'):
                 ret.append((v[:-1],
                             type_name if self.type_name.endswith(
-                                '!') else v[:-1]))
+                                '!') else v[:-1],
+                            type_size[type_name] if self.type_name.endswith(
+                                '!') else type_size[v[:-1]]))
             else:
                 ret.append(('_'.join((self.name, v)),
                             type_name if self.type_name.endswith(
-                                '!') else '_'.join((type_name, v))))
+                                '!') else '_'.join((type_name, v)),
+                            type_size[type_name] if self.type_name.endswith(
+                                '!') else type_size['_'.join((type_name, v))]))
 
         if not ret:
-            ret = [(self.name, type_name)]
+            size = int(int(type_name[4:])/8) if type_name.startswith(
+                'uint') else type_size[type_name]
+            ret = [(self.name, type_name, size)]
         return sorted(ret)
 
     @property
@@ -63,6 +91,10 @@ class register:
     @property
     def is_volatile(self):
         return self._volatile_read
+
+    @property
+    def is_readable_barrier(self):
+        return self._barrier_read
 
     @property
     def is_writable(self):
@@ -94,26 +126,33 @@ def generate_accessors(template, input, ns):
         if name in registers:
             raise Exception("duplicate register:", name)
 
-        if len(tokens) == 1:
-            registers[name] = register(name, name)
-            continue
-        args = tokens[1]
+        kwargs = {}
 
         type_name = name
+        args = tokens[1] if len(tokens) > 1 else ''
+
+        if args.startswith('+'):
+            try:
+                features, args = args[1:].split(maxsplit=1)
+            except ValueError:
+                features = args[1:]
+                args = ''
+            kwargs['features'] = features.split(',')
+
         if args.startswith('<'):
             type_name, args = args[1:].split('>', maxsplit=1)
             args = args.strip()
 
-        identifiers = []
         if args.startswith('['):
-            identifiers, args = args[1:].split(']', maxsplit=1)
-            identifiers = identifiers.split()
+            variants, args = args[1:].split(']', maxsplit=1)
+            variants = variants.split()
             args = args.strip()
+            kwargs['variants'] = variants
 
         if args:
-            registers[name] = register(name, type_name, identifiers, args)
-        else:
-            registers[name] = register(name, type_name, identifiers)
+            kwargs['access'] = args
+
+        registers[name] = register(name, type_name, **kwargs)
 
     ns['registers'] = [registers[r] for r in sorted(registers.keys())]
 
@@ -143,7 +182,17 @@ def main():
     args.add_argument("input", metavar='INPUT', nargs='*',
                       help="Input type register file to process",
                       type=argparse.FileType('r', encoding="utf-8"))
+    args.add_argument('-p', '--load-pickle',
+                      type=argparse.FileType('rb'),
+                      help="Load the IR from typed Python pickle")
     options = args.parse_args()
+
+    # Load typed pickle to get the types used for the registers
+    ir = pickle.load(options.load_pickle)
+    for d in ir.definitions:
+        if d.type_name not in type_size:
+            if d.category == "bitfield":
+                type_size[d.type_name] = d.size
 
     output = ""
 

@@ -59,7 +59,7 @@ extern "C" {
 
  This will cause trouble on a machine where size_t is less than 32-bits.
  */
-#define QCBOR_MAX_ARRAY_OFFSET (UINT32_MAX - 100)
+#define QCBOR_MAX_ARRAY_OFFSET (UINT32_MAX - 100U)
 
 /* The number of tags that are 16-bit or larger that can be handled
  in a decode.
@@ -100,23 +100,23 @@ extern "C" {
 #define FLOAT_ERR_CODE_NO_FLOAT_HW(x)		   QCBOR_ERR_ALL_FLOAT_DISABLED
 #define FLOAT_ERR_CODE_NO_HALF_PREC_NO_FLOAT_HW(x) QCBOR_ERR_ALL_FLOAT_DISABLED
 #else /* USEFULBUF_DISABLE_ALL_FLOAT*/
-#define FLOAT_ERR_CODE_NO_FLOAT(x) x
+#define FLOAT_ERR_CODE_NO_FLOAT(x) (x)
 #ifdef QCBOR_DISABLE_PREFERRED_FLOAT
 #define FLOAT_ERR_CODE_NO_HALF_PREC(x) QCBOR_ERR_HALF_PRECISION_DISABLED
 #define FLOAT_ERR_CODE_NO_HALF_PREC_NO_FLOAT_HW(x)                             \
 	QCBOR_ERR_HALF_PRECISION_DISABLED
 #else /* QCBOR_DISABLE_PREFERRED_FLOAT */
-#define FLOAT_ERR_CODE_NO_HALF_PREC(x) x
+#define FLOAT_ERR_CODE_NO_HALF_PREC(x) (x)
 #ifdef QCBOR_DISABLE_FLOAT_HW_USE
 #define FLOAT_ERR_CODE_NO_HALF_PREC_NO_FLOAT_HW(x) QCBOR_ERR_HW_FLOAT_DISABLED
 #else
-#define FLOAT_ERR_CODE_NO_HALF_PREC_NO_FLOAT_HW(x) x
+#define FLOAT_ERR_CODE_NO_HALF_PREC_NO_FLOAT_HW(x) (x)
 #endif
 #endif /* QCBOR_DISABLE_PREFERRED_FLOAT */
 #ifdef QCBOR_DISABLE_FLOAT_HW_USE
 #define FLOAT_ERR_CODE_NO_FLOAT_HW(x) QCBOR_ERR_HW_FLOAT_DISABLED
 #else /* QCBOR_DISABLE_FLOAT_HW_USE */
-#define FLOAT_ERR_CODE_NO_FLOAT_HW(x) x
+#define FLOAT_ERR_CODE_NO_FLOAT_HW(x) (x)
 #endif /* QCBOR_DISABLE_FLOAT_HW_USE */
 #endif /*USEFULBUF_DISABLE_ALL_FLOAT*/
 
@@ -317,13 +317,13 @@ struct QCBORDecodeContext_s {
 
 // Used internally in the impementation here
 // Must not conflict with any of the official CBOR types
-#define CBOR_MAJOR_NONE_TYPE_RAW	   9
-#define CBOR_MAJOR_NONE_TAG_LABEL_REORDER  10
-#define CBOR_MAJOR_NONE_TYPE_BSTR_LEN_ONLY 11
-#define CBOR_MAJOR_NONE_TYPE_OPEN_BSTR	   12
+#define CBOR_MAJOR_NONE_TYPE_RAW	   9U
+#define CBOR_MAJOR_NONE_TAG_LABEL_REORDER  10U
+#define CBOR_MAJOR_NONE_TYPE_BSTR_LEN_ONLY 11U
+#define CBOR_MAJOR_NONE_TYPE_OPEN_BSTR	   12U
 
 // Add this to types to indicate they are to be encoded as indefinite lengths
-#define QCBOR_INDEFINITE_LEN_TYPE_MODIFIER 0x80
+#define QCBOR_INDEFINITE_LEN_TYPE_MODIFIER 0x80U
 #define CBOR_MAJOR_NONE_TYPE_ARRAY_INDEFINITE_LEN                              \
 	CBOR_MAJOR_TYPE_ARRAY + QCBOR_INDEFINITE_LEN_TYPE_MODIFIER
 #define CBOR_MAJOR_NONE_TYPE_MAP_INDEFINITE_LEN                                \

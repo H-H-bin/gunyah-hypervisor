@@ -1,0 +1,12 @@
+// © 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+interface watchdog
+
+// Triggered before patting a watchdog object.
+//
+// This event is triggered so any necessary bark/bite adjustments could be done
+// before the watchdog is patted.
+event watchdog_pat_pre
+	param wdt: watchdog_t *

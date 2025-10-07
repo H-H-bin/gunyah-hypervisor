@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <types/bitmap.h>
+#include <bitmap.h>
 
 define SCHEDULER_VARIANT constant enumeration scheduler_variant = 0x1;
 

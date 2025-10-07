@@ -6,7 +6,9 @@
 #include <hyptypes.h>
 
 #include <atomic.h>
+#include <qcbor.h>
 #include <scheduler.h>
+#include <thread.h>
 #include <vcpu.h>
 
 #include "event_handlers.h"

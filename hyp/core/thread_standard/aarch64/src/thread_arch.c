@@ -87,12 +87,12 @@ thread_arch_switch_thread(thread_t *next_thread, ticks_t *schedtime)
 	register uintptr_t  old_context __asm__("x5") =
 		(uintptr_t)&old->context.pc;
 	static_assert(offsetof(thread_t, context.sp) ==
-			      offsetof(thread_t, context.pc) +
-				      sizeof(next_thread->context.pc),
+			      (offsetof(thread_t, context.pc) +
+			       sizeof(next_thread->context.pc)),
 		      "PC and SP must be adjacent in context");
 	static_assert(offsetof(thread_t, context.fp) ==
-			      offsetof(thread_t, context.sp) +
-				      sizeof(next_thread->context.sp),
+			      (offsetof(thread_t, context.sp) +
+			       sizeof(next_thread->context.sp)),
 		      "SP and FP must be adjacent in context");
 
 	// The new PC must be in x16 or x17 so ARMv8.5-BTI will treat the BR
@@ -198,12 +198,12 @@ thread_freeze(fptr_t fn, register_t param, register_t resumed_result)
 	register bool	is_resuming __asm__("x5");
 
 	static_assert(offsetof(thread_t, context.sp) ==
-			      offsetof(thread_t, context.pc) +
-				      sizeof(thread->context.pc),
+			      (offsetof(thread_t, context.pc) +
+			       sizeof(thread->context.pc)),
 		      "PC and SP must be adjacent in context");
 	static_assert(offsetof(thread_t, context.fp) ==
-			      offsetof(thread_t, context.sp) +
-				      sizeof(thread->context.sp),
+			      (offsetof(thread_t, context.sp) +
+			       sizeof(thread->context.sp)),
 		      "SP and FP must be adjacent in context");
 
 	__asm__ volatile(

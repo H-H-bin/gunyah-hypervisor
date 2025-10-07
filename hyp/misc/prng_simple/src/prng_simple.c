@@ -39,6 +39,7 @@
 #include <platform_timer.h>
 #include <prng.h>
 #include <spinlock.h>
+#include <timer_queue.h>
 #include <trace.h>
 #include <util.h>
 
@@ -57,6 +58,8 @@
 #define BUFFER_WORDS	   (BUFFER_BLOCKS * BLOCK_WORDS)
 
 #define REKEY_TIMEOUT_NS ((uint64_t)300U * 1000000000U) // 300 seconds
+#define REKEY_RETRY_NS	 ((uint64_t)33U * 1000000U)	// 33 ms
+#define REKEY_RETRY_MAX	 9000U				// 297 seconds
 
 extern uint32_t hypervisor_prng_seed[KEY_WORDS];
 extern uint64_t hypervisor_prng_nonce;
@@ -80,6 +83,8 @@ static bool prng_initialized = false;
 
 static spinlock_t   prng_lock;
 static prng_data_t *prng_data PTR_PROTECTED_BY(prng_lock);
+static timer_t	    prng_timer PROTECTED_BY(prng_lock);
+static count_t	    prng_retry_count PROTECTED_BY(prng_lock) = 0U;
 
 void
 prng_simple_handle_boot_runtime_first_init(void)
@@ -102,7 +107,7 @@ prng_simple_handle_boot_runtime_first_init(void)
 
 	prng_data->pool_index = BUFFER_WORDS; // Buffer is Empty
 	(void)memscpy(&prng_data->key, sizeof(prng_data->key),
-		      hypervisor_prng_seed, sizeof(prng_data->key));
+		      hypervisor_prng_seed, sizeof(hypervisor_prng_seed));
 
 	// Ensure no stale copies remain in ram
 	assert(hypervisor_prng_seed != NULL);
@@ -133,6 +138,8 @@ prng_simple_handle_boot_runtime_first_init(void)
 	(void)memset_s(&hypervisor_prng_nonce, sizeof(hypervisor_prng_nonce), 0,
 		       sizeof(hypervisor_prng_nonce));
 	CACHE_CLEAN_INVALIDATE_OBJECT(hypervisor_prng_nonce);
+
+	timer_init_object(&prng_timer, TIMER_ACTION_PRNG_UPDATE_RETRY);
 
 	prng_initialized = true;
 	spinlock_release_nopreempt(&prng_lock);
@@ -188,6 +195,24 @@ add_platform_entropy(void) REQUIRE_SPINLOCK(prng_lock)
 }
 
 static void
+prng_update_timer(ticks_t now, bool need_update) REQUIRE_SPINLOCK(prng_lock)
+{
+	bool queued = timer_is_queued(&prng_timer);
+
+	if (!need_update) {
+		prng_retry_count = 0U;
+	}
+
+	if (need_update && !queued) {
+		timer_enqueue(&prng_timer, now + REKEY_RETRY_NS);
+	} else if (!need_update && queued) {
+		timer_dequeue(&prng_timer);
+	} else {
+		// Nothing to do
+	}
+}
+
+static void
 prng_update(void) REQUIRE_SPINLOCK(prng_lock)
 {
 	uint32_t counter = 1U;
@@ -197,10 +222,13 @@ prng_update(void) REQUIRE_SPINLOCK(prng_lock)
 
 	// Add new key entropy periodically, this is not critical if platform
 	// is busy, we'll try again next time.
-	if ((now - prng_data->key_timestamp) > prng_data->key_timeout) {
-		if (add_platform_entropy()) {
+	if (compiler_unexpected((now - prng_data->key_timestamp) >
+				prng_data->key_timeout)) {
+		bool success = add_platform_entropy();
+		if (success) {
 			prng_data->key_timestamp = now;
 		}
+		prng_update_timer(now, success);
 	}
 
 	// Generate a new set of blocks
@@ -236,6 +264,22 @@ prng_update(void) REQUIRE_SPINLOCK(prng_lock)
 				BUFFER_DATA_OFFSET * sizeof(uint32_t));
 
 	prng_data->pool_index = BUFFER_DATA_OFFSET;
+}
+
+bool
+prng_simple_handle_timer_action(void)
+{
+	spinlock_acquire_nopreempt(&prng_lock);
+
+	prng_retry_count += 1U;
+	prng_update();
+
+	if (prng_retry_count >= REKEY_RETRY_MAX) {
+		panic("prng re-key failed");
+	}
+
+	spinlock_release_nopreempt(&prng_lock);
+	return true;
 }
 
 uint64_result_t

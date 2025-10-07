@@ -6,6 +6,8 @@
 #include <hyptypes.h>
 #include <limits.h>
 
+#include <hypconstants.h>
+
 #include <atomic.h>
 #include <compiler.h>
 #include <cpulocal.h>
@@ -65,7 +67,7 @@ void
 ipi_others_relaxed(ipi_reason_t ipi)
 {
 	assert(ipi <= IPI_REASON__MAX);
-	const register_t  ipi_bit  = util_bit(ipi);
+	const register_t  ipi_bit  = util_bit((uint8_t)ipi);
 	const cpu_index_t this_cpu = cpulocal_get_index();
 
 	for (cpu_index_t i = 0U; cpulocal_index_valid(i); i++) {
@@ -105,7 +107,7 @@ static bool
 ipi_one_and_check_wakeup_needed(ipi_reason_t ipi, cpu_index_t cpu)
 {
 	assert(ipi <= IPI_REASON__MAX);
-	const register_t ipi_bit = util_bit(ipi);
+	const register_t ipi_bit = util_bit((uint8_t)ipi);
 
 	assert(cpulocal_index_valid(cpu));
 
@@ -155,7 +157,7 @@ ipi_clear_relaxed(ipi_reason_t ipi)
 {
 	assert(ipi <= IPI_REASON__MAX);
 
-	const register_t ipi_bit = util_bit(ipi);
+	const register_t ipi_bit = util_bit((uint8_t)ipi);
 
 	register_t old_val = atomic_fetch_and_explicit(
 		&CPULOCAL(ipi_pending).bits, ~ipi_bit, memory_order_acquire);
@@ -179,11 +181,12 @@ ipi_handle_pending(register_t pending) REQUIRE_PREEMPT_DISABLED
 	bool reschedule = false;
 
 	while (pending != 0U) {
-		index_t bit = REGISTER_BITS - 1U - compiler_clz(pending);
+		index_t bit =
+			(index_t)REGISTER_BITS - 1U - compiler_clz(pending);
 		pending &= ~util_bit(bit);
 		if (bit <= (index_t)IPI_REASON__MAX) {
 			ipi_reason_t ipi = (ipi_reason_t)bit;
-			if (trigger_ipi_received_event(ipi)) {
+			if (trigger_ipi_received_trace_event(ipi)) {
 				reschedule = true;
 			}
 		}
@@ -197,7 +200,7 @@ ipi_handle_pending(register_t pending) REQUIRE_PREEMPT_DISABLED
 bool
 ipi_handle_platform_ipi(ipi_reason_t ipi)
 {
-	if (ipi_clear_relaxed(ipi) && trigger_ipi_received_event(ipi)) {
+	if (ipi_clear_relaxed(ipi) && trigger_ipi_received_trace_event(ipi)) {
 		// We can't reschedule immediately as that might leave other
 		// IRQs unhandled, so defer the reschedule.
 		//
@@ -225,6 +228,12 @@ ipi_handle_platform_ipi(void)
 #endif
 
 bool
+ipi_handle_ipi_received_trace(ipi_reason_t reason)
+{
+	return trigger_ipi_received_event(reason);
+}
+
+bool
 ipi_handle_relaxed(void)
 {
 	assert_preempt_disabled();
@@ -237,7 +246,8 @@ ipi_handle_relaxed(void)
 		ipi_reason_t ipi =
 			(ipi_reason_t)((register_t)(REGISTER_BITS - 1U -
 						    compiler_clz(pending)));
-		if (ipi_clear_relaxed(ipi) && trigger_ipi_received_event(ipi)) {
+		if (ipi_clear_relaxed(ipi) &&
+		    trigger_ipi_received_trace_event(ipi)) {
 			reschedule = true;
 		}
 		pending = atomic_load_relaxed(local_pending);
@@ -246,15 +256,12 @@ ipi_handle_relaxed(void)
 	return reschedule;
 }
 
-void
-ipi_handle_thread_exit_to_user(thread_entry_reason_t reason)
+bool
+ipi_check_relaxed(void)
 {
-	// Relaxed IPIs are handled directly by the IRQ module for interrupts.
-	if (reason != THREAD_ENTRY_REASON_INTERRUPT) {
-		if (ipi_handle_relaxed()) {
-			(void)scheduler_schedule();
-		}
-	}
+	assert_preempt_disabled();
+	_Atomic register_t *local_pending = &CPULOCAL(ipi_pending).bits;
+	return atomic_load_relaxed(local_pending) != 0U;
 }
 
 idle_state_t
@@ -266,8 +273,10 @@ ipi_handle_idle_yield(bool in_idle_thread)
 #if IPI_FAST_WAKEUP
 	bool	   must_schedule;
 	register_t pending;
+
 	do {
 		// Mark ourselves as waiting in idle.
+		idle_block_start();
 		(void)atomic_fetch_or_explicit(local_pending,
 					       IPI_WAITING_IN_IDLE,
 					       memory_order_relaxed);
@@ -293,6 +302,7 @@ ipi_handle_idle_yield(bool in_idle_thread)
 		// IPI_WAITING_IN_IDLE bit if it is still set.
 		pending = atomic_exchange_explicit(local_pending, 0U,
 						   memory_order_acquire);
+		idle_block_finish();
 
 		// Handle the pending events, checking if a reschedule is
 		// required.
@@ -332,8 +342,9 @@ ipi_handle_preempt_interrupt(void)
 {
 #if IPI_FAST_WAKEUP
 	// Clear the waiting-in-idle flag, to force idle_yield to exit.
-	atomic_fetch_and_explicit(&CPULOCAL(ipi_pending).bits,
-				  ~IPI_WAITING_IN_IDLE, memory_order_relaxed);
+	(void)atomic_fetch_and_explicit(&CPULOCAL(ipi_pending).bits,
+					~IPI_WAITING_IN_IDLE,
+					memory_order_relaxed);
 	// Note that IPIs are always handled by the caller after this event
 	// completes, regardless of its result.
 #endif

@@ -6,6 +6,9 @@
 #define require_spinlock(lock)                                                 \
 	require_preempt_disabled;                                              \
 	require_lock(lock)
+#define release_spinlock(lock)                                                 \
+	release_preempt_disabled;                                              \
+	release_lock(lock)
 #else
 #define ACQUIRE_SPINLOCK(lock)	  ACQUIRE_LOCK(lock) ACQUIRE_PREEMPT_DISABLED
 #define ACQUIRE_SPINLOCK_NP(lock) ACQUIRE_LOCK(lock) REQUIRE_PREEMPT_DISABLED

@@ -5,7 +5,15 @@
 // IRQ functions
 
 count_t
-gicv3_irq_max(void);
+gicv3_spi_max(void);
+
+#if GICV3_EXT_IRQS
+count_t
+gicv3_espi_max(void);
+
+count_t
+gicv3_eppi_max(void);
+#endif
 
 gicv3_irq_type_t
 gicv3_get_irq_type(irq_t irq);
@@ -62,6 +70,9 @@ gicv3_irq_priority_drop(irq_t irq);
 
 void
 gicv3_irq_deactivate(irq_t irq);
+
+void
+gicv3_irq_deactivate_forwarded(irq_t irq);
 
 void
 gicv3_irq_deactivate_percpu(irq_t irq, cpu_index_t cpu);

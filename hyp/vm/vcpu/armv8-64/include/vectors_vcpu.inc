@@ -80,7 +80,12 @@
 
 	vcpu_pauth_exit_key GA, \tp, \tl, \th
 
-	cbz	\tmp, vcpu_pauth_exit_failed
+#ifndef HYPVM_WITH_COVERAGE
+	cbz     \tmp, vcpu_pauth_exit_failed
+#else
+	cbnz \tmp,1f;
+	b vcpu_pauth_exit_failed; 1:
+#endif
 #endif
 .endm
 

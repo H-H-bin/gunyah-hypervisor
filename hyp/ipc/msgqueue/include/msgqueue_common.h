@@ -1,5 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
-//
+// 2020 Qualcomm Innovation Center, Inc. All rights reserved.
 // SPDX-License-Identifier: BSD-3-Clause
 
 // Configure the message queue.
@@ -31,4 +30,4 @@ msgqueue_bind(msgqueue_t *msgqueue, vic_t *vic, virq_t virq,
 	      virq_source_t *source, virq_trigger_t trigger);
 
 void
-msgqueue_unbind(virq_source_t *source);
+msgqueue_unbind(virq_source_t *source) EXCLUDE_PREEMPT_DISABLED;

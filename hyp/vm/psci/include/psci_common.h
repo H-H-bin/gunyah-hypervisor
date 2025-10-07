@@ -17,6 +17,10 @@ psci_vcpu_clear_vcpu_state(thread_t *thread, cpu_index_t target_cpu)
 uint32_t
 psci_cpu_suspend_features(void);
 
+psci_suspend_powerstate_stateid_t
+psci_vcpu_get_poweroff_state(thread_t *vcpu, cpu_index_t cpu,
+			     register_t prev_online) REQUIRE_PREEMPT_DISABLED;
+
 // Implemented by psci_common
 
 psci_ret_t
@@ -27,7 +31,7 @@ psci_suspend(psci_suspend_powerstate_t suspend_state,
 bool
 psci_set_vpm_active_pcpus_bit(cpu_index_t bit);
 
-bool
+index_t
 psci_clear_vpm_active_pcpus_bit(cpu_index_t bit);
 
 void

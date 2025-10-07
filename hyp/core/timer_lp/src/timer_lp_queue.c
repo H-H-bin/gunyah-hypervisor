@@ -7,6 +7,7 @@
 
 #include <hypcontainers.h>
 
+#include <atomic.h>
 #include <cpulocal.h>
 #include <ipi.h>
 #include <list.h>
@@ -14,6 +15,7 @@
 #include <preempt.h>
 #include <spinlock.h>
 #include <timer_queue.h>
+#include <util.h>
 
 #include "event_handlers.h"
 
@@ -33,11 +35,11 @@ timer_lp_queue_handle_boot_cold_init(void)
 }
 
 void
-timer_lp_queue_handle_boot_cpu_cold_init(cpu_index_t cpu_index)
+timer_lp_queue_handle_boot_cpu_cold_init(cpu_index_t cpu)
 {
-	timer_lp_t *timer = &CPULOCAL_BY_INDEX(timer_lp, cpu_index);
+	timer_lp_t *timer = &CPULOCAL_BY_INDEX(timer_lp, cpu);
 	timer->timeout	  = TIMER_INVALID_TIMEOUT;
-	timer->cpu_index  = cpu_index;
+	timer->cpu_index  = cpu;
 }
 
 static bool

@@ -11,7 +11,7 @@ subscribe boot_cold_init()
 	// Must run after pagetable init and hyp_aspace initialisation.
 	priority 10
 
-subscribe partition_add_ram_range(owner, phys_base, size)
+subscribe partition_add_ram_range(owner, phys_base, size, hotplug)
 	unwinder
 
 subscribe partition_remove_ram_range(owner, phys_base, size)

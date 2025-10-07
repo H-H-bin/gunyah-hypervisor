@@ -1,0 +1,91 @@
+// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define virtio_backend_bind_virq hypercall {
+	call_num	0x4c;
+	virtio_backend	input type cap_id_t;
+	vic		input type cap_id_t;
+	virq		input type virq_t;
+	res0		input uregister;
+	error		output enumeration error;
+};
+
+define virtio_backend_unbind_virq hypercall {
+	call_num	0x4d;
+	virtio_backend	input type cap_id_t;
+	res0		input uregister;
+	error		output enumeration error;
+};
+
+define virtio_backend_notify hypercall {
+	call_num		0x4e;
+	virtio_backend		input type cap_id_t;
+	interrupt_status	input uint32;
+	res0			input uregister;
+	error			output enumeration error;
+};
+
+define virtio_backend_set_dev_features hypercall {
+	call_num	0x4f;
+	virtio_backend	input type cap_id_t;
+	feature_sel	input uint32;
+	dev_feat	input uint32;
+	res0		input uregister;
+	error		output enumeration error;
+};
+
+define virtio_backend_set_queue_size_max hypercall {
+	call_num	0x50;
+	virtio_backend	input type cap_id_t;
+	queue_sel	input uint32;
+	queue_size_max	input uint32;
+	res0		input uregister;
+	error		output enumeration error;
+};
+
+define virtio_backend_get_drv_features hypercall {
+	call_num	0x51;
+	virtio_backend	input type cap_id_t;
+	feature_sel	input uint32;
+	res0		input uregister;
+	error		output enumeration error;
+	drv_feat	output uint32;
+};
+
+define virtio_backend_get_queue_info hypercall {
+	call_num	0x52;
+	virtio_backend	input type cap_id_t;
+	queue_sel	input uint32;
+	res0		input uregister;
+	error		output enumeration error;
+	queue_size	output uint16;
+	queue_ready	output bool;
+	queue_desc	output uint64;
+	queue_drv	output uint64;
+	queue_dev	output uint64;
+};
+
+define virtio_backend_get_notification hypercall {
+	call_num	0x53;
+	virtio_backend	input type cap_id_t;
+	res0		input uregister;
+	error		output enumeration error;
+	vqs_bitmap	output type register_t;
+	reason		output bitfield virtio_backend_notify_reason;
+};
+
+define virtio_backend_acknowledge_reset hypercall {
+	call_num	0x54;
+	virtio_backend	input type cap_id_t;
+	res0		input uregister;
+	error		output enumeration error;
+};
+
+define virtio_backend_update_status hypercall {
+	call_num	0x55;
+	virtio_backend	input type cap_id_t;
+	status		input bitfield virtio_status;
+	res0		input uregister;
+	error		output enumeration error;
+};

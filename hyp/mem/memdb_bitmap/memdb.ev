@@ -15,7 +15,7 @@ subscribe boot_cold_init()
 	priority 10
 
 subscribe partition_add_ram_range(owner, phys_base, size)
-	unwinder
+	unwinder(owner, phys_base, size)
 
 subscribe partition_remove_ram_range(owner, phys_base, size)
-	unwinder
+	unwinder(owner, phys_base, size)

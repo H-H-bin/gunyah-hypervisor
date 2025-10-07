@@ -35,8 +35,7 @@ vcpu_run_handle_vcpu_activate_thread(thread_t		*thread,
 	assert(thread != NULL);
 
 	if (thread->kind == THREAD_KIND_VCPU) {
-		task_queue_init(&thread->vcpu_run_wakeup_virq_task,
-				TASK_QUEUE_CLASS_VCPU_RUN_WAKEUP_VIRQ);
+		task_queue_init(&thread->vcpu_run_wakeup_virq_task);
 
 		thread->vcpu_run_last_state = VCPU_RUN_STATE_READY;
 	}
@@ -91,14 +90,14 @@ do_vcpu_run_check(const thread_t *vcpu, register_t *state_data_0,
 }
 
 hypercall_vcpu_run_result_t
-hypercall_vcpu_run(cap_id_t vcpu_cap_id, register_t resume_data_0,
+hypercall_vcpu_run(cap_id_t vcpu_cap, register_t resume_data_0,
 		   register_t resume_data_1, register_t resume_data_2)
 {
 	hypercall_vcpu_run_result_t ret	   = { 0 };
 	cspace_t		   *cspace = cspace_get_self();
 
 	thread_ptr_result_t thread_r = cspace_lookup_thread(
-		cspace, vcpu_cap_id,
+		cspace, vcpu_cap,
 		cap_rights_thread_union(CAP_RIGHTS_THREAD_AFFINITY,
 					CAP_RIGHTS_THREAD_YIELD_TO));
 	if (compiler_unexpected(thread_r.e != OK)) {
@@ -167,13 +166,13 @@ out_err:
 }
 
 hypercall_vcpu_run_check_result_t
-hypercall_vcpu_run_check(cap_id_t vcpu_cap_id)
+hypercall_vcpu_run_check(cap_id_t vcpu_cap)
 {
 	hypercall_vcpu_run_check_result_t ret	 = { 0 };
 	cspace_t			 *cspace = cspace_get_self();
 
 	thread_ptr_result_t thread_r = cspace_lookup_thread(
-		cspace, vcpu_cap_id,
+		cspace, vcpu_cap,
 		cap_rights_thread_union(CAP_RIGHTS_THREAD_BIND_VIRQ,
 					CAP_RIGHTS_THREAD_STATE));
 	if (compiler_unexpected(thread_r.e != OK)) {
@@ -242,11 +241,10 @@ vcpu_run_handle_vcpu_unbind_virq(thread_t *vcpu)
 }
 
 error_t
-vcpu_run_handle_task_queue_execute(task_queue_entry_t *task_entry)
+vcpu_run_handle_task_queue_execute(task_queue_entry_t *entry)
 {
-	assert(task_entry != NULL);
-	thread_t *vcpu =
-		thread_container_of_vcpu_run_wakeup_virq_task(task_entry);
+	assert(entry != NULL);
+	thread_t *vcpu = thread_container_of_vcpu_run_wakeup_virq_task(entry);
 
 	assert(vcpu != NULL);
 	assert(vcpu->kind == THREAD_KIND_VCPU);
@@ -265,8 +263,9 @@ vcpu_run_trigger_virq(thread_t *vcpu)
 
 	if (scheduler_is_blocked(vcpu, SCHEDULER_BLOCK_VCPU_RUN)) {
 		(void)object_get_thread_additional(vcpu);
-		if (task_queue_schedule(&vcpu->vcpu_run_wakeup_virq_task) !=
-		    OK) {
+		if (!task_queue_schedule(
+			    &vcpu->vcpu_run_wakeup_virq_task,
+			    TASK_QUEUE_CLASS_VCPU_RUN_WAKEUP_VIRQ)) {
 			object_put_thread(vcpu);
 		}
 	}

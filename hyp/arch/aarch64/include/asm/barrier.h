@@ -8,7 +8,7 @@
 // compiler barriers are unsuitable.
 
 // Yield the CPU to another hardware thread (SMT) / or let a simulator give CPU
-// time to somthing else.
+// time to something else.
 #define asm_yield() __asm__ volatile("yield")
 
 // Ensure that writes to CPU configuration registers and other similar events
@@ -16,7 +16,7 @@
 // enabling access to floating point registers and actually using those
 // registers.
 #define asm_context_sync_fence()	__asm__ volatile("isb" ::: "memory")
-#define asm_context_sync_ordered(order) __asm__ volatile("isb" : "+m"(*order))
+#define asm_context_sync_ordered(order) __asm__ volatile("isb" : "+m"(*(order)))
 
 // The asm_ordering variable is used as an artificial dependency to order
 // different individual asm statements with respect to each other in a way that

@@ -132,19 +132,20 @@ inject_inst_data_abort(ESR_EL2_t esr_el2, esr_ec_t ec, iss_da_ia_fsc_t fsc,
 
 	// Check the reason behind the abort
 	switch (fsc) {
-	case ISS_DA_IA_FSC_ADDR_SIZE_0:	  // Address size fault - level 0 of
-					  // translation or the TTB
-	case ISS_DA_IA_FSC_ADDR_SIZE_1:	  // Address size fault - level 1
-	case ISS_DA_IA_FSC_ADDR_SIZE_2:	  // Address size fault - level 2
-	case ISS_DA_IA_FSC_ADDR_SIZE_3:	  // Address size fault - level 3
-	case ISS_DA_IA_FSC_TRANSLATION_0: // Translation fault, level 0
-	case ISS_DA_IA_FSC_TRANSLATION_1: // Translation fault, level 1
-	case ISS_DA_IA_FSC_TRANSLATION_2: // Translation fault, level 2
-	case ISS_DA_IA_FSC_TRANSLATION_3: // Translation fault, level 3
-	case ISS_DA_IA_FSC_PERMISSION_1:  // Permission fault, level 1
-	case ISS_DA_IA_FSC_PERMISSION_2:  // Permission fault, level 2
-	case ISS_DA_IA_FSC_PERMISSION_3:  // Permission fault, level 3
-	case ISS_DA_IA_FSC_ALIGNMENT: {	  // Alignment fault
+	case ISS_DA_IA_FSC_ADDR_SIZE_L0:   // Address size fault - level 0 of
+					   // translation or the TTB
+	case ISS_DA_IA_FSC_ADDR_SIZE_L1:   // Address size fault - level 1
+	case ISS_DA_IA_FSC_ADDR_SIZE_L2:   // Address size fault - level 2
+	case ISS_DA_IA_FSC_ADDR_SIZE_L3:   // Address size fault - level 3
+	case ISS_DA_IA_FSC_TRANSLATION_L0: // Translation fault, level 0
+	case ISS_DA_IA_FSC_TRANSLATION_L1: // Translation fault, level 1
+	case ISS_DA_IA_FSC_TRANSLATION_L2: // Translation fault, level 2
+	case ISS_DA_IA_FSC_TRANSLATION_L3: // Translation fault, level 3
+	case ISS_DA_IA_FSC_PERMISSION_L0:  // Permission fault, level 0
+	case ISS_DA_IA_FSC_PERMISSION_L1:  // Permission fault, level 1
+	case ISS_DA_IA_FSC_PERMISSION_L2:  // Permission fault, level 2
+	case ISS_DA_IA_FSC_PERMISSION_L3:  // Permission fault, level 3
+	case ISS_DA_IA_FSC_ALIGNMENT: {	   // Alignment fault
 #if defined(VERBOSE) && VERBOSE
 		// Injecting an abort from the guest EL1H sync vector will
 		// cause an exception inject loop, so block the vcpu instead.
@@ -225,19 +226,20 @@ inject_inst_data_abort(ESR_EL2_t esr_el2, esr_ec_t ec, iss_da_ia_fsc_t fsc,
 		exception_inject(esr_el1);
 		break;
 	}
-	case ISS_DA_IA_FSC_ACCESS_FLAG_1:
-	case ISS_DA_IA_FSC_ACCESS_FLAG_2:
-	case ISS_DA_IA_FSC_ACCESS_FLAG_3:
+	case ISS_DA_IA_FSC_ACCESS_FLAG_L0:
+	case ISS_DA_IA_FSC_ACCESS_FLAG_L1:
+	case ISS_DA_IA_FSC_ACCESS_FLAG_L2:
+	case ISS_DA_IA_FSC_ACCESS_FLAG_L3:
 	case ISS_DA_IA_FSC_SYNC_EXTERNAL:
-	case ISS_DA_IA_FSC_SYNC_EXTERN_WALK_0:
-	case ISS_DA_IA_FSC_SYNC_EXTERN_WALK_1:
-	case ISS_DA_IA_FSC_SYNC_EXTERN_WALK_2:
-	case ISS_DA_IA_FSC_SYNC_EXTERN_WALK_3:
+	case ISS_DA_IA_FSC_SYNC_EXTERN_WALK_L0:
+	case ISS_DA_IA_FSC_SYNC_EXTERN_WALK_L1:
+	case ISS_DA_IA_FSC_SYNC_EXTERN_WALK_L2:
+	case ISS_DA_IA_FSC_SYNC_EXTERN_WALK_L3:
 	case ISS_DA_IA_FSC_SYNC_PARITY_ECC:
-	case ISS_DA_IA_FSC_SYNC_PARITY_ECC_WALK_0:
-	case ISS_DA_IA_FSC_SYNC_PARITY_ECC_WALK_1:
-	case ISS_DA_IA_FSC_SYNC_PARITY_ECC_WALK_2:
-	case ISS_DA_IA_FSC_SYNC_PARITY_ECC_WALK_3:
+	case ISS_DA_IA_FSC_SYNC_PARITY_ECC_WALK_L0:
+	case ISS_DA_IA_FSC_SYNC_PARITY_ECC_WALK_L1:
+	case ISS_DA_IA_FSC_SYNC_PARITY_ECC_WALK_L2:
+	case ISS_DA_IA_FSC_SYNC_PARITY_ECC_WALK_L3:
 	case ISS_DA_IA_FSC_SYNC_TAG_CHECK:
 	case ISS_DA_IA_FSC_TLB_CONFLICT:
 #if defined(ARCH_ARM_FEAT_HAFDBS)
@@ -267,8 +269,8 @@ inject_inst_data_abort(ESR_EL2_t esr_el2, esr_ec_t ec, iss_da_ia_fsc_t fsc,
 		// - Unsupported atomic hardware update file (ARM_FEAT_HAFDBS)
 
 		if (vcpu_option_flags_get_critical(&thread->vcpu_options)) {
-			abort("Unhandled instruction/data abort",
-			      ABORT_REASON_UNHANDLED_EXCEPTION);
+			abort_kernel("Unhandled instruction/data abort",
+				     ABORT_REASON_UNHANDLED_EXCEPTION);
 		} else {
 			// The above faults cannot be triggered by the VM, so
 			// halt the VCPU without revealing any fault state.

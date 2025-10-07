@@ -10,7 +10,7 @@ define TRACE_MAGIC_BUFFER constant = 0x46554236;
 
 define TRACE_VERSION constant = 0x0100;
 
-#include <types/bitmap.h>
+#include <bitmap.h>
 
 extend trace_class enumeration {
 	// TRACE_BUFFER = 3;	// Deprecated

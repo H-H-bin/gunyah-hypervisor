@@ -30,19 +30,13 @@ local get_x3:
 	mrs	x3, RNDR
 	b.eq	LOCAL(get_x3)
 
-	mrs	x4, MPIDR_EL1
-	ubfx	x4, x4, MPIDR_EL1_AFF0_SHIFT, MPIDR_EL1_AFF0_BITS
-
 	b	aarch64_init
-
 local prng_fail:
 	wfe
 	b	LOCAL(prng_fail)
 function_end __entry_el2
 
 function soc_qemu_entry_cold_secondary
-	mrs	x1, MPIDR_EL1
-	ubfx	x1, x1, MPIDR_EL1_AFF0_SHIFT, MPIDR_EL1_AFF0_BITS
 	b	aarch64_secondary_init
 function_end soc_qemu_entry_cold_secondary
 

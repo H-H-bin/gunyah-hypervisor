@@ -45,20 +45,26 @@ interface virq
 //
 // The reasserted argument is true if the source has been asserted more
 // recently than the last acknowledgement of its VIRQ by the VM. This may
-// include a previous true result from this handler. Any memory reads executed
-// by the handler are guaranteed to be ordered after the read that determines
-// the value of the reasserted argument.
+// include a previous true result from this handler.
 //
-// If the reasserted argument is false, then a false return from the handler is
-// guaranteed to take effect only if it is ordered before any virq_assert(),
-// and to have no effect otherwise. This guarantee is not provided if the
-// reasserted argument is true.
+// Any memory reads executed by the handler are guaranteed to be ordered after
+// the read that determines the value of the reasserted argument. If the
+// reasserted argument is false, then a false return from the handler is
+// guaranteed not to take effect if a virq_assert() happens before it takes
+// effect; i.e. the occurrence of a virq_assert() effectively cancels the call
+// to the handler.
+//
+// Therefore, any values written before a virq_assert() call must be visible
+// to reads in the handler before it successfully returns false after being
+// called with the reasserted argument set to false. Note that this does not
+// prevent a data race, so any variables accessed by the handler generally
+// must be either atomic or protected by a lock.
 //
 // Apart from the above ordering guarantees, it is not generally possible to
-// serialise handlers for this event and callers of virq_assert() and
-// virq_clear(). In particular, handlers MUST NOT acquire any spinlock or
-// equivalent that is held during virq_assert() or virq_clear() calls, because
-// they may be called holding locks internal to the VIC implementation.
+// serialise handlers for this event with virq_assert() and virq_clear()
+// calls. In particular, a handler MUST NOT acquire any spinlock or equivalent
+// that is held while calling virq_assert() or virq_clear(), because it may be
+// called holding locks internal to the VIC implementation.
 //
 // This event may be called for a VIRQ that is asserted on a CPU while context
 // switching to that CPU. This occurs in a thread_context_switch_post handler

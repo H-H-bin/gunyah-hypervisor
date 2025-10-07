@@ -19,18 +19,20 @@
 #include <util.h>
 
 #include <events/allocator.h>
+#include <events/partition.h>
 
 #include "event_handlers.h"
 
 void_ptr_result_t NOINLINE
-partition_alloc(partition_t *partition, size_t bytes, size_t min_alignment)
+partition_alloc_ext(partition_t *partition, size_t bytes, size_t min_alignment,
+		    allocator_hint_t hint)
 {
 	void_ptr_result_t ret;
 
 	assert(bytes > 0U);
 
 	ret = allocator_allocate_object(&partition->allocator, bytes,
-					min_alignment);
+					min_alignment, hint);
 
 	if (compiler_expected(ret.e == OK)) {
 		assert(ret.r != NULL);
@@ -38,17 +40,11 @@ partition_alloc(partition_t *partition, size_t bytes, size_t min_alignment)
 	return ret;
 }
 
-error_t
-partition_free(partition_t *partition, void *mem, size_t bytes)
+void_ptr_result_t
+partition_alloc(partition_t *partition, size_t bytes, size_t min_alignment)
 {
-	error_t ret;
-	assert((bytes > 0U) && !util_add_overflows((uintptr_t)mem, bytes - 1U));
-	assert(partition_virt_to_phys(partition, (uintptr_t)mem) !=
-	       PADDR_INVALID);
-
-	ret = allocator_deallocate_object(&partition->allocator, mem, bytes);
-
-	return ret;
+	return partition_alloc_ext(partition, bytes, min_alignment,
+				   allocator_hint_default());
 }
 
 // FIXME: partition->mapped_ranges is not updated atomically. Its not an issue
@@ -56,8 +52,34 @@ partition_free(partition_t *partition, void *mem, size_t bytes)
 // heap adjustment, it will become a problem.
 // FIXME:
 
+// FIXME:
+static paddr_t
+virt_to_phys(partition_t *partition, uintptr_t addr, allocator_memattr_t *attr)
+{
+	paddr_t phys = PADDR_INVALID;
+
+	for (count_t i = 0U; i < util_array_size(partition->mapped_ranges);
+	     i++) {
+		partition_mapped_range_t *mr = &partition->mapped_ranges[i];
+		if (mr->size == 0U) {
+			continue;
+		}
+		if ((addr >= mr->virt) &&
+		    (addr <= (mr->virt + (mr->size - 1U)))) {
+			phys = (paddr_t)(addr - mr->virt) + mr->phys;
+			if (attr != NULL) {
+				*attr = mr->attr;
+			}
+			break;
+		}
+	}
+
+	return phys;
+}
+
 static uintptr_t
-phys_to_virt(partition_t *partition, paddr_t phys, size_t size)
+phys_to_virt(partition_t *partition, paddr_t phys, size_t size,
+	     allocator_memattr_t *attr)
 {
 	uintptr_t virt = VADDR_INVALID;
 
@@ -72,6 +94,9 @@ phys_to_virt(partition_t *partition, paddr_t phys, size_t size)
 		if ((phys >= mr->phys) &&
 		    ((phys + (size - 1U)) <= (mr->phys + (mr->size - 1U)))) {
 			virt = (uintptr_t)(phys - mr->phys) + mr->virt;
+			if (attr != NULL) {
+				*attr = mr->attr;
+			}
 			break;
 		}
 	}
@@ -79,43 +104,46 @@ phys_to_virt(partition_t *partition, paddr_t phys, size_t size)
 	return virt;
 }
 
-error_t
+void
+partition_free(partition_t *partition, void *mem, size_t bytes)
+{
+	assert((bytes > 0U) && !util_add_overflows((uintptr_t)mem, bytes - 1U));
+
+	allocator_memattr_t attr;
+	if (virt_to_phys(partition, (uintptr_t)mem, &attr) == PADDR_INVALID) {
+		panic("Attempt to free memory not in partition");
+	}
+
+	allocator_deallocate_object(&partition->allocator, mem, bytes, attr);
+}
+
+void
 partition_free_phys(partition_t *partition, paddr_t phys, size_t bytes)
 {
-	uintptr_t virt = phys_to_virt(partition, phys, bytes);
+	allocator_memattr_t attr;
+	uintptr_t	    virt = phys_to_virt(partition, phys, bytes, &attr);
 
 	if (virt == VADDR_INVALID) {
 		panic("Attempt to free memory not in partition");
 	}
 
-	return partition_free(partition, (void *)virt, bytes);
+	assert((bytes > 0U) && !util_add_overflows(virt, bytes - 1U));
+
+	allocator_deallocate_object(&partition->allocator, (void *)virt, bytes,
+				    attr);
 }
 
 paddr_t
 partition_virt_to_phys(partition_t *partition, uintptr_t addr)
 {
-	paddr_t phys = PADDR_INVALID;
-
-	for (count_t i = 0U; i < util_array_size(partition->mapped_ranges);
-	     i++) {
-		partition_mapped_range_t *mr = &partition->mapped_ranges[i];
-		if (mr->size == 0U) {
-			continue;
-		}
-		if ((addr >= mr->virt) &&
-		    (addr <= (mr->virt + (mr->size - 1U)))) {
-			phys = (paddr_t)(addr - mr->virt) + mr->phys;
-			break;
-		}
-	}
-
-	return phys;
+	return virt_to_phys(partition, addr, NULL);
 }
 
 error_t
-partition_standard_handle_object_create_partition(partition_create_t create)
+partition_standard_handle_object_create_partition(
+	partition_create_t partition_create)
 {
-	partition_t *partition = create.partition;
+	partition_t *partition = partition_create.partition;
 	assert(partition != NULL);
 
 	return allocator_init(&partition->allocator);
@@ -209,21 +237,22 @@ partition_add_heap(partition_t *partition, paddr_t base, size_t size)
 	}
 
 	if (ret == OK) {
-		uintptr_t virt = phys_to_virt(partition, base, size);
+		allocator_memattr_t attr;
+		uintptr_t virt = phys_to_virt(partition, base, size, &attr);
 		assert(virt != VADDR_INVALID);
 		ret = trigger_allocator_add_ram_range_event(partition, base,
-							    virt, size);
+							    virt, size, attr);
 	}
 
 	return ret;
 }
 
-static error_t
+static uintptr_result_t
 new_memory_add(partition_t *partition, partition_t *hyp_partition, paddr_t phys,
-	       size_t size)
+	       size_t size, allocator_memattr_t attr)
 {
-	error_t	  ret = OK;
-	uintptr_t virt;
+	uintptr_result_t ret;
+	error_t		 err;
 
 	partition_mapped_range_t *mr = NULL;
 	for (count_t i = 0U; i < util_array_size(partition->mapped_ranges);
@@ -235,7 +264,7 @@ new_memory_add(partition_t *partition, partition_t *hyp_partition, paddr_t phys,
 	}
 
 	if (mr == NULL) {
-		ret = ERROR_NORESOURCES;
+		ret = uintptr_result_error(ERROR_NORESOURCES);
 		goto out;
 	}
 
@@ -247,23 +276,23 @@ new_memory_add(partition_t *partition, partition_t *hyp_partition, paddr_t phys,
 
 	virt_range_result_t vr = hyp_aspace_allocate(phys_align_size);
 	if (vr.e != OK) {
-		ret = vr.e;
+		ret = uintptr_result_error(vr.e);
 		goto out;
 	}
 
-	virt = vr.r.base + phys_align_offset;
+	uintptr_t virt = vr.r.base + phys_align_offset;
 
 	pgtable_hyp_start();
 	// FIXME:
-	ret = pgtable_hyp_map(hyp_partition, virt, size, phys,
+	err = pgtable_hyp_map(hyp_partition, virt, size, phys,
 			      PGTABLE_HYP_MEMTYPE_WRITEBACK, PGTABLE_ACCESS_RW,
 			      VMSA_SHAREABILITY_INNER_SHAREABLE);
 	pgtable_hyp_commit();
-	if (ret == OK) {
-		ret = trigger_allocator_add_ram_range_event(partition, phys,
-							    virt, size);
+	if (err == OK) {
+		err = trigger_allocator_add_ram_range_event(partition, phys,
+							    virt, size, attr);
 	}
-	if (ret != OK) {
+	if (err != OK) {
 		// FIXME:
 		// This should unmap the failed range, freeing to the target
 		// partition and preserve the levels that were preallocated,
@@ -274,31 +303,36 @@ new_memory_add(partition_t *partition, partition_t *hyp_partition, paddr_t phys,
 				  PGTABLE_HYP_UNMAP_PRESERVE_NONE);
 		pgtable_hyp_commit();
 		hyp_aspace_deallocate(partition, vr.r);
+		ret = uintptr_result_error(err);
 	} else {
 		mr->virt = virt;
 		mr->phys = phys;
 		mr->size = size;
+		// FIXME:
+		mr->attr = attr;
 
 		LOG(DEBUG, INFO,
 		    "added heap: partition {:#x}, virt {:#x}, phys {:#x}, size {:#x}",
 		    (uintptr_t)partition, virt, phys, size);
+		ret = uintptr_result_ok(virt);
 	}
 
 out:
 	return ret;
 }
 
-error_t
-partition_map_and_add_heap(partition_t *partition, paddr_t phys, size_t size)
+uintptr_result_t
+partition_map_and_add_heap_ext(partition_t *partition, paddr_t phys,
+			       size_t size, allocator_memattr_t attr)
 {
-	error_t ret;
-	error_t err = OK;
+	uintptr_result_t ret;
+	error_t		 err;
 
 	assert(partition != NULL);
 	assert(size != 0U);
 
 	// This should not be called for memory already mapped.
-	if (phys_to_virt(partition, phys, size) != VADDR_INVALID) {
+	if (phys_to_virt(partition, phys, size, NULL) != VADDR_INVALID) {
 		panic("Attempt to add memory already in partition");
 	}
 
@@ -312,32 +346,33 @@ partition_map_and_add_heap(partition_t *partition, paddr_t phys, size_t size)
 	partition_t *hyp_partition = partition_get_private();
 
 	if ((size == 0U) || (util_add_overflows(phys, size - 1U))) {
-		ret = ERROR_ARGUMENT_SIZE;
+		ret = uintptr_result_error(ERROR_ARGUMENT_SIZE);
 		goto out;
 	}
 
 	if (!util_is_baligned(phys, PGTABLE_HYP_PAGE_SIZE) ||
 	    !util_is_baligned(size, PGTABLE_HYP_PAGE_SIZE)) {
-		ret = ERROR_ARGUMENT_ALIGNMENT;
+		ret = uintptr_result_error(ERROR_ARGUMENT_ALIGNMENT);
 		goto out;
 	}
 
-	ret = memdb_update(hyp_partition, phys, phys + (size - 1U),
+	err = memdb_update(hyp_partition, phys, phys + (size - 1U),
 			   (uintptr_t)&partition->allocator,
 			   MEMDB_TYPE_ALLOCATOR, (uintptr_t)partition,
 			   MEMDB_TYPE_PARTITION);
-	if (ret != OK) {
+	if (err != OK) {
+		ret = uintptr_result_error(err);
 		goto out;
 	}
 
 	spinlock_acquire(&partition->header.lock);
 
 	// Add a new mapped range for the memory.
-	ret = new_memory_add(partition, hyp_partition, phys, size);
+	ret = new_memory_add(partition, hyp_partition, phys, size, attr);
 
 	spinlock_release(&partition->header.lock);
 
-	if (ret != OK) {
+	if (ret.e != OK) {
 		err = memdb_update(hyp_partition, phys, phys + (size - 1U),
 				   (uintptr_t)partition, MEMDB_TYPE_PARTITION,
 				   (uintptr_t)&partition->allocator,
@@ -350,7 +385,16 @@ out:
 	return ret;
 }
 
-#if defined(PLATFORM_TRACE_STANDALONE_REGION)
+error_t
+partition_map_and_add_heap(partition_t *partition, paddr_t base, size_t size)
+{
+	return partition_map_and_add_heap_ext(partition, base, size,
+					      allocator_memattr_default())
+		.e;
+}
+
+#if defined(PLATFORM_TRACE_STANDALONE_REGION) &&                               \
+	PLATFORM_TRACE_STANDALONE_REGION
 
 static error_t
 new_memory_add_trace(partition_t *partition, paddr_t phys, size_t size,
@@ -465,3 +509,17 @@ out:
 	return virt_ret;
 }
 #endif
+
+error_t
+partition_add_ram_range(partition_t *owner, paddr_t phys_base, size_t size,
+			bool hotplug)
+{
+	return trigger_partition_add_ram_range_event(owner, phys_base, size,
+						     hotplug);
+}
+
+error_t
+partition_remove_ram_range(partition_t *owner, paddr_t phys_base, size_t size)
+{
+	return trigger_partition_remove_ram_range_event(owner, phys_base, size);
+}

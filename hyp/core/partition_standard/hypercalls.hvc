@@ -99,8 +99,8 @@ define partition_create_vpm_group hypercall {
 	new_cap		output type cap_id_t;
 };
 
-#if defined(INTERFACE_VIRTIO_MMIO)
-define partition_create_virtio_mmio hypercall {
+#if defined(INTERFACE_VIRTIO_BACKEND)
+define partition_create_virtio_backend hypercall {
 	call_num	0x48;
 	src_partition	input type cap_id_t;
 	cspace		input type cap_id_t;

@@ -31,3 +31,11 @@ subscribe object_deactivate_addrspace
 #if defined(MODULE_VM_ROOTVM)
 subscribe rootvm_init(root_thread, root_cspace, qcbor_enc_ctxt)
 #endif
+
+#if defined(INTERFACE_VCPU_RUN)
+subscribe range_tree_release_node[RANGE_TREE_NODE_TYPE_ADDRSPACE_RANGE]
+	handler addrspace_release_range(node)
+
+subscribe rcu_update[RCU_UPDATE_CLASS_ADDRSPACE_RELEASE_RANGE]
+	handler addrspace_free_range(entry)
+#endif

@@ -31,8 +31,8 @@
 
 #include "event_handlers.h"
 
-static partition_t  hyp_partition;
-static partition_t *root_partition;
+static partition_t  partition_hyp;
+static partition_t *partition_root;
 
 extern const char image_virt_start;
 extern const char image_virt_last;
@@ -55,26 +55,34 @@ void NOINLINE
 partition_standard_handle_boot_cold_init(void)
 {
 	// Set up the hyp partition's header.
-	refcount_init(&hyp_partition.header.refcount);
-	hyp_partition.header.type = OBJECT_TYPE_PARTITION;
-	atomic_store_release(&hyp_partition.header.state, OBJECT_STATE_ACTIVE);
+	refcount_init(&partition_hyp.header.refcount);
+	partition_hyp.header.type = OBJECT_TYPE_PARTITION;
+	atomic_store_release(&partition_hyp.header.state, OBJECT_STATE_ACTIVE);
 
 	paddr_t hyp_heap_end =
 		(phys_last + 1U) - ((size_t)PLATFORM_RW_DATA_SIZE -
 				    (size_t)PLATFORM_HEAP_PRIVATE_SIZE);
 	// Add hypervisor memory as a mapped range.
-	hyp_partition.mapped_ranges[0].virt = virt_start;
-	hyp_partition.mapped_ranges[0].phys = phys_start;
-	hyp_partition.mapped_ranges[0].size =
+	partition_hyp.mapped_ranges[0].virt = virt_start;
+	partition_hyp.mapped_ranges[0].phys = phys_start;
+	partition_hyp.mapped_ranges[0].size =
 		(size_t)(hyp_heap_end - phys_start);
 
+	// Set the default allocator memory attributes for the mapped range.
+	// This isn't really the best location to track these attributes given
+	// only part of this memory is used for allocations, and it assumes the
+	// attributes are the same for the entire range. Consider an alternate
+	// location for this in future.
+	// FIXME:
+	partition_hyp.mapped_ranges[0].attr = allocator_memattr_default();
+
 	// Allocate management structures for the hypervisor allocator.
-	if (allocator_init(&hyp_partition.allocator) != OK) {
+	if (allocator_init(&partition_hyp.allocator) != OK) {
 		panic("allocator_init() failed for hyp partition");
 	}
 
 	// Configure partition to be privileged
-	partition_option_flags_set_privileged(&hyp_partition.options, true);
+	partition_option_flags_set_privileged(&partition_hyp.options, true);
 
 	// Get remaining boot memory and assign it to hypervisor allocator.
 	size_t		  hyp_alloc_size;
@@ -83,13 +91,14 @@ partition_standard_handle_boot_cold_init(void)
 		panic("no boot mem");
 	}
 
-	paddr_t phys = partition_virt_to_phys(&hyp_partition, (uintptr_t)ret.r);
+	paddr_t phys = partition_virt_to_phys(&partition_hyp, (uintptr_t)ret.r);
 	assert(phys != PADDR_INVALID);
 
 	error_t err = trigger_allocator_add_ram_range_event(
-		&hyp_partition, phys, (uintptr_t)ret.r, hyp_alloc_size);
+		&partition_hyp, phys, (uintptr_t)ret.r, hyp_alloc_size,
+		allocator_memattr_default());
 	if (err != OK) {
-		panic("Error moving bootmem to hyp_partition allocator");
+		panic("Error moving bootmem to partition_hyp allocator");
 	}
 }
 
@@ -99,7 +108,7 @@ partition_standard_boot_add_private_heap(void)
 	// Only the first 2MiB of RW data was mapped in the assembly mmu_init.
 	// The remainder is mapped by hyp_aspace_handle_boot_cold_init. Because
 	// of this, the additional memory if any needs to be added to the
-	// hyp_partition allocator here.
+	// partition_hyp allocator here.
 	if ((size_t)PLATFORM_HEAP_PRIVATE_SIZE > 0x200000U) {
 		size_t remaining_size =
 			(size_t)PLATFORM_HEAP_PRIVATE_SIZE - 0x200000U;
@@ -107,54 +116,67 @@ partition_standard_boot_add_private_heap(void)
 			(phys_last + 1U) -
 			((size_t)PLATFORM_RW_DATA_SIZE - 0x200000U);
 
-		error_t err = partition_add_heap(&hyp_partition, remaining_phys,
+		error_t err = partition_add_heap(&partition_hyp, remaining_phys,
 						 remaining_size);
 		if (err != OK) {
-			panic("Error expanding hyp_partition allocator");
+			panic("Error expanding partition_hyp allocator");
 		}
 	}
 }
 
-static void
-partition_add_ram(partition_t *partition, paddr_t base, size_t size)
+void NOINLINE
+partition_standard_boot_create_root_partition(void)
 {
-	error_t err;
-
-#if defined(MODULE_MEM_MEMDB_GPT)
-	// Add the ram range to the memory database.
-	// FIXME:
-	err = memdb_insert(&hyp_partition, base, base + (size - 1U),
-			   (uintptr_t)partition, MEMDB_TYPE_PARTITION_NOMAP);
-	if (err != OK) {
-		panic("Error inserting ram to memdb");
+	// Allocate root partition from the hypervisor allocator
+	partition_ptr_result_t part_ret = partition_allocate_partition(
+		&partition_hyp, (partition_create_t){ 0 });
+	if (part_ret.e != OK) {
+		panic("Error allocating root partition");
 	}
+	partition_root = (partition_t *)part_ret.r;
+
+	partition_option_flags_set_privileged(&partition_root->options, true);
+
+	if (object_activate_partition(partition_root) != OK) {
+		panic("Error activating root partition");
+	}
+
+#if PLATFORM_HEAP_PRIVATE_SIZE < PLATFORM_RW_DATA_SIZE
+	// Add the remainder of the RW data to the root partition
+	size_t root_heap_size = (size_t)PLATFORM_RW_DATA_SIZE -
+				(size_t)PLATFORM_HEAP_PRIVATE_SIZE;
+	paddr_t root_phys = (phys_last + 1U) - root_heap_size;
+	bool	from_heap = false;
+#else
+	// Allocate some minimal bootstrapping memory for the root partition
+	const size_t	  root_heap_size = PGTABLE_HYP_PAGE_SIZE;
+	void_ptr_result_t alloc_ret	 = partition_alloc(
+		     &partition_hyp, root_heap_size, PGTABLE_HYP_PAGE_SIZE);
+	if (alloc_ret.e != OK) {
+		panic("partition_alloc for bootstrapping heap failed");
+	}
+	paddr_t root_phys =
+		partition_virt_to_phys(&partition_hyp, (uintptr_t)alloc_ret.r);
+	bool from_heap = true;
 #endif
 
-	// Notify modules about new ram. Memdb type for this range will be
-	// updated to MEMDB_TYPE_PARTITION.
-	err = trigger_partition_add_ram_range_event(partition, base, size);
+	error_t err = partition_mem_donate(&partition_hyp, root_phys,
+					   root_heap_size, partition_root,
+					   from_heap);
 	if (err != OK) {
-		panic("Error adding ram to partition");
+		panic("partition_mem_donate to root partition failed");
+	}
+
+	err = partition_map_and_add_heap(partition_root, root_phys,
+					 root_heap_size);
+	if (err != OK) {
+		panic("partition_map_and_add_heap to root partition failed");
 	}
 }
 
 void
 partition_standard_handle_boot_hypervisor_start(void)
 {
-	// Allocate root partition from the hypervisor allocator
-	partition_ptr_result_t part_ret = partition_allocate_partition(
-		&hyp_partition, (partition_create_t){ 0 });
-	if (part_ret.e != OK) {
-		panic("Error allocating root partition");
-	}
-	root_partition = (partition_t *)part_ret.r;
-
-	partition_option_flags_set_privileged(&root_partition->options, true);
-
-	if (object_activate_partition(root_partition) != OK) {
-		panic("Error activating root partition");
-	}
-
 	error_t err = platform_ram_probe();
 	if (err != OK) {
 		panic("Platform RAM probe failed");
@@ -175,32 +197,49 @@ partition_standard_handle_boot_hypervisor_start(void)
 		if ((phys_start > rbase) && (phys_start <= rlast)) {
 			// Hyp image starts within the range; add the partial
 			// range before the start of the hyp image
-			partition_add_ram(root_partition, rbase,
-					  (size_t)(phys_start - rbase));
+			err = partition_add_ram_range(
+				partition_root, rbase,
+				(size_t)(phys_start - rbase), false);
+			if (err != OK) {
+				goto out;
+			}
 		}
 
 		if ((phys_last >= rbase) && (phys_last < rlast)) {
 			// Hyp image ends within the range, add the partial
 			// range after the end of the hyp image
-			partition_add_ram(root_partition, phys_last + 1U,
-					  (size_t)(rlast - phys_last));
+			err = partition_add_ram_range(
+				partition_root, phys_last + 1U,
+				(size_t)(rlast - phys_last), false);
+			if (err != OK) {
+				goto out;
+			}
 		}
 
 		if ((phys_last < rbase) || (phys_start > rlast)) {
 			// No overlap with hyp image; add the entire range
-			partition_add_ram(root_partition, rbase, rsize);
+			err = partition_add_ram_range(partition_root, rbase,
+						      rsize, false);
+			if (err != OK) {
+				goto out;
+			}
 		}
+	}
+
+out:
+	if (err != OK) {
+		panic("Adding platform RAM ranges failed");
 	}
 }
 
 partition_t *
 partition_get_private(void)
 {
-	return &hyp_partition;
+	return &partition_hyp;
 }
 
 partition_t *
 partition_get_root(void)
 {
-	return root_partition;
+	return partition_root;
 }

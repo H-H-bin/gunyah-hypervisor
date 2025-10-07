@@ -16,6 +16,7 @@
 #include <panic.h>
 #include <partition.h>
 #include <partition_init.h>
+#include <preempt.h>
 #include <rcu.h>
 #include <scheduler.h>
 #include <spinlock.h>
@@ -1275,7 +1276,7 @@ memdb_test8(void)
 }
 
 static void
-memdb_test9(void)
+memdb_test9(void) EXCLUDE_PREEMPT_DISABLED
 {
 	LOG(DEBUG, INFO, " Start TEST 9:");
 
@@ -1342,11 +1343,11 @@ memdb_test9(void)
 	rcu_sync();
 
 	// Swap the real heap with the dummy one
-	spinlock_acquire(&hyp_partition->allocator.lock);
-	allocator_node_t *saved_heap = hyp_partition->allocator.heap;
+	spinlock_acquire(&hyp_partition->allocator.hyp.lock);
+	allocator_node_t *saved_heap = hyp_partition->allocator.hyp.heap;
 	*dummy_heap = (allocator_node_t){ .size = dummy_size, .next = NULL };
-	hyp_partition->allocator.heap = dummy_heap;
-	spinlock_release(&hyp_partition->allocator.lock);
+	hyp_partition->allocator.hyp.heap = dummy_heap;
+	spinlock_release(&hyp_partition->allocator.hyp.lock);
 
 	// Should run out of memory because this range needs to create several
 	// levels (if they have not been created in previous tests) and there is
@@ -1364,14 +1365,14 @@ memdb_test9(void)
 	// been freed by the time an RCU grace period has expired.
 	rcu_sync();
 	rcu_sync();
-	spinlock_acquire(&hyp_partition->allocator.lock);
-	assert(hyp_partition->allocator.heap == dummy_heap);
+	spinlock_acquire(&hyp_partition->allocator.hyp.lock);
+	assert(hyp_partition->allocator.hyp.heap == dummy_heap);
 	assert(dummy_heap->size == dummy_size);
 
 	// Swap the heap back and retry inserting the same range. This time it
 	// should succeed.
-	hyp_partition->allocator.heap = saved_heap;
-	spinlock_release(&hyp_partition->allocator.lock);
+	hyp_partition->allocator.hyp.heap = saved_heap;
+	spinlock_release(&hyp_partition->allocator.hyp.lock);
 	partition_free(hyp_partition, dummy_heap, dummy_size);
 
 	err = memdb_insert(hyp_partition, start_addr, end_addr, obj, type);
@@ -1478,7 +1479,7 @@ memdb_handle_tests_start(void)
 {
 	static _Atomic count_t core_start_count;
 	static _Atomic bool    tests_done;
-	cpu_index_t	       this_cpu = cpulocal_get_index();
+	cpu_index_t	       this_cpu = cpulocal_get_index_unsafe();
 
 	(void)atomic_fetch_add(&core_start_count, 1U);
 	while (atomic_load(&core_start_count) < PLATFORM_MAX_CORES) {

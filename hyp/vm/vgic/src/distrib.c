@@ -28,6 +28,7 @@
 #include <platform_cpu.h>
 #include <platform_irq.h>
 #include <preempt.h>
+#include <qcbor.h>
 #include <rcu.h>
 #include <scheduler.h>
 #include <spinlock.h>
@@ -49,6 +50,7 @@
 
 #include "event_handlers.h"
 #include "gicv3.h"
+#include "gicv3_its.h"
 #include "internal.h"
 #include "useraccess.h"
 #include "vgic.h"
@@ -64,6 +66,9 @@ vgic_handle_object_create_vic(vic_create_t vic_create)
 
 	vic->gicr_count	   = 1U;
 	vic->sources_count = 0U;
+#if VGIC_HAS_EXT_SPIS
+	vic->ext_sources_count = 0U;
+#endif
 
 	spinlock_init(&vic->gicd_lock);
 	spinlock_init(&vic->search_lock);
@@ -88,6 +93,10 @@ vgic_handle_object_create_vic(vic_create_t vic_create)
 	return OK;
 }
 
+#if !VGIC_HAS_EXT_SPIS
+#define VGIC_SPI_EXT_NUM 0U
+#endif
+
 error_t
 vic_configure(vic_t *vic, count_t max_vcpus, count_t max_virqs,
 	      count_t max_msis, bool allow_fixed_vmaddr)
@@ -102,11 +111,18 @@ vic_configure(vic_t *vic, count_t max_vcpus, count_t max_virqs,
 	}
 	vic->gicr_count = max_vcpus;
 
-	if (max_virqs > GIC_SPI_NUM) {
+	if (max_virqs > (GIC_SPI_NUM + VGIC_SPI_EXT_NUM)) {
 		err = ERROR_ARGUMENT_INVALID;
 		goto out;
 	}
-	vic->sources_count = max_virqs;
+	vic->sources_count = util_min(max_virqs, GIC_SPI_NUM);
+#if VGIC_HAS_EXT_SPIS
+	if (max_virqs <= GIC_SPI_NUM) {
+		vic->ext_sources_count = 0U;
+	} else {
+		vic->ext_sources_count = max_virqs - GIC_SPI_NUM;
+	}
+#endif
 
 #if VGIC_HAS_LPI
 	if ((max_msis + GIC_LPI_BASE) >= util_bit(VGIC_IDBITS)) {
@@ -146,6 +162,11 @@ vgic_handle_object_activate_vic(vic_t *vic)
 
 	assert(vic->sources_count <= GIC_SPI_NUM);
 	size_t sources_size = sizeof(vic->sources[0U]) * vic->sources_count;
+#if VGIC_HAS_EXT_SPIS
+	assert(vic->ext_sources_count <= VGIC_SPI_EXT_NUM);
+	size_t ext_sources_size =
+		sizeof(vic->ext_sources[0U]) * vic->ext_sources_count;
+#endif
 
 	assert(vic->gicr_count > 0U);
 	assert(vic->gicr_count <= PLATFORM_MAX_CORES);
@@ -182,6 +203,19 @@ vgic_handle_object_activate_vic(vic_t *vic)
 		(void)memset_s(alloc_r.r, sources_size, 0, sources_size);
 		vic->sources = (virq_source_t *_Atomic *)alloc_r.r;
 	}
+#if VGIC_HAS_EXT_SPIS
+	if (ext_sources_size != 0U) {
+		alloc_r = partition_alloc(partition, ext_sources_size,
+					  alignof(vic->ext_sources[0U]));
+		if (alloc_r.e != OK) {
+			err = alloc_r.e;
+			goto out;
+		}
+		(void)memset_s(alloc_r.r, ext_sources_size, 0,
+			       ext_sources_size);
+		vic->ext_sources = (virq_source_t *_Atomic *)alloc_r.r;
+	}
+#endif
 
 	alloc_r = partition_alloc(partition, vcpus_size,
 				  alignof(vic->gicr_vcpus[0U]));
@@ -201,7 +235,7 @@ out:
 
 error_t
 vgic_handle_addrspace_attach_vdevice(addrspace_t *addrspace,
-				     cap_id_t vdevice_object_cap, index_t index,
+				     cap_id_t vdevice_cap, index_t index,
 				     vmaddr_t vbase, size_t size,
 				     addrspace_attach_vdevice_flags_t flags)
 {
@@ -209,8 +243,8 @@ vgic_handle_addrspace_attach_vdevice(addrspace_t *addrspace,
 	cspace_t *cspace = cspace_get_self();
 
 	vic_ptr_result_t vic_r = cspace_lookup_vic(
-		cspace, vdevice_object_cap, CAP_RIGHTS_VIC_ATTACH_VDEVICE);
-	if (compiler_unexpected(vic_r.e) != OK) {
+		cspace, vdevice_cap, CAP_RIGHTS_VIC_ATTACH_VDEVICE);
+	if (compiler_unexpected(vic_r.e != OK)) {
 		err = vic_r.e;
 		goto out;
 	}
@@ -325,6 +359,27 @@ vgic_handle_object_deactivate_vic(vic_t *vic)
 					     false);
 		}
 	}
+#if VGIC_HAS_EXT_SPIS
+	for (index_t i = 0; i < vic->ext_sources_count; i++) {
+		virq_source_t *virq_source =
+			atomic_load_consume(&vic->ext_sources[i]);
+
+		if (virq_source == NULL) {
+			continue;
+		}
+
+		if (vic_do_unbind(virq_source, true)) {
+			// During deactivate we know that the VCPUs have all
+			// exited so there can't be any IRQs left listed (as
+			// asserted above). It therefore is not necessary to
+			// wait until the end of an RCU grace period to clear
+			// vgic_is_bound, as we normally would; we can go ahead
+			// and clear it here.
+			atomic_store_release(&virq_source->vgic_is_bound,
+					     false);
+		}
+	}
+#endif
 	rcu_read_finish();
 
 	if (vic->gicd_device.type != VDEVICE_TYPE_NONE) {
@@ -340,24 +395,33 @@ vgic_handle_object_cleanup_vic(vic_t *vic)
 	if (vic->gicr_vcpus != NULL) {
 		size_t vcpus_size =
 			sizeof(vic->gicr_vcpus[0]) * vic->gicr_count;
-		(void)partition_free(partition, vic->gicr_vcpus, vcpus_size);
+		partition_free(partition, vic->gicr_vcpus, vcpus_size);
 		vic->gicr_vcpus = NULL;
 	}
 
 	if (vic->sources != NULL) {
 		size_t sources_size =
 			sizeof(vic->sources[0]) * vic->sources_count;
-		(void)partition_free(partition, vic->sources, sources_size);
-		vic->sources = NULL;
+		partition_free(partition, vic->sources, sources_size);
+		vic->sources	   = NULL;
+		vic->sources_count = 0U;
 	}
+#if VGIC_HAS_EXT_SPIS
+	if (vic->ext_sources != NULL) {
+		size_t ext_sources_size =
+			sizeof(vic->ext_sources[0]) * vic->ext_sources_count;
+		partition_free(partition, vic->ext_sources, ext_sources_size);
+		vic->ext_sources       = NULL;
+		vic->ext_sources_count = 0U;
+	}
+#endif
 
 #if VGIC_HAS_LPI
 	if (vic->vlpi_config_table != NULL) {
 		size_t vlpi_propbase_size =
 			util_bit(vic->gicd_idbits) - GIC_LPI_BASE;
-		(void)partition_free(vic->header.partition,
-				     vic->vlpi_config_table,
-				     vlpi_propbase_size);
+		partition_free(vic->header.partition, vic->vlpi_config_table,
+			       vlpi_propbase_size);
 		vic->vlpi_config_table = NULL;
 	}
 #endif
@@ -467,6 +531,13 @@ vgic_handle_object_create_thread(thread_create_t thread_create)
 		ICH_HCR_EL2_set_TDIR(&vcpu->vgic_ich_hcr, true);
 		// Always enable the interface.
 		ICH_HCR_EL2_set_En(&vcpu->vgic_ich_hcr, true);
+#if VGIC_HAS_EXT_SPIS && defined(VGIC_EMULATE_EXT_RANGE) &&                    \
+	VGIC_EMULATE_EXT_RANGE
+		// Trap ICC_CTLR_EL1 in EL2 to show ExtRange as 1 when the
+		// platform shows ExtRange of 0 when we want to support
+		// extended SPIs.
+		ICH_HCR_EL2_set_TC(&vcpu->vgic_ich_hcr, true);
+#endif
 
 		vcpu->vgic_ich_vmcr = ICH_VMCR_EL2_default();
 	}
@@ -506,15 +577,16 @@ out:
 }
 
 error_t
-vgic_handle_object_activate_thread(thread_t *vcpu)
+vgic_handle_object_activate_thread(thread_t *thread)
 {
 	error_t err = OK;
-	vic_t  *vic = vcpu->vgic_vic;
+	vic_t  *vic = thread->vgic_vic;
 
 	if (vic != NULL) {
 		spinlock_acquire(&vic->gicd_lock);
 
-		index_t index = vcpu->vgic_gicr_index;
+		index_t index = thread->vgic_gicr_index;
+		assert(index < vic->gicr_count);
 
 		if (atomic_load_relaxed(&vic->gicr_vcpus[index]) != NULL) {
 			err = ERROR_BUSY;
@@ -532,7 +604,8 @@ vgic_handle_object_activate_thread(thread_t *vcpu)
 		vgic_delivery_state_set_cfg_is_edge(&sgi_dstate, true);
 		vgic_delivery_state_set_route(&sgi_dstate, index);
 		for (index_t i = 0; i < GIC_SGI_NUM; i++) {
-			atomic_init(&vcpu->vgic_private_states[i], sgi_dstate);
+			atomic_init(&thread->vgic_private_states[i],
+				    sgi_dstate);
 		}
 		// PPIs are normally level-triggered.
 		vgic_delivery_state_t ppi_dstate =
@@ -540,14 +613,20 @@ vgic_handle_object_activate_thread(thread_t *vcpu)
 		vgic_delivery_state_set_route(&ppi_dstate, index);
 		for (index_t i = 0; i < GIC_PPI_NUM; i++) {
 			atomic_init(
-				&vcpu->vgic_private_states[GIC_PPI_BASE + i],
+				&thread->vgic_private_states[GIC_PPI_BASE + i],
 				ppi_dstate);
 		}
+#if VGIC_HAS_EXT_PPIS
+		for (index_t i = 0; i < GIC_PPI_EXT_NUM; i++) {
+			atomic_init(&thread->vgic_ext_private_states[i],
+				    ppi_dstate);
+		}
+#endif
 
 		// Determine the physical interrupt route that should be used
 		// for interrupts that target this VCPU.
-		scheduler_lock_nopreempt(vcpu);
-		cpu_index_t affinity = scheduler_get_affinity(vcpu);
+		scheduler_lock_nopreempt(thread);
+		cpu_index_t affinity = scheduler_get_affinity(thread);
 		MPIDR_EL1_t mpidr    = platform_cpu_index_to_mpidr(
 			   cpulocal_index_valid(affinity) ? affinity : 0U);
 		GICD_IROUTER_t phys_route = GICD_IROUTER_default();
@@ -556,13 +635,13 @@ vgic_handle_object_activate_thread(thread_t *vcpu)
 		GICD_IROUTER_set_Aff1(&phys_route, MPIDR_EL1_get_Aff1(&mpidr));
 		GICD_IROUTER_set_Aff2(&phys_route, MPIDR_EL1_get_Aff2(&mpidr));
 		GICD_IROUTER_set_Aff3(&phys_route, MPIDR_EL1_get_Aff3(&mpidr));
-		vcpu->vgic_irouter = phys_route;
+		thread->vgic_irouter = phys_route;
 
 #if VGIC_HAS_LPI && GICV3_HAS_VLPI
 #if GICV3_HAS_VLPI_V4_1
 		// VSGI setup has not been done yet; set the sequence
 		// number to one that will never be complete.
-		atomic_init(&vcpu->vgic_vsgi_setup_seq, ~(count_t)0U);
+		atomic_init(&thread->vgic_vsgi_setup_seq, ~(count_t)0U);
 #endif
 
 		if (vgic_has_lpis(vic)) {
@@ -572,7 +651,7 @@ vgic_handle_object_activate_thread(thread_t *vcpu)
 			size_t vlpi_pendbase_align =
 				util_bit(GIC_ITS_CMD_VMAPP_VPT_ADDR_PRESHIFT);
 			void_ptr_result_t alloc_r = partition_alloc(
-				vcpu->header.partition, vlpi_pendbase_size,
+				thread->header.partition, vlpi_pendbase_size,
 				vlpi_pendbase_align);
 			if (alloc_r.e != OK) {
 				err = alloc_r.e;
@@ -584,35 +663,34 @@ vgic_handle_object_activate_thread(thread_t *vcpu)
 			// save the pending table pointer so the cleanup
 			// function can use the pointer to decide whether
 			// to call gicv3_its_vpe_cleanup(vcpu).
-			err = gicv3_its_vpe_activate(vcpu);
+			err = gicv3_its_vpe_activate(thread);
 			if (err != OK) {
-				(void)partition_free(vcpu->header.partition,
-						     alloc_r.r,
-						     vlpi_pendbase_size);
+				partition_free(thread->header.partition,
+					       alloc_r.r, vlpi_pendbase_size);
 				goto out_vcpu_locked;
 			}
 
 			// No need to memset here; it will be done (with a
 			// possible partial memcpy from the VM) before we issue
 			// a VMAPP, when the VM writes 1 to EnableLPIs.
-			vcpu->vgic_vlpi_pending_table = alloc_r.r;
+			thread->vgic_vlpi_pending_table = alloc_r.r;
 		}
 #endif
 
 		// Set the GICD's pointer to the VCPU. This is a store release
 		// so we can be sure that all of the thread's initialisation is
 		// complete before the VGIC tries to use it.
-		atomic_store_release(&vic->gicr_vcpus[index], vcpu);
+		atomic_store_release(&vic->gicr_vcpus[index], thread);
 
 #if VGIC_HAS_LPI && GICV3_HAS_VLPI
 	out_vcpu_locked:
 #endif
-		scheduler_unlock_nopreempt(vcpu);
+		scheduler_unlock_nopreempt(thread);
 	out_locked:
 		spinlock_release(&vic->gicd_lock);
 
 		if (err == OK) {
-			vcpu->vcpu_regs_mpidr_el1 =
+			thread->vcpu_regs_mpidr_el1 =
 				platform_cpu_map_index_to_mpidr(
 					&vic->mpidr_mapping, index);
 
@@ -627,8 +705,13 @@ vgic_handle_object_activate_thread(thread_t *vcpu)
 }
 
 void
-vgic_handle_scheduler_affinity_changed(thread_t *vcpu, cpu_index_t next_cpu)
+vgic_handle_scheduler_affinity_changed(thread_t *thread, cpu_index_t next_cpu)
 {
+	if (!cpulocal_index_valid(next_cpu)) {
+		// Don't change the physical irq affinity
+		goto out;
+	}
+
 	MPIDR_EL1_t    mpidr	  = platform_cpu_index_to_mpidr(next_cpu);
 	GICD_IROUTER_t phys_route = GICD_IROUTER_default();
 	GICD_IROUTER_set_IRM(&phys_route, false);
@@ -636,7 +719,10 @@ vgic_handle_scheduler_affinity_changed(thread_t *vcpu, cpu_index_t next_cpu)
 	GICD_IROUTER_set_Aff1(&phys_route, MPIDR_EL1_get_Aff1(&mpidr));
 	GICD_IROUTER_set_Aff2(&phys_route, MPIDR_EL1_get_Aff2(&mpidr));
 	GICD_IROUTER_set_Aff3(&phys_route, MPIDR_EL1_get_Aff3(&mpidr));
-	vcpu->vgic_irouter = phys_route;
+	thread->vgic_irouter = phys_route;
+
+out:
+	return;
 }
 
 void
@@ -651,7 +737,7 @@ vgic_handle_object_deactivate_thread(thread_t *thread)
 		rcu_read_start();
 		for (index_t i = 0; i < GIC_PPI_NUM; i++) {
 			virq_source_t *virq_source =
-				atomic_load_consume(&thread->vgic_sources[i]);
+				vgic_find_source(NULL, thread, i);
 
 			if (virq_source == NULL) {
 				continue;
@@ -659,6 +745,19 @@ vgic_handle_object_deactivate_thread(thread_t *thread)
 
 			vic_unbind(virq_source);
 		}
+#if VGIC_HAS_EXT_PPIS
+		for (index_t i = GIC_PPI_EXT_BASE;
+		     i < (GIC_PPI_EXT_BASE + GIC_PPI_EXT_NUM); i++) {
+			virq_source_t *virq_source =
+				vgic_find_source(NULL, thread, i);
+
+			if (virq_source == NULL) {
+				continue;
+			}
+
+			vic_unbind(virq_source);
+		}
+#endif
 		rcu_read_finish();
 
 		spinlock_acquire(&vic->gicd_lock);
@@ -731,9 +830,9 @@ vgic_handle_object_cleanup_thread(thread_t *thread)
 			size_t vlpi_pendbase_size =
 				BITMAP_NUM_WORDS(util_bit(vic->gicd_idbits)) *
 				sizeof(register_t);
-			(void)partition_free(thread->header.partition,
-					     thread->vgic_vlpi_pending_table,
-					     vlpi_pendbase_size);
+			partition_free(thread->header.partition,
+				       thread->vgic_vlpi_pending_table,
+				       vlpi_pendbase_size);
 			thread->vgic_vlpi_pending_table = NULL;
 
 			// Tell the ITS driver to release the allocated vPE ID
@@ -754,22 +853,66 @@ vgic_handle_object_cleanup_thread(thread_t *thread)
 	}
 }
 
+// Encode hwirq caps and extended IRQs in an efficient array of maps structure
+// which represents the sparse arrays.
+//
+// For backwards compatibility, normal PPIs and SPIs are encoded in a flat
+// array for now.
+//	"vic_hwirq": [ 0-15: CSPACE_CAP_INVALID
+//	               16-31: PPI CAPs
+//	               32-1019: SPIs CAPs
+//	             ]
+// Extended PPIs and SPIs can be encoded as sparse:
+//	"vic_hwirq_ranges": [ {
+//		       "i": X,		# The starting IRQ number index
+//		       "caps": [...]	# List of hwirq caps starting from 'i'
+//		    }, {
+//			"i": Y
+//			"caps": [...]
+//		    }, ...
+//		]
+
+// We assume CSPACE_CAP_INVALID == -1 below for QCBOR
+static_assert(CSPACE_CAP_INVALID == (uint64_t)-1,
+	      "CSPACE_CAP_INVALID is not ≡ (uint64_t)-1");
+
+static void
+vgic_env_add_invalid_cap(qcbor_enc_ctxt_t *qcbor_enc_ctxt)
+{
+	// Save CBOR space using CBOR negative(0)
+	QCBOREncode_AddInt64(qcbor_enc_ctxt, -1);
+}
+
 static void
 vgic_handle_rootvm_create_hwirq(partition_t	 *root_partition,
 				cspace_t	 *root_cspace,
 				qcbor_enc_ctxt_t *qcbor_enc_ctxt)
 {
-	index_t i = 0U;
 #if GICV3_EXT_IRQS
-	index_t last_spi = util_min((count_t)platform_irq_max(),
-				    GIC_SPI_EXT_BASE + GIC_SPI_EXT_NUM - 1U);
+	bool ext_ranges = false;
+
+	index_t last_irq = util_max(
+		gicv3_spi_max(), util_max(gicv3_eppi_max(), gicv3_espi_max()));
 #else
-	index_t last_spi = util_min((count_t)platform_irq_max(),
-				    GIC_SPI_BASE + GIC_SPI_NUM - 1U);
+	index_t last_irq = gicv3_spi_max();
 #endif
 
 	QCBOREncode_OpenArrayInMap(qcbor_enc_ctxt, "vic_hwirq");
-	while (i <= last_spi) {
+
+	index_t i;
+	for (i = 0U; i < GIC_PPI_BASE; i++) {
+		// Invalid caps corresponding to the SPI numbers
+		vgic_env_add_invalid_cap(qcbor_enc_ctxt);
+	}
+
+	rcu_read_start();
+	while (i <= last_irq) {
+#if GICV3_EXT_IRQS
+		assert_debug(i < (GIC_SPI_EXT_BASE + VGIC_SPI_EXT_NUM));
+#else
+		assert_debug(i < (GIC_SPI_BASE + GIC_SPI_NUM));
+#endif
+
 		hwirq_create_t hwirq_params = {
 			.irq = i,
 		};
@@ -789,8 +932,14 @@ vgic_handle_rootvm_create_hwirq(partition_t	 *root_partition,
 				HWIRQ_ACTION_VIC_BASE_FORWARD_PRIVATE;
 #endif
 		} else {
-			QCBOREncode_AddUInt64(qcbor_enc_ctxt,
-					      CSPACE_CAP_INVALID);
+			vgic_env_add_invalid_cap(qcbor_enc_ctxt);
+			goto next_index;
+		}
+
+		// Check whether the irq already exists
+		hwirq_t *hwirq = irq_lookup_hwirq(i);
+		if (hwirq != NULL) {
+			vgic_env_add_invalid_cap(qcbor_enc_ctxt);
 			goto next_index;
 		}
 
@@ -805,8 +954,7 @@ vgic_handle_rootvm_create_hwirq(partition_t	 *root_partition,
 			if ((err == ERROR_DENIED) ||
 			    (err == ERROR_ARGUMENT_INVALID) ||
 			    (err == ERROR_BUSY)) {
-				QCBOREncode_AddUInt64(qcbor_enc_ctxt,
-						      CSPACE_CAP_INVALID);
+				vgic_env_add_invalid_cap(qcbor_enc_ctxt);
 				object_put_hwirq(hwirq_r.r);
 				goto next_index;
 			} else {
@@ -821,24 +969,58 @@ vgic_handle_rootvm_create_hwirq(partition_t	 *root_partition,
 		if (cid_r.e != OK) {
 			panic("Unable to create cap to HWIRQ");
 		}
+		// Add the cap to the env array
 		QCBOREncode_AddUInt64(qcbor_enc_ctxt, cid_r.r);
 
 	next_index:
 		i++;
 #if GICV3_EXT_IRQS
-		// Skip large range between end of non-extended PPIs and start
-		// of extended SPIs to optimize encoding
-		if (i == GIC_PPI_EXT_BASE + GIC_PPI_EXT_NUM) {
+		if ((i == gicv3_spi_max() + 1U) && (gicv3_eppi_max() != 0U)) {
+			// End of the regular SPIs, start the Ext PPIs
+			QCBOREncode_CloseArray(qcbor_enc_ctxt);
+			ext_ranges = true;
+			// Start a new array of maps
+			QCBOREncode_OpenArrayInMap(qcbor_enc_ctxt,
+						   "vic_hwirq_ranges");
+			i = GIC_PPI_EXT_BASE;
+			QCBOREncode_OpenMap(qcbor_enc_ctxt);
+			QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt, "i", i);
+			QCBOREncode_OpenArrayInMap(qcbor_enc_ctxt, "caps");
+		} else if (((i == gicv3_eppi_max() + 1U) ||
+			    (i == gicv3_spi_max() + 1U)) &&
+			   (gicv3_espi_max() != 0U)) {
+			// End of the regular SPI or extended PPI range, start
+			// the extend SPIs
+			QCBOREncode_CloseArray(qcbor_enc_ctxt);
+			QCBOREncode_CloseMap(qcbor_enc_ctxt);
 			i = GIC_SPI_EXT_BASE;
+			// Start the next map in the 'vic_hwirq_ranges'
+			// array
+			QCBOREncode_OpenMap(qcbor_enc_ctxt);
+			QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt, "i", i);
+			QCBOREncode_OpenArrayInMap(qcbor_enc_ctxt, "caps");
+			break;
+		} else {
+			// Not the end of a range
 		}
 #endif
 	}
+
+	rcu_read_finish();
 
 	// Check if the insertion failed because of buffer overflow, on error
 	// the config QCBOR_ENV_CONFIG_SIZE needs to be increased
 	if (QCBOREncode_GetErrorState(qcbor_enc_ctxt) != QCBOR_SUCCESS) {
 		panic("QCBOR data buffer too small");
 	}
+#if GICV3_EXT_IRQS
+	if (ext_ranges) {
+		// Close the 'caps' array and the containing map
+		QCBOREncode_CloseArray(qcbor_enc_ctxt);
+		QCBOREncode_CloseMap(qcbor_enc_ctxt);
+	}
+#endif
+	// Close the 'vic_hwirq' or 'vic_hwirq_ranges' array
 	QCBOREncode_CloseArray(qcbor_enc_ctxt);
 }
 
@@ -877,6 +1059,9 @@ vgic_handle_rootvm_init(partition_t *root_partition, thread_t *root_thread,
 	QCBOREncode_AddUInt64(qcbor_enc_ctxt, PLATFORM_GICR_COUNT);
 	QCBOREncode_CloseArray(qcbor_enc_ctxt);
 	QCBOREncode_CloseArray(qcbor_enc_ctxt);
+
+	QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt, "vic_max_virqs",
+				   GIC_SPI_NUM + VGIC_SPI_EXT_NUM);
 
 	if (vic_configure(vic_r.r, max_vcpus, max_virqs, max_msis, false) !=
 	    OK) {
@@ -1011,14 +1196,21 @@ vgic_bind_hwirq_spi(vic_t *vic, hwirq_t *hwirq, virq_t virq)
 
 	assert(hwirq->action == HWIRQ_ACTION_VGIC_FORWARD_SPI);
 
-	if (vgic_get_irq_type(virq) != VGIC_IRQ_TYPE_SPI) {
+	if (!vgic_irq_is_spi(virq)) {
 		err = ERROR_ARGUMENT_INVALID;
+		goto out;
+	}
+
+	if (atomic_fetch_or_explicit(&hwirq->is_bound, true,
+				     memory_order_acquire)) {
+		err = ERROR_VIRQ_BOUND;
 		goto out;
 	}
 
 	err = vic_bind_shared(&hwirq->vgic_spi_source, vic, virq,
 			      VIRQ_TRIGGER_VGIC_FORWARDED_SPI);
 	if (err != OK) {
+		atomic_store_release(&hwirq->is_bound, false);
 		goto out;
 	}
 
@@ -1126,26 +1318,36 @@ vgic_unbind_hwirq_spi(hwirq_t *hwirq)
 
 	assert(hwirq->action == HWIRQ_ACTION_VGIC_FORWARD_SPI);
 
-	rcu_read_start();
-	vic_t *vic = atomic_load_consume(&hwirq->vgic_spi_source.vic);
-	if (vic == NULL) {
-		rcu_read_finish();
+	if (!atomic_fetch_or_explicit(&hwirq->is_bound, false,
+				      memory_order_acquire)) {
 		err = ERROR_VIRQ_NOT_BOUND;
 		goto out;
 	}
 
-	// Ensure that no other thread can concurrently enable the HW IRQ by
-	// enabling the bound VIRQ.
-	spinlock_acquire(&vic->gicd_lock);
-	hwirq->vgic_enable_hw = false;
-	spinlock_release(&vic->gicd_lock);
-	rcu_read_finish();
+	rcu_read_start();
+	vic_t *vic = atomic_load_consume(&hwirq->vgic_spi_source.vic);
 
-	// Disable the IRQ, and wait for running handlers to complete.
-	irq_disable_shared_sync(hwirq);
+	if (vic != NULL) {
+		// Ensure that no other thread can concurrently enable the HW
+		// IRQ by enabling the bound VIRQ.
+		spinlock_acquire(&vic->gicd_lock);
+		hwirq->vgic_enable_hw = false;
+		spinlock_release(&vic->gicd_lock);
+	}
+
+	rcu_read_finish();
 
 	// Remove the VIRQ binding, and wait until the source can be reused.
 	vic_unbind_sync(&hwirq->vgic_spi_source);
+
+	// Disable the IRQ
+	irq_disable_shared_nosync(hwirq);
+
+	// Deactivating the IRQ
+	irq_deactivate_forwarded(hwirq);
+
+	// Clear HW IRQ is_bound flag
+	atomic_store_release(&hwirq->is_bound, false);
 
 	err = OK;
 out:
@@ -1524,8 +1726,9 @@ vgic_gicd_set_irq_group(vic_t *vic, irq_t irq_num, bool is_group_1)
 {
 	if (vgic_irq_is_spi(irq_num)) {
 		_Atomic vgic_delivery_state_t *dstate =
-			&vic->spi_states[irq_num - GIC_SPI_BASE];
+			vgic_find_dstate(vic, NULL, irq_num);
 
+		assert(dstate != NULL);
 		vgic_sync_group_change(vic, irq_num, dstate, is_group_1);
 	}
 }
@@ -1599,30 +1802,46 @@ vgic_gicd_set_irq_hardware_router(vic_t *vic, irq_t irq_num,
 	bool	       is_hw  = (source != NULL) &&
 		     (source->trigger == VIRQ_TRIGGER_VGIC_FORWARDED_SPI);
 	if (is_hw) {
-		// Default to an invalid physical route
-		GICD_IROUTER_t physical_router = GICD_IROUTER_default();
-		GICD_IROUTER_set_IRM(&physical_router, false);
-		GICD_IROUTER_set_Aff0(&physical_router, 0xff);
-		GICD_IROUTER_set_Aff1(&physical_router, 0xff);
-		GICD_IROUTER_set_Aff2(&physical_router, 0xff);
-		GICD_IROUTER_set_Aff3(&physical_router, 0xff);
+		GICD_IROUTER_t physical_router;
 
 		// Try to set the physical route based on the virtual target
 #if VGIC_HAS_1N && GICV3_HAS_1N
 		if (vgic_delivery_state_get_route_1n(&new_dstate)) {
+			VGIC_TRACE(ROUTE, vic, NULL,
+				   "route {:d}: 1-of-N (listed {:d})", irq_num,
+				   vgic_delivery_state_get_listed(&new_dstate)
+					   ? 1U
+					   : 0U);
+			// If a 1-of-N interrupt is already listed, its route
+			// is pinned to the CPU that it was last delivered on;
+			// we shouldn't update the physical GIC at this point.
+			if (vgic_delivery_state_get_listed(&new_dstate)) {
+				goto out;
+			}
+			physical_router = GICD_IROUTER_default();
 			GICD_IROUTER_set_IRM(&physical_router, true);
 		} else
 #endif
 			if (new_target != NULL) {
 			physical_router = new_target->vgic_irouter;
+			VGIC_TRACE(ROUTE, vic, NULL,
+				   "route {:d}: virt {:d} phys {:#x}", irq_num,
+				   route_index,
+				   GICD_IROUTER_raw(physical_router));
 		} else {
-			// No valid target
+			// No valid target; try to set an invalid route
+			VGIC_TRACE(ROUTE, vic, NULL,
+				   "route {:d}: virt {:d} phys N/A", irq_num,
+				   route_index);
+			physical_router = GICD_IROUTER_default();
+			GICD_IROUTER_set_IRM(&physical_router, false);
+			GICD_IROUTER_set_Aff0(&physical_router, 0xff);
+			GICD_IROUTER_set_Aff1(&physical_router, 0xff);
+			GICD_IROUTER_set_Aff2(&physical_router, 0xff);
+			GICD_IROUTER_set_Aff3(&physical_router, 0xff);
 		}
 
 		// Set the chosen physical route
-		VGIC_TRACE(ROUTE, vic, NULL, "route {:d}: virt {:d} phys {:#x}",
-			   irq_num, route_index,
-			   GICD_IROUTER_raw(physical_router));
 		irq_t irq = hwirq_from_virq_source(source)->irq;
 		(void)gicv3_spi_set_route(irq, physical_router);
 
@@ -1642,6 +1861,10 @@ vgic_gicd_set_irq_hardware_router(vic_t *vic, irq_t irq_num,
 #if !(VGIC_HAS_1N && GICV3_HAS_1N) && !GICV3_HAS_GICD_ICLAR
 	(void)new_dstate;
 #endif
+#if VGIC_HAS_1N && GICV3_HAS_1N
+out:
+#endif
+	return;
 }
 
 void
@@ -1942,7 +2165,8 @@ vgic_update_vsgi(thread_t *gicr_vcpu, irq_t irq_num)
 	// Note: we don't check whether vSGI delivery is enabled here; that is
 	// only done when sending an SGI.
 	_Atomic vgic_delivery_state_t *dstate =
-		&gicr_vcpu->vgic_private_states[irq_num];
+		vgic_find_dstate(NULL, gicr_vcpu, irq_num);
+	assert(dstate != NULL);
 	vgic_delivery_state_t new_dstate = atomic_load_relaxed(dstate);
 
 	// Note: as per the spec, this is a no-op if the vPE is not mapped.
@@ -2316,8 +2540,8 @@ vgic_gicr_sgi_set_sgi_ppi_group(vic_t *vic, thread_t *gicr_vcpu, irq_t irq_num,
 #endif
 
 	_Atomic vgic_delivery_state_t *dstate =
-		&gicr_vcpu->vgic_private_states[irq_num];
-
+		vgic_find_dstate(vic, gicr_vcpu, irq_num);
+	assert(dstate != NULL);
 	vgic_sync_group_change(vic, irq_num, dstate, is_group_1);
 
 #if GICV3_HAS_VLPI_V4_1 && VGIC_HAS_LPI
@@ -2395,14 +2619,9 @@ vic_bind_shared(virq_source_t *source, vic_t *vic, virq_t virq,
 	}
 	assert(atomic_load_relaxed(&source->vic) == NULL);
 
-	if (vgic_get_irq_type(virq) != VGIC_IRQ_TYPE_SPI) {
+	if (!vgic_irq_is_spi(virq)) {
 		ret = ERROR_ARGUMENT_INVALID;
-		goto out_release;
-	}
-
-	if ((virq - GIC_SPI_BASE) >= vic->sources_count) {
-		ret = ERROR_ARGUMENT_INVALID;
-		goto out_release;
+		goto out;
 	}
 
 	_Atomic vgic_delivery_state_t *dstate =
@@ -2414,8 +2633,13 @@ vic_bind_shared(virq_source_t *source, vic_t *vic, virq_t virq,
 	source->vgic_gicr_index = CPU_INDEX_INVALID;
 
 	rcu_read_start();
-	virq_source_t *_Atomic *attach_ptr = &vic->sources[virq - GIC_SPI_BASE];
-	virq_source_t	       *old_source = atomic_load_acquire(attach_ptr);
+	_Atomic(virq_source_t *) *attach_ptr =
+		vgic_find_source_ptr(vic, NULL, virq);
+	if (attach_ptr == NULL) {
+		ret = ERROR_ARGUMENT_INVALID;
+		goto out_rcu_release;
+	}
+	virq_source_t *old_source = atomic_load_acquire(attach_ptr);
 	do {
 		// If there is already a source bound, we can't bind another.
 		if (old_source != NULL) {
@@ -2452,7 +2676,6 @@ vic_bind_shared(virq_source_t *source, vic_t *vic, virq_t virq,
 out_rcu_release:
 	rcu_read_finish();
 
-out_release:
 	if (ret != OK) {
 		atomic_store_release(&source->vgic_is_bound, false);
 	}
@@ -2467,7 +2690,7 @@ vic_bind_private(virq_source_t *source, vic_t *vic, thread_t *vcpu, virq_t virq,
 {
 	error_t ret;
 
-	if (vgic_get_irq_type(virq) != VGIC_IRQ_TYPE_PPI) {
+	if (!vgic_irq_is_ppi(virq)) {
 		ret = ERROR_ARGUMENT_INVALID;
 		goto out;
 	}
@@ -2494,10 +2717,13 @@ vic_bind_private(virq_source_t *source, vic_t *vic, thread_t *vcpu, virq_t virq,
 		goto out_locked;
 	}
 
-	virq_source_t *old_source = NULL;
+	virq_source_t	       *old_source = NULL;
+	virq_source_t *_Atomic *source_ptr =
+		vgic_find_source_ptr(vic, vcpu, virq);
+	assert(source_ptr != NULL);
 	if (!atomic_compare_exchange_strong_explicit(
-		    &vcpu->vgic_sources[virq - GIC_PPI_BASE], &old_source,
-		    source, memory_order_release, memory_order_relaxed)) {
+		    source_ptr, &old_source, source, memory_order_release,
+		    memory_order_relaxed)) {
 		ret = ERROR_BUSY;
 	} else {
 		atomic_store_release(&source->vic, vic);
@@ -2572,7 +2798,7 @@ vic_bind_private_forward_private(virq_source_t *source, vic_t *vic,
 	assert(vic != NULL);
 	assert(vcpu != NULL);
 
-	if (vgic_get_irq_type(virq) != VGIC_IRQ_TYPE_PPI) {
+	if (!vgic_irq_is_ppi(virq)) {
 		ret = ERROR_ARGUMENT_INVALID;
 		goto out;
 	}
@@ -2679,9 +2905,8 @@ vic_do_unbind(virq_source_t *source, bool during_deactivate)
 	// level_src or hw_active bits are still set.
 	virq_source_t	       *registered_source = source;
 	virq_source_t *_Atomic *registered_source_ptr =
-		source->is_private
-			? &vcpu->vgic_sources[source->virq - GIC_PPI_BASE]
-			: &vic->sources[source->virq - GIC_SPI_BASE];
+		(virq_source_t *_Atomic *)vgic_find_source_ptr(vic, vcpu,
+							       source->virq);
 	if (!atomic_compare_exchange_strong_explicit(
 		    registered_source_ptr, &registered_source, NULL,
 		    memory_order_release, memory_order_relaxed)) {
@@ -2782,6 +3007,10 @@ out:
 bool_result_t
 virq_assert(virq_source_t *source, bool edge_only)
 {
+	if (!edge_only) {
+		// Guarantee ordering for virq_check_pending
+		atomic_thread_fence(memory_order_release);
+	}
 	return virq_do_assert(source, edge_only, false);
 }
 

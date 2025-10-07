@@ -49,12 +49,6 @@ debug_os_lock(void)
 	asm_context_sync_ordered(&debug_asm_order);
 }
 
-static inline bool
-debug_force_save_ext(void)
-{
-	return PLATFORM_DEBUG_SAVE_STATE > 1U;
-}
-
 void
 debug_handle_power_cpu_offline(void)
 {
@@ -76,11 +70,11 @@ debug_handle_power_cpu_suspend(bool may_poweroff)
 			register_DBGCLAIMCLR_EL1_read_ordered(&debug_asm_order);
 #endif
 
-		if (debug_force_save_ext() ||
-		    DBGCLAIM_EL1_get_debug_ext(&state->dbgclaim)) {
+		if (DBGCLAIM_EL1_get_debug_ext(&state->dbgclaim)) {
 			state->mdccint = register_MDCCINT_EL1_read_ordered(
 				&debug_asm_order);
-			debug_save_common(&state->common, &debug_asm_order);
+			(void)debug_save_common(&state->common,
+						&debug_asm_order);
 			state->dtrrx = register_OSDTRRX_EL1_read_ordered(
 				&debug_asm_order);
 			state->dtrtx = register_OSDTRTX_EL1_read_ordered(
@@ -107,8 +101,7 @@ debug_handle_power_cpu_resume(bool was_poweroff)
 	if (was_poweroff) {
 		debug_ext_state_t *state = &CPULOCAL(debug_ext_state);
 
-		if (debug_force_save_ext() ||
-		    DBGCLAIM_EL1_get_debug_ext(&state->dbgclaim)) {
+		if (DBGCLAIM_EL1_get_debug_ext(&state->dbgclaim)) {
 			// Lock just in case; the lock should already be set
 			debug_os_lock();
 

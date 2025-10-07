@@ -46,7 +46,7 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  used handle these variances.
 */
 // #define QCBOR_SPIFFY_DECODE
-#define QCBOR_DISABLE_EXP_AND_MANTISSA
+#define QCBOR_CONFIG_DISABLE_EXP_AND_MANTISSA
 
 /* It was originally defined as QCBOR_CONFIG_DISABLE_EXP_AND_MANTISSA,
  * but this is incosistent with all the other QCBOR_DISABLE_
@@ -71,25 +71,25 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endif /* USEFULBUF_DISABLE_ALL_FLOAT */
 
 /* Standard CBOR Major type for positive integers of various lengths */
-#define CBOR_MAJOR_TYPE_POSITIVE_INT 0
+#define CBOR_MAJOR_TYPE_POSITIVE_INT 0U
 
 /* Standard CBOR Major type for negative integer of various lengths */
-#define CBOR_MAJOR_TYPE_NEGATIVE_INT 1
+#define CBOR_MAJOR_TYPE_NEGATIVE_INT 1U
 
 /* Standard CBOR Major type for an array of arbitrary 8-bit bytes. */
-#define CBOR_MAJOR_TYPE_BYTE_STRING 2
+#define CBOR_MAJOR_TYPE_BYTE_STRING 2U
 
 /* Standard CBOR Major type for a UTF-8 string. Note this is true 8-bit UTF8
  with no encoding and no NULL termination */
-#define CBOR_MAJOR_TYPE_TEXT_STRING 3
+#define CBOR_MAJOR_TYPE_TEXT_STRING 3U
 
 /* Standard CBOR Major type for an ordered array of other CBOR data items */
-#define CBOR_MAJOR_TYPE_ARRAY 4
+#define CBOR_MAJOR_TYPE_ARRAY 4U
 
 /* Standard CBOR Major type for CBOR MAP. Maps an array of pairs. The
  first item in the pair is the "label" (key, name or identfier) and the second
  item is the value.  */
-#define CBOR_MAJOR_TYPE_MAP 5
+#define CBOR_MAJOR_TYPE_MAP 5U
 
 /* Standard CBOR major type for a tag number. This creates a CBOR "tag" that
  * is the tag number and a data item that follows as the tag content.
@@ -98,30 +98,30 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * not really anything optional about it. It was misleading. It is
  * renamed in RFC 8949.
  */
-#define CBOR_MAJOR_TYPE_TAG	 6
-#define CBOR_MAJOR_TYPE_OPTIONAL 6
+#define CBOR_MAJOR_TYPE_TAG	 6U
+#define CBOR_MAJOR_TYPE_OPTIONAL 6U
 
 /* Standard CBOR extra simple types like floats and the values true and false */
-#define CBOR_MAJOR_TYPE_SIMPLE 7
+#define CBOR_MAJOR_TYPE_SIMPLE 7U
 
 /*
  These are special values for the AdditionalInfo bits that are part of
  the first byte.  Mostly they encode the length of the data item.
  */
-#define LEN_IS_ONE_BYTE	   24
-#define LEN_IS_TWO_BYTES   25
-#define LEN_IS_FOUR_BYTES  26
-#define LEN_IS_EIGHT_BYTES 27
-#define ADDINFO_RESERVED1  28
-#define ADDINFO_RESERVED2  29
-#define ADDINFO_RESERVED3  30
-#define LEN_IS_INDEFINITE  31
+#define LEN_IS_ONE_BYTE	   24U
+#define LEN_IS_TWO_BYTES   25U
+#define LEN_IS_FOUR_BYTES  26U
+#define LEN_IS_EIGHT_BYTES 27U
+#define ADDINFO_RESERVED1  28U
+#define ADDINFO_RESERVED2  29U
+#define ADDINFO_RESERVED3  30U
+#define LEN_IS_INDEFINITE  31U
 
 /*
  24 is a special number for CBOR. Integers and lengths
  less than it are encoded in the same byte as the major type.
  */
-#define CBOR_TWENTY_FOUR 24
+#define CBOR_TWENTY_FOUR 24U
 
 /*
  Tags that are used with CBOR_MAJOR_TYPE_OPTIONAL. These
@@ -246,15 +246,15 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 /*
  Values for the 5 bits for items of major type 7
  */
-#define CBOR_SIMPLEV_FALSE	    20
-#define CBOR_SIMPLEV_TRUE	    21
-#define CBOR_SIMPLEV_NULL	    22
-#define CBOR_SIMPLEV_UNDEF	    23
-#define CBOR_SIMPLEV_ONEBYTE	    24
-#define HALF_PREC_FLOAT		    25
-#define SINGLE_PREC_FLOAT	    26
-#define DOUBLE_PREC_FLOAT	    27
-#define CBOR_SIMPLE_BREAK	    31
+#define CBOR_SIMPLEV_FALSE	    20U
+#define CBOR_SIMPLEV_TRUE	    21U
+#define CBOR_SIMPLEV_NULL	    22U
+#define CBOR_SIMPLEV_UNDEF	    23U
+#define CBOR_SIMPLEV_ONEBYTE	    24U
+#define HALF_PREC_FLOAT		    25U
+#define SINGLE_PREC_FLOAT	    26U
+#define DOUBLE_PREC_FLOAT	    27U
+#define CBOR_SIMPLE_BREAK	    31U
 #define CBOR_SIMPLEV_RESERVED_START CBOR_SIMPLEV_ONEBYTE
 #define CBOR_SIMPLEV_RESERVED_END   CBOR_SIMPLE_BREAK
 
@@ -561,7 +561,7 @@ qcbor_err_to_str(QCBORError err);
  * decoding.
  */
 /* -1 because the value UINT16_MAX is used to track indefinite-length arrays */
-#define QCBOR_MAX_ITEMS_IN_ARRAY (UINT16_MAX - 1)
+#define QCBOR_MAX_ITEMS_IN_ARRAY (UINT16_MAX - 1U)
 
 /**
  This is deprecated. See QCBORDecode_GetNthTag() and

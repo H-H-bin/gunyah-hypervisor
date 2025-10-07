@@ -1,0 +1,26 @@
+// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+// FIXME: Get this from the addrspace instead?
+define RANGE_TREE_MAP_BITS constant type count_t = 44;
+
+extend range_tree structure {
+	map	structure range_map;
+};
+
+extend range_map_type enumeration {
+	range_tree_node;
+};
+
+extend range_map_value union {
+	range_tree_node		pointer structure range_tree_node;
+};
+
+extend range_map_callback enumeration {
+	range_tree_release;
+};
+
+extend range_map_arg union {
+	range_tree_node_type enumeration range_tree_node_type;
+};

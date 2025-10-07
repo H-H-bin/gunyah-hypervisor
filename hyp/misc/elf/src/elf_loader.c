@@ -28,7 +28,7 @@ str_equal(const unsigned char *s1, const unsigned char *s2, size_t n)
 	bool	ret = true;
 	index_t i;
 
-	assert(n > 0);
+	assert(n > 0U);
 
 	for (i = 0; i < n; i++) {
 		if (s1[i] != s2[i]) {
@@ -190,7 +190,8 @@ elf_load_phys(void *elf_file, size_t elf_max_size, paddr_t phys_base)
 		partition_phys_access_enable(dest);
 
 		// copy elf segment data
-		(void)memcpy(dest, (char *)seg_base, cur_phdr->p_filesz);
+		(void)memscpy(dest, cur_phdr->p_memsz, (char *)seg_base,
+			      cur_phdr->p_filesz);
 		// zero bss
 		size_t bss_size = cur_phdr->p_memsz - cur_phdr->p_filesz;
 		(void)memset_s(dest + cur_phdr->p_filesz, bss_size, 0,

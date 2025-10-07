@@ -11,7 +11,7 @@
 ## FIXME: this is an implementation detail of the type system
 ${variable.name}.bf[0]#slurp
 #elif variable.category == 'union'
-(uint${8 * variable.size}_t)${variable.name}.raw#slurp
+${variable.name}.raw#slurp
 #else
 ${variable.name}#slurp
 #end if
@@ -59,18 +59,110 @@ void#slurp
 #end if
 #end def
 
-#def type_signature(hypercall, suffix='', ignored_inputs=False)
+#def type_signature(hypercall, suffix='', cap_suffix='', ignored_inputs=False)
 ${return_type(hypercall)}
 ${prefix}${hypercall.name}${suffix}(#slurp
 #set sep = ''
+#set no_inputs = True
 #for r, i in hypercall.inputs
 #unless i.ignore and not ignored_inputs
-$sep${i.ctype} ${i.name}
+$sep${i.ctype} ${i.name}#slurp
+#if $i.ctype == 'cap_id_t' and cap_suffix not in $i.name
+_${cap_suffix}
+#end if
 #set sep = ', '
+#set no_inputs = False
 #end unless
 #end for
-#unless hypercall.inputs
+#if no_inputs
 void#slurp
-#end unless
+#end if
 )
+#end def
+
+#def hypcall_check_inputs(hypcall)
+    ## generate reserved input checks
+    #set error_ret = None
+    #for r, output in $hypcall.outputs
+        #if $output.ctype == 'error_t'
+            #set error_ret = $output
+            #break
+        #end if
+    #end for
+    #if error_ret
+        #for r, input in $hypcall.inputs
+            #if $input.ignore
+    if (compiler_unexpected(${input.name} != (${input.ctype})${input.default}U)) {
+                #if len($hypcall.outputs) == 1
+        ret_ = ERROR_ARGUMENT_INVALID;
+                #else
+        ret_ = ($return_type($hypcall)){ .${error_ret.name} = ERROR_ARGUMENT_INVALID };
+                #end if
+        goto out;
+    }
+            #end if
+        #end for
+    #else
+        #if len($hypcall.inputs) > 0
+// FIXME: unchecked reserved inputs
+            #for r, input in $hypcall.inputs
+                #if $input.ignore
+(void)$input.name;
+                #end if
+            #end for
+        #end if
+    #end if
+#end def
+
+#def hypcall_trace_inputs(name, inputs, arg_fn)
+    #set trace_fmt = $name + ":"
+    #for i, input in inputs
+        #if not $input.ignore
+            #set trace_fmt = trace_fmt + " {:#x}"
+        #end if
+    #end for
+    TRACE(USER, HYPERCALL, "${trace_fmt}"
+    #for i, input in inputs
+        #if not $input.ignore
+        , $arg_fn(i, input)
+        #end if
+    #end for
+    );#slurp
+#end def
+
+#def hypcall_trace_outputs(name, outputs, arg_fn)
+    #set trace_fmt = $name + ":"
+    #for i, output in outputs
+        #set trace_fmt = trace_fmt + " {:#x}"
+    #end for
+    TRACE(USER, HYPERCALL, "${trace_fmt}"
+    #for i, output in outputs
+        , $arg_fn(i, output)
+    #end for
+    );#slurp
+#end def
+
+#def trace_hypcall_entry(hypcall, arg_fn)
+    #set trace_inputs = []
+    #for i in $hypcall.inputs
+        #if not $i[1].ignore
+            #set trace_inputs = trace_inputs + [i]
+        #end if
+    #end for
+    #set num_args = len(trace_inputs)
+    #set trace_max = 5
+    $hypcall_trace_inputs($hypcall.name, $trace_inputs[:$trace_max], arg_fn)
+#if $num_args > $trace_max
+    $hypcall_trace_inputs($hypcall.name + "(cont)", $trace_inputs[$trace_max:], arg_fn)
+#end if
+#end def
+
+#def trace_hypcall_exit(hypcall, arg_fn)
+    #set num_args = len(hypcall.outputs)
+    #set name = $hypcall.name + " ret"
+    #set trace_max = 5
+    $hypcall_trace_outputs(name, $hypcall.outputs[:$trace_max], arg_fn)
+#if $num_args > $trace_max
+    $hypcall_trace_outputs(name + "(cont)", $hypcall.outputs[$trace_max:], arg_fn)
+#end if
 #end def

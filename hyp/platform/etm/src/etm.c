@@ -166,7 +166,7 @@ etm_handle_boot_hypervisor_start(void)
 			panic("ETM: Address allocation failed.");
 		}
 
-		paddr_t cur_base = etm_base + i * etm_stride;
+		paddr_t cur_base = etm_base + (i * etm_stride);
 
 		pgtable_hyp_start();
 
@@ -211,7 +211,7 @@ etm_set_reg(cpu_index_t cpu, size_t offset, register_t val, size_t access_size)
 
 	if (access_size == sizeof(uint32_t)) {
 		_Atomic uint32_t *reg = (_Atomic uint32_t *)(base + offset);
-		atomic_store_relaxed(reg, val);
+		atomic_store_relaxed(reg, (uint32_t)val);
 	} else if (access_size == sizeof(uint64_t)) {
 		_Atomic uint64_t *reg = (_Atomic uint64_t *)(base + offset);
 		atomic_store_relaxed(reg, val);
@@ -293,12 +293,14 @@ etm_save_context_registers(cpu_index_t cpu, const context_register_info_t *info,
 
 	index_t cur_register_index = context_register_index;
 
-	for (index_t i = 0; i < info->count; i++, cur_register_index++) {
-		size_t reg_offset = info->reg_offset + i * info->stride;
+	index_t i = 0;
 
-		register_t *reg = context + cur_register_index;
-
+	while (i < info->count) {
+		size_t	    reg_offset = info->reg_offset + (i * info->stride);
+		register_t *reg	       = context + cur_register_index;
 		etm_get_reg(cpu, reg_offset, reg, info->access_size);
+		i++;
+		cur_register_index++;
 	}
 
 	return cur_register_index;
@@ -333,7 +335,7 @@ etm_save_context_percpu(cpu_index_t cpu)
 	} while (1);
 
 	etm_cprgctlr[cpu] = atomic_load_relaxed(&mapped_etms[cpu]->trcprgctlr);
-	if ((etm_cprgctlr[cpu] & ETM_TRCPRGCTLR_ENABLE) != 0U) {
+	if ((etm_cprgctlr[cpu] & (uint32_t)ETM_TRCPRGCTLR_ENABLE) != 0U) {
 		// save all context registers
 		index_t context_register_index = 0U;
 		for (index_t i = 0; i < util_array_size(context_register_list);
@@ -365,7 +367,7 @@ etm_save_context_percpu(cpu_index_t cpu)
 			platform_timer_ndelay(1000);
 		}
 
-		if ((!idle) && (idle_count == 0)) {
+		if ((!idle) && (idle_count == 0U)) {
 			LOG(ERROR, WARN,
 			    "ETM: waiting idle timeout for context save");
 		}
@@ -382,13 +384,15 @@ etm_restore_context_registers(cpu_index_t		     cpu,
 
 	index_t cur_register_index = context_register_index;
 
-	for (index_t i = 0; i < info->count; i++, cur_register_index++) {
-		size_t reg_offset = info->reg_offset + i * info->stride;
+	index_t i = 0;
 
-		register_t *reg = context + cur_register_index;
-
+	while (i < info->count) {
+		size_t	    reg_offset = info->reg_offset + (i * info->stride);
+		register_t *reg	       = context + cur_register_index;
 		etm_set_reg(cpu, reg_offset, *reg, info->access_size);
 		CTX_WRITE_WORKAROUND;
+		i++;
+		cur_register_index++;
 	}
 
 	return cur_register_index;
@@ -397,7 +401,7 @@ etm_restore_context_registers(cpu_index_t		     cpu,
 void
 etm_restore_context_percpu(cpu_index_t cpu)
 {
-	if (((etm_cprgctlr[cpu]) & ETM_TRCPRGCTLR_ENABLE) != 0U) {
+	if (((etm_cprgctlr[cpu]) & (uint32_t)ETM_TRCPRGCTLR_ENABLE) != 0U) {
 		// restore all context registers
 		index_t context_register_index = 0U;
 		for (index_t i = 0; i < util_array_size(context_register_list);

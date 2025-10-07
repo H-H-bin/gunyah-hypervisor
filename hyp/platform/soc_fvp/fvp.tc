@@ -1,0 +1,35 @@
+// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define CLIENT_ID_HYP constant uint32 = 0;
+
+extend hyp_env_data structure {
+	device_me_capid		type cap_id_t;
+};
+
+define psci_cpu_state enumeration(explicit) {
+	ACTIVE = 0;
+	WFI = 1;
+};
+
+define psci_cluster_state enumeration(explicit) {
+	ACTIVE = 0;
+};
+
+define psci_suspend_powerstate_stateid_t newtype enumeration psci_cpu_state;
+
+extend psci_suspend_powerstate bitfield {
+	delete StateID;
+	15:0	StateID enumeration psci_cpu_state;
+};
+
+// Board UARTs are PL011, like Qemu
+define fvp_uart structure(aligned(PGTABLE_HYP_PAGE_SIZE)) {
+	dr		@0x0	uint32(atomic);
+	fr		@0x18	uint32(atomic);
+	ibrd	@0x24	uint32(atomic);
+	lcrh	@0x2c	uint32(atomic);
+	cr		@0x30	uint32(atomic);
+	ifls	@0x34	uint32(atomic);
+};

@@ -11,6 +11,7 @@
 #include <compiler.h>
 #include <panic.h>
 #include <scheduler.h>
+#include <thread.h>
 #include <trace.h>
 #include <virq.h>
 
@@ -71,8 +72,8 @@ arm_vm_timer_type_irq_received(thread_t *thread, arm_vm_timer_type_t tt)
 	bool injected = false;
 
 	if (arm_vm_timer_is_irq_pending(tt)) {
-		arm_vm_timer_inject_timer_virq(thread, tt);
 		arm_vm_timer_arch_timer_hw_irq_activated(tt);
+		arm_vm_timer_inject_timer_virq(thread, tt);
 		injected = true;
 	} else {
 		TRACE(DEBUG, INFO, "Spurious VM timer IRQ");

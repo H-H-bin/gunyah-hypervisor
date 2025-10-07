@@ -1,0 +1,11 @@
+// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+module allocator_list
+
+#if defined(UNIT_TESTS)
+subscribe tests_start
+	handler test_allocater()
+	priority -1
+#endif

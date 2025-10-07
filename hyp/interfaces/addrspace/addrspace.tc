@@ -2,10 +2,82 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
+extend cap_rights_addrspace bitfield {
+	0	attach			bool;
+	1	map			bool;
+	2	lookup			bool;
+	3	configure_range		bool;
+	4	map_protected		bool;
+	5	modify_protected	bool;
+	6	add_info		bool;
+};
+
 define addrspace_map_flags public bitfield<32> {
-	0	partial	bool;
-	31	no_sync	bool;
-	30:1	res0_0	uregister(const) = 0;
+	// Set if the operation should map or unmap only a subset of the
+	// specified memory extent. This is only supported for sparse extents.
+	// This flag affects the validity of additional arguments.
+	0	partial		bool;
+
+	// Set if the caller has limited control over the target address
+	// space and is creating an RWX mapping to resolve a page fault in
+	// the target's private memory range, as configured by a call to
+	// addrspace_configure_range() with the ADD_PRIVATE operation.
+	//
+	// This flag applies to both map and unmap operations, and alters the
+	// capability rights that are required to perform those operations, so
+	// that a caller may be delegated the right to make map and unmap
+	// calls for a specific address space only if they have this flag set.
+	//
+	// If this flag is set for an unmap operation, it will fail to unmap a
+	// page unless both of the following conditions are satisfied:
+	//
+	// 1. The page was mapped by a call that had this flag set.
+	// 2. A call to addrspace_modify_pages() with the unlock flag set has
+	// been made for the page since it was last mapped.
+	1	private		bool;
+
+	// Set if the caller has limited control over the target address space
+	// and is creating an RW or RO mapping to resolve a page fault in the
+	// target's virtual MMIO range, as configured by a call to
+	// addrspace_configure_range() with the ADD_VMMIO operation.
+	//
+	// This flag applies to both map and unmap operations, and alters the
+	// capability rights that are required to perform those operations, so
+	// that a caller may be delegated the right to make map and unmap
+	// calls for a specific address space only if they have this flag set.
+	2	vmmio		bool;
+
+	// Set if the operation does not need to guarantee that all accesses
+	// to pages unmapped during the operation have completed before it
+	// returns. In this case, the caller may wish to perform a separate
+	// sync operation to provide that guarantee.
+	31	no_sync		bool;
+};
+
+define addrspace_modify_pages_flags public bitfield<32> {
+	// Set if the operation should unlock any locked protected pages.
+	//
+	// Normally this operation provides a guarantee that accesses to
+	// unlocked pages that occur after the operation completes will fault,
+	// unless the page is re-locked. This is expensive, so if the
+	// guarantee is not required or can be deferred until a later unlock
+	// call, the no_sync_unlock flag should be set.
+	0	unlock		bool;
+
+	// Set if the operation should zero and cache flush any locked pages,
+	// before unlocking them if applicable.
+	//
+	// Note that this operation does not provide any guarantee that
+	// concurrent memory accesses by VCPUs other than the caller will
+	// complete or fault before sanitisation occurs. Therefore, this
+	// option should only be used if the caller can guarantee that there
+	// are no such concurrent accesses in progress.
+	1	sanitise	bool;
+
+	// Set if the operation does not need to guarantee that all accesses
+	// to pages unlocked during the operation will fault if they occur
+	// after the operation completes.
+	2	no_sync_unlock	bool;
 };
 
 define addrspace_lookup structure {
@@ -16,19 +88,90 @@ define addrspace_lookup structure {
 	user_access	enumeration pgtable_access;
 };
 
-// Allocate one page for the info area for now
-define MAX_VM_INFO_AREA_SIZE constant = PGTABLE_HYP_PAGE_SIZE;
-
-// The modules that need to use the VM Info Area will extend this structure
-// and add their own entries, then use the generated offsets. This structure
-// should never be directly used or referenced.
-define addrspace_info_area_layout structure {
+define addrspace_va_lookup structure {
+	phys		type paddr_t;
+	size		size;
+	coherent	bool;
 };
 
-define addrspace_vmmio_configure_op public enumeration(explicit) {
-	ADD = 0;
-	REMOVE = 1;
+define addrspace_info_area_id_owner public enumeration(explicit) {
+	// Platform independent (0 - 15)
+	INVALID = 0;
+	GUNYAH	= 1;	// Hypervisor IDs
+	ROOTVM	= 2;	// Generic RootVM IDs
+	RM	= 3;	// Gunyah Resource Manager IDs
+	// Qualcomm reserved range (16 - 19)
+	QCRM	= 16;
+	// Other values reserved
 };
+
+define addrspace_info_area_entry_type public bitfield<32> {
+	15:0		id		uint32;
+	31:16		owner		enumeration addrspace_info_area_id_owner;
+};
+
+define addrspace_info_area_entry_flags public bitfield<32> {
+	30:0		unknown = 0;
+	31		valid		bool;
+};
+
+define MAX_VM_INFO_AREA_SIZE constant size = (1<<16);
+
+define addrspace_info_area_entry structure {
+	type		bitfield addrspace_info_area_entry_type;
+	size		uint32;
+	offset		uint32;
+	flags		bitfield addrspace_info_area_entry_flags;
+};
+
+define addrspace_info_area_entry_data_info public bitfield<64> {
+	31:0		size		size;
+	63:32		alignment	size;
+};
+
+define addrspace_alloc_info_area_result structure {
+	e		enumeration error;
+	ptr		uintptr;
+	ipa		type vmaddr_t;
+	descriptor	pointer structure addrspace_info_area_entry;
+};
+
+define addrspace_range_configure_op public enumeration(explicit) {
+	ADD_VMMIO = 0;
+	REMOVE_VMMIO = 1;
+	ADD_PRIVATE = 2;
+	REMOVE_PRIVATE = 3;
+};
+
+#if defined(INTERFACE_VCPU_RUN)
+extend vcpu_run_state enumeration {
+	addrspace_vmmio_read = 4;
+	addrspace_vmmio_write = 5;
+	addrspace_page_fault = 7;
+};
+
+// Used when returning status for addrspace_page_fault
+define addrspace_access_type public enumeration(explicit) {
+	READ = 0;
+	WRITE = 1;
+	EXECUTE = 2;
+};
+
+// Used when resuming addrspace_page_fault or addrspace_vmmio_read/write
+define addrspace_resume_action public enumeration(explicit) {
+	// Take the default action:
+	// - vmmio write: skip the faulting instruction
+	// - vmmio read: skip the faulting instruction and set the read value
+	// - page fault: retry the faulting instruction
+	DEFAULT = 0;
+
+	// Retry the faulting instruction
+	RETRY = 1;
+
+	// Inject a fault into the VCPU
+	FAULT = 2;
+};
+#endif
 
 define addrspace_attach_vdevice_flags public union {
 	raw		uint64;

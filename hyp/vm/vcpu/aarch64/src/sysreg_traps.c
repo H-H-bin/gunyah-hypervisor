@@ -1,4 +1,5 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// © 2019 Qualcomm Innovation Center, Inc. All rights reserved.
+// All Rights Reserved.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -143,7 +144,8 @@ read_virtual_id_register(ESR_EL2_ISS_MSR_MRS_t iss, uint8_t reg_num)
 		break;
 	}
 	case ISS_MRS_MSR_ID_AA64PFR1_EL1: {
-		ID_AA64PFR1_EL1_t pfr1 = ID_AA64PFR1_EL1_default();
+		ID_AA64PFR1_EL1_t pfr1	  = ID_AA64PFR1_EL1_default();
+		ID_AA64PFR1_EL1_t hw_pfr1 = register_ID_AA64PFR1_EL1_read();
 #if defined(ARCH_ARM_FEAT_BTI)
 		ID_AA64PFR1_EL1_set_BT(&pfr1, 1U);
 #endif
@@ -167,19 +169,20 @@ read_virtual_id_register(ESR_EL2_ISS_MSR_MRS_t iss, uint8_t reg_num)
 #endif
 #if defined(ARCH_ARM_FEAT_MTE)
 		if (arm_mte_is_allowed()) {
-			ID_AA64PFR1_EL1_t hw_pfr1 =
-				register_ID_AA64PFR1_EL1_read();
 			ID_AA64PFR1_EL1_copy_MTE(&pfr1, &hw_pfr1);
 		}
 #endif
 #if defined(ARCH_ARM_FEAT_MPAM)
 		if (arm_mpam_is_allowed() &&
 		    vcpu_option_flags_get_mpam_allowed(&thread->vcpu_options)) {
-			ID_AA64PFR1_EL1_t hw_pfr1 =
-				register_ID_AA64PFR1_EL1_read();
 			ID_AA64PFR1_EL1_copy_MPAM_frac(&pfr1, &hw_pfr1);
 		}
 #endif
+#if defined(ARCH_ARM_FEAT_RNG)
+		ID_AA64PFR1_EL1_copy_RNDR_trap(&pfr1, &hw_pfr1);
+#endif
+		(void)hw_pfr1;
+
 		reg_val = ID_AA64PFR1_EL1_raw(pfr1);
 		break;
 	}
@@ -233,7 +236,7 @@ read_virtual_id_register(ESR_EL2_ISS_MSR_MRS_t iss, uint8_t reg_num)
 		ID_AA64ISAR0_EL1_set_TLB(&isar0, 1U);
 #endif
 #if defined(ARCH_ARM_FEAT_RNG)
-		ID_AA64ISAR0_EL1_set_RNDR(&isar0, 2U);
+		ID_AA64ISAR0_EL1_set_RNDR(&isar0, 1U);
 #endif
 		reg_val = ID_AA64ISAR0_EL1_raw(isar0);
 		break;
@@ -354,7 +357,7 @@ read_virtual_id_register(ESR_EL2_ISS_MSR_MRS_t iss, uint8_t reg_num)
 #if defined(ARCH_ARM_FEAT_VHE)
 		ID_AA64MMFR1_EL1_set_VH(&mmfr1, 1U);
 #endif
-#if defined(ARCH_ARM_FEAT_LOR)
+#if defined(ARCH_ARM_FEAT_LOR) && defined(INTERFACE_ARM_LOR)
 		ID_AA64MMFR1_EL1_set_LO(&mmfr1, 1U);
 #endif
 #if defined(ARCH_ARM_FEAT_PAN3)
@@ -806,6 +809,11 @@ sys_aa64mmfr1_read(void)
 #else
 	ID_AA64MMFR1_EL1_set_PAN(&mmfr1, 0U);
 #endif
+
+#if !defined(INTERFACE_ARM_LOR)
+	ID_AA64MMFR1_EL1_set_LO(&mmfr1, 0U);
+#endif
+
 	reg_val = ID_AA64MMFR1_EL1_raw(mmfr1);
 
 	return reg_val;
@@ -912,13 +920,11 @@ sys_aa64dfr0_read(const thread_t *thread)
 #if defined(MODULE_VM_ARM_VM_PMU)
 	ID_AA64DFR0_EL1_copy_PMUVer(&dfr0, &hw_dfr0);
 #endif
-#if defined(INTERFACE_VET)
+#if defined(ARCH_ARM_FEAT_TRF) && ARCH_ARM_FEAT_TRF
 	// Set IDs for VMs allowed to trace
 	if (vcpu_option_flags_get_trace_allowed(&thread->vcpu_options)) {
-#if defined(MODULE_VM_VETE)
 		ID_AA64DFR0_EL1_copy_TraceVer(&dfr0, &hw_dfr0);
 		ID_AA64DFR0_EL1_copy_TraceFilt(&dfr0, &hw_dfr0);
-#endif
 #if defined(MODULE_VM_VTRBE)
 		ID_AA64DFR0_EL1_copy_TraceBuffer(&dfr0, &hw_dfr0);
 #endif
@@ -1107,7 +1113,7 @@ sys_dfr0_read(const thread_t *thread)
 	ID_DFR0_EL1_set_MProfDbg(&dfr0, 0U);
 #endif
 
-#if defined(MODULE_VM_VETE)
+#if defined(ARCH_ARM_FEAT_TRF) && ARCH_ARM_FEAT_TRF
 	// Only the HLOS VM is allowed to trace
 	if (!vcpu_option_flags_get_trace_allowed(&thread->vcpu_options)) {
 		ID_DFR0_EL1_set_CopTrc(&dfr0, 0U);
@@ -1415,8 +1421,7 @@ sysreg_write(ESR_EL2_ISS_MSR_MRS_t iss)
 
 		// However, they're only unsafe for the VM executing them
 		// (because DC ISW is upgraded to DC CISW in hardware) so we
-		// disable the trap after the first warning (except on physical
-		// CPUs with an erratum that makes all set/way ops unsafe).
+		// disable the trap after the first warning
 		// FIXME:
 		preempt_disable();
 		thread->vcpu_regs_el2.hcr_el2 = register_HCR_EL2_read();

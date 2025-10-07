@@ -132,10 +132,9 @@ hyp_aspace_handle_boot_cold_init(void)
 	if (alloc_ret.e != OK) {
 		panic("Unable to alloc aspace regions");
 	}
+	(void)memset_s(alloc_ret.r, bitmap_size, 0, bitmap_size);
 
 	hyp_aspace_regions = alloc_ret.r;
-
-	(void)memset_s(hyp_aspace_regions, bitmap_size, 0, bitmap_size);
 
 	assert((virt_start >= hyp_aspace_alloc_base) &&
 	       (virt_end <= hyp_aspace_alloc_end));
@@ -415,7 +414,7 @@ hyp_aspace_check_region(uintptr_t virt, size_t size)
 		err = ERROR_ARGUMENT_ALIGNMENT;
 	} else if (util_add_overflows(virt, size)) {
 		err = ERROR_ARGUMENT_INVALID;
-	} else if (virt + size - 1U > hyp_aspace_direct_end) {
+	} else if ((virt + size - 1U) > hyp_aspace_direct_end) {
 		err = ERROR_ARGUMENT_INVALID;
 	} else {
 		err = OK;
@@ -504,9 +503,10 @@ hyp_aspace_handle_vectors_trap_data_abort_el2(ESR_EL2_t esr)
 	// If the FEAT_BBM level is 1, then splits and merges will temporarily
 	// set the nT bit in the block PTE while flushing the TLBs; the CPU is
 	// allowed to treat this the same as an invalid entry.
-	if ((fsc != ISS_DA_IA_FSC_TRANSLATION_1) &&
-	    (fsc != ISS_DA_IA_FSC_TRANSLATION_2) &&
-	    (fsc != ISS_DA_IA_FSC_TRANSLATION_3)) {
+	if ((fsc != ISS_DA_IA_FSC_TRANSLATION_L0) &&
+	    (fsc != ISS_DA_IA_FSC_TRANSLATION_L1) &&
+	    (fsc != ISS_DA_IA_FSC_TRANSLATION_L2) &&
+	    (fsc != ISS_DA_IA_FSC_TRANSLATION_L3)) {
 		goto out;
 	}
 

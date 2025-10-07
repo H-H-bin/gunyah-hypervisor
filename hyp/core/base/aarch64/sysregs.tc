@@ -243,7 +243,7 @@ define CPTR_EL2_E2H1 bitfield<64> {
 
 #if defined(ARCH_ARM_FEAT_SVE)
 extend CPTR_EL2_E2H0 bitfield {
-	8		TZ		bool;
+	8		TZ		bool = 1;
 };
 #endif
 
@@ -255,10 +255,10 @@ extend CPTR_EL2_E2H1 bitfield {
 
 #if defined(ARCH_ARM_FEAT_AMUv1) || defined(ARCH_ARM_FEAT_AMUv1p1)
 extend CPTR_EL2_E2H1 bitfield {
-	30		TAM		bool;
+	30		TAM		bool = 1;
 };
 extend CPTR_EL2_E2H0 bitfield {
-	30		TAM		bool;
+	30		TAM		bool = 1;
 };
 #endif
 
@@ -500,7 +500,6 @@ define HCR_EL2 bitfield<64> {
 #if defined(ARCH_ARM_FEAT_VHE)
 extend HCR_EL2 bitfield {
 	34		E2H		bool;
-	35		TLOR		bool;
 };
 #endif
 
@@ -561,6 +560,12 @@ extend HCR_EL2 bitfield {
 	56		ATA		bool;
 	57		DCT		bool;
 	58		TID5		bool;
+};
+#endif
+
+#if defined(ARCH_ARM_FEAT_LOR)
+extend HCR_EL2 bitfield {
+	35		TLOR		bool = 1;
 };
 #endif
 
@@ -718,6 +723,12 @@ define ID_AA64PFR1_EL1 bitfield<64> {
 	31:28		RNDR_trap	uint8;
 	35:32		CSV2_frac	uint8;
 	39:36		NMI		uint8;
+	43:40		MTE_frac	uint8;
+	47:44		GCS		uint8;
+	51:48		THE		uint8;
+	55:52		MTEX		uint8;
+	59:56		DF2		uint8;
+	63:60		PFAR		uint8;
 	others		unknown=0;
 };
 
@@ -983,7 +994,7 @@ define MAIR_ATTR enumeration {
 
 // Bits that indicate RW alloc hints for normal memory types (other than
 // TAGGED_NORMAL_WB which is special)
-define MAIR_ATTR_ALLOC_HINT_MASK constant enumeration MAIR_ATTR = 0x33;
+define MAIR_ATTR_ALLOC_HINT_MASK constant type index_t = 0x33;
 
 #define MAIR(el)							\
 define MAIR_##el bitfield<64> {						\
@@ -1720,18 +1731,29 @@ TTBR(0,EL2)
 TTBR(1,EL2)
 
 #if defined(ARCH_ARM_FEAT_TRF)
+define TRFCR_EL2_TS enumeration(explicit) {
+	EL1_CONTROL = 0b00;
+	VIRTUAL = 0b01;
+#if defined(ARCH_ARM_FEAT_ECV)
+	GUEST_PHYSICAL = 0b10;
+#endif
+	PHYSICAL = 0b11;
+};
+
 define TRFCR_EL2 bitfield<64> {
 	0	E0HTRE		bool = 0;
 	1	E2TRE		bool = 0;
 	3	CX		bool = 0;
-	6:5	TS		uint8;
+	6:5	TS		enumeration TRFCR_EL2_TS;
 	others	unknown = 0;
 };
 
-define TRFCR_EL1_TS enumeration {
-	VIRTUAL = 0;
-	GUEST_PHYSICAL;
-	PHYSICAL;
+define TRFCR_EL1_TS enumeration(explicit) {
+	VIRTUAL = 0b01;
+#if defined(ARCH_ARM_FEAT_ECV)
+	GUEST_PHYSICAL = 0b10;
+#endif
+	PHYSICAL = 0b11;
 };
 
 define TRFCR_EL1 bitfield<64> {
@@ -1957,52 +1979,6 @@ define AMCFGR_EL0 bitfield<64> {
 define AMCGCR_EL0 bitfield<64> {
 	7:0		CG0NC		uint16;
 	15:8		CG1NC		uint16;
-	others		unknown=0;
-};
-#endif
-
-#if defined(ARCH_ARM_FEAT_FGT)
-define HFGWTR_EL2 bitfield<64> {
-	0		AFSR0_EL1	bool;
-	1		AFSR1_EL1	bool;
-	3		AMAIR_EL1	bool;
-	4		APDAKey		bool;
-	5		APDBKey		bool;
-	6		APGAKey		bool;
-	7		APIAKey		bool;
-	8		APIBKey		bool;
-	11		CONTEXTIDR_EL1	bool;
-	12		CPACR_EL1	bool;
-	13		CSSELR_EL1	bool;
-	16		ESR_EL1		bool;
-	17		FAR_EL1		bool;
-	19		LORC_EL1	bool;
-	20		LOREA_EL1	bool;
-	22		LORN_EL1	bool;
-	23		LORSA_EL1	bool;
-	24		MAIR_EL1	bool;
-	27		PAR_EL1		bool;
-	29		SCTLR_EL1	bool;
-	30		SCTXNUM_EL1	bool;
-	31		SCTXNUM_EL0	bool;
-	32		TCR_EL1		bool;
-	33		TPIDR_EL1	bool;
-	34		TPIDRRO_EL0	bool;
-	35		TPIDR_EL0	bool;
-	36		TTBR0_EL1	bool;
-	37		TTBR1_EL1	bool;
-	38		VBAR_EL1	bool;
-	39		ICC_IGRPENn_EL1	bool;
-	41		ERRSELR_EL1	bool;
-	43		ERXCTLR_EL1	bool;
-	44		ERXSTATUS_EL1	bool;
-	45		ERXMISCn_EL1	bool;
-	47		ERXPFGCTL_EL1	bool;
-	48		ERXPFGCDN_EL1	bool;
-	49		ERXADDR_EL1	bool;
-	50		nACCDATA_EL1	bool;
-	54		nSMPRI_EL1	bool;
-	55		nTPIDR2_EL0	bool;
 	others		unknown=0;
 };
 #endif

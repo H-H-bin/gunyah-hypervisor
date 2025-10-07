@@ -98,3 +98,8 @@
 // for the analyser to understand; e.g. one that has conditional locking. Using
 // it for this purpose so is strongly deprecated.
 #define LOCK_IMPL __attribute__((no_thread_safety_analysis))
+
+// Put a read-only data item into .text.debug, which is a dummy section
+// used in the linker script to KEEP any symbols that may need to be
+// externally visible and not optimized by LTO - usually for debuggers.
+#define USED_DEBUG_SYMBOL __attribute__((used, section(".text.debug")))

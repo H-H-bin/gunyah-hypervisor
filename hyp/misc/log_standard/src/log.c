@@ -4,12 +4,12 @@
 
 #include <assert.h>
 #include <hyptypes.h>
-#include <stdatomic.h>
 #include <string.h>
 
 #include <hypconstants.h>
 #include <hypregisters.h>
 
+#include <atomic.h>
 #include <compiler.h>
 #include <cpulocal.h>
 #include <platform_timer.h>
@@ -57,12 +57,14 @@ log_init(void)
 
 void
 log_standard_handle_trace_log(trace_id_t id, trace_action_t action,
-			      const char *fmt, register_t arg0, register_t arg1,
-			      register_t arg2, register_t arg3, register_t arg4)
+			      const char *arg0, register_t arg1,
+			      register_t arg2, register_t arg3, register_t arg4,
+			      register_t arg5)
 {
-	index_t	      next_idx, prev_idx, orig_idx;
+	index_t	      index;
+	count_t	      entry_size;
 	size_result_t ret;
-	size_t	      entry_size, timestamp_size;
+	size_t	      timestamp_size;
 	char	      entry_buf[LOG_ENTRY_BUFFER_SIZE];
 
 	// Add the data to the log buffer only if:
@@ -88,7 +90,7 @@ log_standard_handle_trace_log(trace_id_t id, trace_action_t action,
 
 	ret = snprint(entry_buf, LOG_TIMESTAMP_BUFFER_SIZE,
 		      "{:d} {:4d}.{:06d} ", cpulocal_get_index_unsafe(), sec,
-		      usec % TIMER_MICROSECS_IN_SECOND, 0, 0);
+		      usec, 0, 0);
 	if (ret.e == ERROR_STRING_TRUNCATED) {
 		// The truncated string will have a NULL terminator, remove it
 		timestamp_size = LOG_TIMESTAMP_BUFFER_SIZE - 1U;
@@ -103,14 +105,14 @@ log_standard_handle_trace_log(trace_id_t id, trace_action_t action,
 
 	// Add the log message after the time-stamp
 	ret = snprint(entry_buf + timestamp_size,
-		      LOG_ENTRY_BUFFER_SIZE - timestamp_size, fmt, arg0, arg1,
-		      arg2, arg3, arg4);
+		      LOG_ENTRY_BUFFER_SIZE - timestamp_size, arg0, arg1, arg2,
+		      arg3, arg4, arg5);
 	if (ret.e == ERROR_STRING_TRUNCATED) {
 		entry_size = LOG_ENTRY_BUFFER_SIZE;
 	} else if ((ret.e == ERROR_STRING_MISSING_ARGUMENT) || (ret.r == 0U)) {
 		goto out;
 	} else {
-		entry_size = timestamp_size + ret.r + 1U;
+		entry_size = (count_t)(timestamp_size + ret.r) + 1U;
 		assert(entry_size <= LOG_ENTRY_BUFFER_SIZE);
 	}
 
@@ -120,55 +122,44 @@ log_standard_handle_trace_log(trace_id_t id, trace_action_t action,
 	trigger_log_message_event(id, entry_buf + timestamp_size);
 
 	// Atomically update the index first
-	orig_idx = atomic_fetch_add_explicit(&hyp_log.head, entry_size,
-					     memory_order_relaxed);
-	prev_idx = orig_idx;
-	while (compiler_unexpected(prev_idx >= buffer_size)) {
-		prev_idx -= buffer_size;
+	index = atomic_fetch_add_explicit(&hyp_log.head, entry_size,
+					  memory_order_relaxed);
+
+	// If the entry_size causes us to wrap, decrement by buffer_size
+	if (compiler_unexpected((index + entry_size) >= buffer_size)) {
+		index_t cur_head = index + entry_size;
+		do {
+			(void)atomic_compare_exchange_ll_sc_weak(
+				&hyp_log.head, &cur_head,
+				cur_head - buffer_size);
+		} while (cur_head >= buffer_size);
+	}
+	if (compiler_unexpected(index >= buffer_size)) {
+		index -= buffer_size;
+		// If we reached 2x buffer_size, something is really wrong
+		assert(index < buffer_size);
 	}
 
-	next_idx = orig_idx + (index_t)entry_size;
-	// If we wrap, something is really wrong
-	assert(next_idx > orig_idx);
+	prefetch_store_stream(&hyp_log.log_buffer[index]);
 
-	if (compiler_unexpected(next_idx >= buffer_size)) {
-		index_t old_idx = next_idx;
-
-		while (next_idx >= buffer_size) {
-			next_idx -= buffer_size;
-		}
-
-		// Try to reduce the index in the shared variable so it is no
-		// longer overflowed. We don't care if it fails because that
-		// means somebody else has done it concurrently.
-		(void)atomic_compare_exchange_strong_explicit(
-			&hyp_log.head, &old_idx, next_idx, memory_order_relaxed,
-			memory_order_relaxed);
-	}
-
-	prefetch_store_stream(&hyp_log.log_buffer[prev_idx]);
-
-	size_t buf_remaining = (size_t)buffer_size - (size_t)prev_idx;
+	size_t buf_remaining = (size_t)buffer_size - (size_t)index;
 
 	// Copy the whole entry if it fits
-	if (compiler_expected(buf_remaining >= entry_size)) {
-		(void)memcpy(&hyp_log.log_buffer[prev_idx], entry_buf,
-			     entry_size);
-		cache_clean_range(&hyp_log.log_buffer[prev_idx], entry_size);
-	} else {
-		// Otherwise copy the first bit of entry to the tail of the
-		// buffer and wrap to the start for the remainder.
-		size_t first_part = buf_remaining;
-		(void)memcpy(&hyp_log.log_buffer[prev_idx], entry_buf,
-			     first_part);
-		cache_clean_range(&hyp_log.log_buffer[prev_idx], first_part);
+	// Otherwise copy the first bit of entry to the tail of the
+	// buffer and wrap to the start for the remainder.
+	size_t first_part = memscpy(&hyp_log.log_buffer[index], buf_remaining,
+				    entry_buf, entry_size);
+	cache_clean_range(&hyp_log.log_buffer[index], first_part);
 
-		size_t second_part = entry_size - first_part;
+	size_t second_part = entry_size - first_part;
 
-		(void)memcpy(&hyp_log.log_buffer[0], entry_buf + first_part,
-			     second_part);
-		cache_clean_range(&hyp_log.log_buffer[0], second_part);
+	if (compiler_unexpected(second_part > 0U)) {
+		size_t copied_size =
+			memscpy(&hyp_log.log_buffer[0], LOG_BUFFER_SIZE,
+				entry_buf + first_part, second_part);
+		cache_clean_range(&hyp_log.log_buffer[0], copied_size);
 	}
+
 out:
 	// Nothing to do
 	return;

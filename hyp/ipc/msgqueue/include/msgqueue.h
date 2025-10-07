@@ -46,8 +46,8 @@ msgqueue_bind_receive(msgqueue_t *msgqueue, vic_t *vic, virq_t virq);
 
 // Unbinds message queue send interface from a virtual interrupt.
 void
-msgqueue_unbind_send(msgqueue_t *msgqueue);
+msgqueue_unbind_send(msgqueue_t *msgqueue) EXCLUDE_PREEMPT_DISABLED;
 
 // Unbinds message queue receive interface from a virtual interrupt.
 void
-msgqueue_unbind_receive(msgqueue_t *msgqueue);
+msgqueue_unbind_receive(msgqueue_t *msgqueue) EXCLUDE_PREEMPT_DISABLED;

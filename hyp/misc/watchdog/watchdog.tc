@@ -1,0 +1,70 @@
+// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+// An IPI used to manage watchdog queue synchronization. Since many watchdog
+// operations are performed from critical sections, we perform watchdog
+// synchronization such as bark/bite handling in an IPI handler where it is
+// safe to do so.
+extend ipi_reason enumeration {
+	watchdog_sync;
+};
+
+define watchdog_action enumeration {
+	bark;
+	bite;
+};
+
+// One watchdog object per VM. All the vCPUs in the VM get the same watchdog.
+extend watchdog object {
+	options				bitfield watchdog_option_flags;
+	enabled				bool;
+	was_enabled			bool;
+	is_hyp				bool;
+	bark_logged			bool;
+	freeze_count			type count_t;
+	action				enumeration watchdog_action;
+	bark_time			type watchdog_milliseconds_t;
+	bite_time			type watchdog_milliseconds_t;
+	next_timeout			type watchdog_abs_ticks_t;
+	last_pat			type watchdog_abs_ticks_t;
+	remaining_time			type watchdog_abs_ticks_t;
+	bark_virq_src			structure virq_source(contained);
+	bite_virq_src			structure virq_source(contained);
+	watchdog_queue_list_node	structure list_node(contained);
+
+	// The VMID of the guest that owns this watchdog object. Should be used
+	// for debugging/logging purposes only.
+	debug_id			uint32;
+};
+
+define watchdog_queue structure {
+	next_timeout	type watchdog_abs_ticks_t;
+	list		structure list;
+	lock		structure spinlock;
+};
+
+define watchdog_virq_type enumeration(explicit) {
+	bark = 0;
+	bite = 1;
+};
+
+extend virq_trigger enumeration {
+	watchdog_bark;
+	watchdog_bite;
+};
+
+extend abort_reason enumeration {
+	WATCHDOG_BITE;
+};
+
+#if defined(UEFITZT)
+define WATCHDOG_DEFAULT_BARK_GRACE constant type watchdog_milliseconds_t = 10000;
+#else
+define WATCHDOG_DEFAULT_BARK_GRACE constant type watchdog_milliseconds_t = 5000;
+#endif
+
+// Set the hypervisor bark time to five seconds less than the default bite time.
+// This way VMs can have bark times longer than default bite time.
+define WATCHDOG_DEFAULT_HYP_BARK_MS constant type watchdog_milliseconds_t =
+	WATCHDOG_DEFAULT_BITE_MS - WATCHDOG_DEFAULT_BARK_GRACE;

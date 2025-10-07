@@ -23,13 +23,16 @@
 
 #include <events/power.h>
 
+#include <asm/event.h>
+
 #include "event_handlers.h"
 
 static ticks_t power_cpu_on_retry_delay_ticks;
 
 static spinlock_t power_system_lock;
-static BITMAP_DECLARE(PLATFORM_MAX_CORES, power_system_online_cpus)
+static BITMAP_DECLARE(PLATFORM_MAX_CORES, power_system_running_cpus)
 	PROTECTED_BY(power_system_lock);
+static _Atomic count_t power_system_online_cpus;
 static platform_power_state_t
 	power_system_suspend_state PROTECTED_BY(power_system_lock);
 
@@ -46,7 +49,7 @@ power_get_cpu_states_for_debug(void)
 }
 
 void
-power_handle_boot_cold_init(cpu_index_t boot_cpu)
+power_handle_boot_cold_init(cpu_index_t boot_cpu_index)
 {
 	power_cpu_on_retry_delay_ticks =
 		timer_convert_ns_to_ticks(POWER_CPU_ON_RETRY_DELAY_NS);
@@ -67,11 +70,11 @@ power_handle_boot_cold_init(cpu_index_t boot_cpu)
 		// once the rootvm setup is completed and the rootvm VCPU has
 		// voted to keep the boot core powered on.
 		CPULOCAL_BY_INDEX(power_voting, cpu).vote_count =
-			(cpu == boot_cpu) ? 1U : 0U;
+			(cpu == boot_cpu_index) ? 1U : 0U;
 
 		CPULOCAL_BY_INDEX(power_state, cpu) =
-			(cpu == boot_cpu) ? CPU_POWER_STATE_COLD_BOOT
-					  : CPU_POWER_STATE_OFF;
+			(cpu == boot_cpu_index) ? CPU_POWER_STATE_COLD_BOOT
+						: CPU_POWER_STATE_OFF;
 
 		spinlock_release_nopreempt(
 			&CPULOCAL_BY_INDEX(power_voting, cpu).lock);
@@ -81,14 +84,22 @@ power_handle_boot_cold_init(cpu_index_t boot_cpu)
 
 	// FIXME:
 	spinlock_acquire_nopreempt(&power_system_lock);
-	bitmap_set(power_system_online_cpus, (index_t)boot_cpu);
+	bitmap_set(power_system_running_cpus, (index_t)boot_cpu_index);
 	spinlock_release_nopreempt(&power_system_lock);
+
+	atomic_init(&power_system_online_cpus, 1U);
 }
 
 void
 power_handle_boot_cpu_warm_init(void)
 {
 	spinlock_acquire_nopreempt(&CPULOCAL(power_voting).lock);
+
+	while (CPULOCAL(power_state) == CPU_POWER_STATE_OFF) {
+		spinlock_release_nopreempt(&CPULOCAL(power_voting).lock);
+		spinlock_acquire_nopreempt(&CPULOCAL(power_voting).lock);
+	}
+
 	cpu_power_state_t state = CPULOCAL(power_state);
 
 	assert((state == CPU_POWER_STATE_COLD_BOOT) ||
@@ -99,6 +110,9 @@ power_handle_boot_cpu_warm_init(void)
 	if (state == CPU_POWER_STATE_STARTED) {
 		trigger_power_cpu_online_event();
 
+		(void)atomic_fetch_add_explicit(&power_system_online_cpus, 1U,
+						memory_order_release);
+
 #if defined(DISABLE_PSCI_CPU_OFF) && DISABLE_PSCI_CPU_OFF
 		power_voting_t *voting = &CPULOCAL(power_voting);
 		voting->vote_count++;
@@ -108,13 +122,14 @@ power_handle_boot_cpu_warm_init(void)
 
 	// FIXME:
 	spinlock_acquire_nopreempt(&power_system_lock);
-	if (bitmap_empty(power_system_online_cpus, PLATFORM_MAX_CORES)) {
-		// STARTED could be seen due to a last-cpu-suspend/cpu_on race.
+	if (bitmap_empty(power_system_running_cpus, PLATFORM_MAX_CORES)) {
+		// CPU_POWER_STATE_STARTED could be seen due to a
+		// last-cpu-suspend/cpu_on race.
 		assert((state == CPU_POWER_STATE_STARTED) ||
 		       (state == CPU_POWER_STATE_SUSPEND));
 		trigger_power_system_resume_event(power_system_suspend_state);
 	}
-	bitmap_set(power_system_online_cpus, (index_t)cpulocal_get_index());
+	bitmap_set(power_system_running_cpus, (index_t)cpulocal_get_index());
 	spinlock_release_nopreempt(&power_system_lock);
 }
 
@@ -126,12 +141,12 @@ power_handle_power_cpu_suspend(platform_power_state_t state)
 
 	// FIXME:
 	spinlock_acquire_nopreempt(&power_system_lock);
-	bitmap_clear(power_system_online_cpus, (index_t)cpu_id);
-	if (bitmap_empty(power_system_online_cpus, PLATFORM_MAX_CORES)) {
+	bitmap_clear(power_system_running_cpus, (index_t)cpu_id);
+	if (bitmap_empty(power_system_running_cpus, PLATFORM_MAX_CORES)) {
 		power_system_suspend_state = state;
 		err = trigger_power_system_suspend_event(state);
 		if (err != OK) {
-			bitmap_set(power_system_online_cpus, (index_t)cpu_id);
+			bitmap_set(power_system_running_cpus, (index_t)cpu_id);
 		}
 	}
 	spinlock_release_nopreempt(&power_system_lock);
@@ -159,19 +174,19 @@ power_handle_power_cpu_resume(bool was_poweroff)
 
 		// FIXME:
 		spinlock_acquire_nopreempt(&power_system_lock);
-		if (bitmap_empty(power_system_online_cpus,
+		if (bitmap_empty(power_system_running_cpus,
 				 PLATFORM_MAX_CORES)) {
 			trigger_power_system_resume_event(
 				power_system_suspend_state);
 		}
-		bitmap_set(power_system_online_cpus,
+		bitmap_set(power_system_running_cpus,
 			   (index_t)cpulocal_get_index());
 		spinlock_release_nopreempt(&power_system_lock);
 	} else {
 		spinlock_acquire_nopreempt(&power_system_lock);
-		// power_system_online_cpus should be updated in the warm init
+		// power_system_running_cpus should be updated in the warm init
 		// event.
-		assert(!bitmap_empty(power_system_online_cpus,
+		assert(!bitmap_empty(power_system_running_cpus,
 				     PLATFORM_MAX_CORES));
 		spinlock_release_nopreempt(&power_system_lock);
 	}
@@ -187,20 +202,28 @@ power_try_cpu_on(power_voting_t *voting, cpu_index_t cpu)
 		ret = ERROR_ARGUMENT_INVALID;
 		goto out;
 	}
+	if (!platform_cpu_functional(cpu)) {
+		ret = ERROR_FAILURE;
+		goto out;
+	}
 
-	cpu_power_state_t *state = &CPULOCAL_BY_INDEX(power_state, cpu);
-	if ((*state != CPU_POWER_STATE_OFF) &&
-	    (*state != CPU_POWER_STATE_OFFLINE)) {
+	cpu_power_state_t *state      = &CPULOCAL_BY_INDEX(power_state, cpu);
+	cpu_power_state_t  prev_state = *state;
+
+	if ((prev_state != CPU_POWER_STATE_OFF) &&
+	    (prev_state != CPU_POWER_STATE_OFFLINE)) {
 		// CPU has already been started, or didn't get to power off.
 		ret = OK;
 		goto out;
 	}
 
+	// Mark the CPU as started so we don't call cpu_on twice.  Do this
+	// before calling platform_cpu_on to avoid power-on races.
+	*state = CPU_POWER_STATE_STARTED;
+
 	ret = platform_cpu_on(cpu);
 
 	if (ret == OK) {
-		// Mark the CPU as started so we don't call cpu_on twice.
-		*state		    = CPU_POWER_STATE_STARTED;
 		voting->retry_count = 0U;
 		goto out;
 	} else if ((ret == ERROR_RETRY) &&
@@ -226,6 +249,9 @@ power_try_cpu_on(power_voting_t *voting, cpu_index_t cpu)
 		// platform_cpu_on() failed and cannot be retried; just return
 		// the error status.
 	}
+
+	// Restore the CPU state overwritten above.
+	*state = prev_state;
 
 out:
 	return ret;
@@ -297,15 +323,15 @@ power_handle_idle_yield(bool in_idle_thread)
 
 		spinlock_acquire_nopreempt(&power_system_lock);
 		cpu_index_t cpu_id = cpulocal_get_index();
-		bitmap_clear(power_system_online_cpus, (index_t)cpu_id);
-		if (bitmap_empty(power_system_online_cpus,
+		bitmap_clear(power_system_running_cpus, (index_t)cpu_id);
+		if (bitmap_empty(power_system_running_cpus,
 				 PLATFORM_MAX_CORES)) {
 			power_system_suspend_state =
 				(platform_power_state_t){ 0 };
 			err = trigger_power_system_suspend_event(
 				power_system_suspend_state);
 			if (err != OK) {
-				bitmap_set(power_system_online_cpus,
+				bitmap_set(power_system_running_cpus,
 					   (index_t)cpu_id);
 			}
 		}
@@ -313,11 +339,27 @@ power_handle_idle_yield(bool in_idle_thread)
 
 		if (err == OK) {
 			assert(CPULOCAL(power_state) == CPU_POWER_STATE_ONLINE);
+
+			(void)atomic_fetch_sub(&power_system_online_cpus, 1U);
+
+			while (asm_event_load_before_wait(
+				       &power_system_online_cpus) == 0U) {
+				// We should never offline all the CPUs,
+				// however a CPU may offline while another is
+				// powering on, and we may see the
+				// power_system_running_cpus count being zero
+				// spuriously.  Wait for another core to come
+				// on-line before continuing.
+				asm_event_wait(&power_system_online_cpus);
+			}
+
 			trigger_power_cpu_offline_event();
 			CPULOCAL(power_state) = CPU_POWER_STATE_OFFLINE;
 			spinlock_release_nopreempt(&voting->lock);
 
 			platform_cpu_off();
+
+			(void)atomic_fetch_add(&power_system_online_cpus, 1U);
 
 			idle_state = IDLE_STATE_WAKEUP;
 		} else {
@@ -334,10 +376,11 @@ out:
 bool
 power_handle_timer_action(timer_t *timer)
 {
-	assert(timer != NULL);
+	assert_debug(timer != NULL);
 
 	power_voting_t *voting = power_voting_container_of_retry_timer(timer);
-	cpu_index_t	cpu    = CPULOCAL_PTR_INDEX(power_voting, voting);
+	assert(voting != NULL);
+	cpu_index_t cpu = CPULOCAL_PTR_INDEX(power_voting, voting);
 
 	spinlock_acquire_nopreempt(&voting->lock);
 	error_t ret = OK;

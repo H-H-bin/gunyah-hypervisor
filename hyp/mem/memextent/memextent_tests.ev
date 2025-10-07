@@ -11,6 +11,5 @@ subscribe tests_init
 
 subscribe tests_start
 	handler tests_memextent()
-	require_preempt_disabled
 
 #endif

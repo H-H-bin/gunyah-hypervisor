@@ -17,3 +17,7 @@ subscribe irq_received[HWIRQ_ACTION_HYP_TIMER]
 	handler platform_timer_handle_irq_received()
 	require_preempt_disabled
 #endif
+
+#if defined(UNITTESTS) && UNITTESTS
+subscribe tests_start
+#endif

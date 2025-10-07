@@ -21,7 +21,6 @@
 #include <thread.h>
 #include <trace.h>
 
-#include <events/thread.h>
 #include <events/vcpu.h>
 
 #include <asm/barrier.h>
@@ -83,17 +82,18 @@ handle_inst_data_abort(ESR_EL2_t esr, esr_ec_t ec, FAR_EL2_t far,
 	gvaddr_t	   va  = FAR_EL2_get_VirtualAddress(&far);
 	vmaddr_result_t	   ipa_r;
 
-	if (is_s1ptw || (fsc == ISS_DA_IA_FSC_ADDR_SIZE_0) ||
-	    (fsc == ISS_DA_IA_FSC_ADDR_SIZE_1) ||
-	    (fsc == ISS_DA_IA_FSC_ADDR_SIZE_2) ||
-	    (fsc == ISS_DA_IA_FSC_ADDR_SIZE_3) ||
-	    (fsc == ISS_DA_IA_FSC_TRANSLATION_0) ||
-	    (fsc == ISS_DA_IA_FSC_TRANSLATION_1) ||
-	    (fsc == ISS_DA_IA_FSC_TRANSLATION_2) ||
-	    (fsc == ISS_DA_IA_FSC_TRANSLATION_3) ||
-	    (fsc == ISS_DA_IA_FSC_ACCESS_FLAG_1) ||
-	    (fsc == ISS_DA_IA_FSC_ACCESS_FLAG_2) ||
-	    (fsc == ISS_DA_IA_FSC_ACCESS_FLAG_3)) {
+	if (is_s1ptw || (fsc == ISS_DA_IA_FSC_ADDR_SIZE_L0) ||
+	    (fsc == ISS_DA_IA_FSC_ADDR_SIZE_L1) ||
+	    (fsc == ISS_DA_IA_FSC_ADDR_SIZE_L2) ||
+	    (fsc == ISS_DA_IA_FSC_ADDR_SIZE_L3) ||
+	    (fsc == ISS_DA_IA_FSC_TRANSLATION_L0) ||
+	    (fsc == ISS_DA_IA_FSC_TRANSLATION_L1) ||
+	    (fsc == ISS_DA_IA_FSC_TRANSLATION_L2) ||
+	    (fsc == ISS_DA_IA_FSC_TRANSLATION_L3) ||
+	    (fsc == ISS_DA_IA_FSC_ACCESS_FLAG_L0) ||
+	    (fsc == ISS_DA_IA_FSC_ACCESS_FLAG_L1) ||
+	    (fsc == ISS_DA_IA_FSC_ACCESS_FLAG_L2) ||
+	    (fsc == ISS_DA_IA_FSC_ACCESS_FLAG_L3)) {
 		// HPFAR_EL2 is valid; combine it with the sub-page bits
 		// of the VA to find the exact IPA.
 		ipa_r = vmaddr_result_ok(HPFAR_EL2_get_FIPA(&hpfar) |
@@ -124,7 +124,7 @@ handle_inst_data_abort(ESR_EL2_t esr, esr_ec_t ec, FAR_EL2_t far,
 void
 vcpu_interrupt_dispatch(void)
 {
-	trigger_thread_entry_from_user_event(THREAD_ENTRY_REASON_INTERRUPT);
+	thread_entry_from_user(THREAD_ENTRY_REASON_INTERRUPT);
 
 	preempt_disable_in_irq();
 
@@ -134,18 +134,22 @@ vcpu_interrupt_dispatch(void)
 
 	preempt_enable_in_irq();
 
-	trigger_thread_exit_to_user_event(THREAD_ENTRY_REASON_INTERRUPT);
+	thread_exit_to_user(THREAD_ENTRY_REASON_INTERRUPT);
 }
 
 // Dispatching of guest synchronous exceptions
 void
 vcpu_exception_dispatch(bool is_aarch64)
 {
+	// The following EL2 fault information MUST be read here, prior to
+	// thread_entry_from_user() below which enables preemption and a
+	// thread-switch would then cause these registers to be overwritten by
+	// other faults.
 	ESR_EL2_t   esr	  = register_ESR_EL2_read_ordered(&asm_ordering);
 	FAR_EL2_t   far	  = register_FAR_EL2_read_ordered(&asm_ordering);
 	HPFAR_EL2_t hpfar = register_HPFAR_EL2_read_ordered(&asm_ordering);
 
-	trigger_thread_entry_from_user_event(THREAD_ENTRY_REASON_EXCEPTION);
+	thread_entry_from_user(THREAD_ENTRY_REASON_EXCEPTION);
 
 	bool		   fatal  = false;
 	vcpu_trap_result_t result = VCPU_TRAP_RESULT_UNHANDLED;
@@ -164,6 +168,12 @@ vcpu_exception_dispatch(bool is_aarch64)
 #endif
 #if !ARCH_AARCH64_32BIT_EL1
 	assert(is_aarch64);
+#endif
+#if defined(INTERFACE_TRACE_PROFILE)
+	TRACE_PROFILE(2, 0U, INFO,
+		      "exception from lower EL, ESR {:#x}, ELR {:#x}",
+		      ESR_EL2_raw(esr),
+		      ELR_EL2_raw(thread_get_self()->vcpu_regs_gpr.pc));
 #endif
 
 	switch (ec) {
@@ -262,7 +272,7 @@ vcpu_exception_dispatch(bool is_aarch64)
 		ESR_EL2_ISS_SMC64_t iss =
 			ESR_EL2_ISS_SMC64_cast(ESR_EL2_get_ISS(&esr));
 
-		SMC_TRACE_CURRENT(SMC_TRACE_ID_EL1_64ENT, 8);
+		SMC_TRACE_CURRENT(SMC_TRACE_ID_EL1_64ENT, 8U);
 
 		if (trigger_vcpu_trap_smc64_event(iss)) {
 			// SMC is not an exception generating instruction for
@@ -272,7 +282,7 @@ vcpu_exception_dispatch(bool is_aarch64)
 			// will be advanced in software.
 			result = VCPU_TRAP_RESULT_EMULATED;
 
-			SMC_TRACE_CURRENT(SMC_TRACE_ID_EL1_64RET, 7);
+			SMC_TRACE_CURRENT(SMC_TRACE_ID_EL1_64RET, 7U);
 		}
 
 		break;
@@ -443,8 +453,8 @@ vcpu_exception_dispatch(bool is_aarch64)
 			      "ELR_EL2 = {:#x}",
 			      thread->addrspace->vmid, ESR_EL2_raw(esr),
 			      ELR_EL2_raw(thread->vcpu_regs_gpr.pc));
-		abort("Unexpected guest trap",
-		      ABORT_REASON_UNHANDLED_EXCEPTION);
+		abort_kernel("Unexpected guest trap",
+			     ABORT_REASON_UNHANDLED_EXCEPTION);
 	}
 
 	switch (result) {
@@ -468,18 +478,29 @@ vcpu_exception_dispatch(bool is_aarch64)
 		break;
 	}
 
-	trigger_thread_exit_to_user_event(THREAD_ENTRY_REASON_EXCEPTION);
+	thread_exit_to_user(THREAD_ENTRY_REASON_EXCEPTION);
 }
 
 // Dispatching of guest asynchronous system errors
 void
 vcpu_error_dispatch(void)
 {
+	// The following EL2 fault information MUST be read here, prior to
+	// thread_entry_from_user() below which enables preemption and a
+	// thread-switch would then cause these registers to be overwritten by
+	// other faults.
 	ESR_EL2_t esr = register_ESR_EL2_read_ordered(&asm_ordering);
 
-	trigger_thread_entry_from_user_event(THREAD_ENTRY_REASON_INTERRUPT);
+	thread_entry_from_user(THREAD_ENTRY_REASON_INTERRUPT);
 
 	preempt_disable_in_irq();
+
+#if defined(INTERFACE_TRACE_PROFILE)
+	TRACE_PROFILE(2, 0U, INFO,
+		      "SError preempt from lower EL, ESR {:#x}, ELR {:#x}",
+		      ESR_EL2_raw(esr),
+		      ELR_EL2_raw(thread_get_self()->vcpu_regs_gpr.pc));
+#endif
 
 	ESR_EL2_ISS_SERROR_t iss =
 		ESR_EL2_ISS_SERROR_cast(ESR_EL2_get_ISS(&esr));
@@ -487,5 +508,5 @@ vcpu_error_dispatch(void)
 
 	preempt_enable_in_irq();
 
-	trigger_thread_exit_to_user_event(THREAD_ENTRY_REASON_INTERRUPT);
+	thread_exit_to_user(THREAD_ENTRY_REASON_INTERRUPT);
 }

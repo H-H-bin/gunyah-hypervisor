@@ -47,11 +47,12 @@ def parse_dsl(parser, inputs, abi):
     return final_tree
 
 
-def apply_template(tree, template, public_only=False):
+def apply_template(tree, template, abi, public_only=False):
     if template is None:
         code = tree.gen_output(public_only=public_only)
     else:
-        code = tree.apply_template(template, public_only=public_only)
+        code = tree.apply_template(template, abi_classes[abi](),
+                                   public_only=public_only)
 
     return code
 
@@ -130,7 +131,7 @@ def main():
         sys.exit(1)
 
     if not options.dump_pickle:
-        result = apply_template(ir, options.template,
+        result = apply_template(ir, options.template, options.abi,
                                 public_only=options.public)
 
         if options.formatter:

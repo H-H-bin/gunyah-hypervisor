@@ -9,6 +9,7 @@
 #include <panic.h>
 #include <platform_cpu.h>
 #include <platform_security.h>
+#include <qcbor.h>
 #include <smccc_platform.h>
 
 #include "event_handlers.h"
@@ -26,7 +27,7 @@ platform_cpu_stack_size(void)
 }
 
 bool
-smccc_handle_smc_platform_call(register_t args[7], bool is_hvc)
+smccc_handle_smc_platform_call(register_t args[17], bool is_hvc)
 	EXCLUDE_PREEMPT_DISABLED
 {
 	(void)is_hvc;

@@ -51,6 +51,16 @@ define addrspace_update_access hypercall {
 	error		output enumeration error;
 };
 
+define addrspace_modify_pages hypercall {
+	call_num	0x69;
+	addrspace	input type cap_id_t;
+	vbase		input type vmaddr_t;
+	size		input size;
+	flags		input bitfield addrspace_modify_pages_flags;
+	error		output enumeration error;
+	size_remaining	output size;
+};
+
 define addrspace_configure hypercall {
 	call_num	0x2E;
 	addrspace	input type cap_id_t;
@@ -90,12 +100,12 @@ define addrspace_configure_info_area hypercall {
 	error		output enumeration error;
 };
 
-define addrspace_configure_vmmio hypercall {
+define addrspace_configure_range hypercall {
 	call_num	0x60;
 	addrspace	input type cap_id_t;
 	vbase		input type vmaddr_t;
 	size		input size;
-	op		input enumeration addrspace_vmmio_configure_op;
+	op		input enumeration addrspace_range_configure_op;
 	res0		input uregister;
 	error		output enumeration error;
 };
@@ -109,4 +119,23 @@ define addrspace_attach_vdevice hypercall {
 	size		input size;
 	flags		input union addrspace_attach_vdevice_flags;
 	error		output enumeration error;
+};
+
+define addrspace_find_info_area hypercall {
+	call_num	0x6A;
+	res0		input uregister;
+	error		output enumeration error;
+	base		output type vmaddr_t;
+	size		output size;
+};
+
+define addrspace_info_area_add_entry hypercall {
+	call_num	0x6B;
+	addrspace	input type cap_id_t;
+	type		input bitfield addrspace_info_area_entry_type;
+	data		input type user_ptr_t;
+	data_info	input bitfield addrspace_info_area_entry_data_info;
+	res0		input uregister;
+	error		output enumeration error;
+	ipa		output type vmaddr_t;
 };

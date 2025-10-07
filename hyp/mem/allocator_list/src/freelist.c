@@ -252,56 +252,77 @@ out:
 	return ret;
 }
 
-static error_t NOINLINE
-allocator_heap_add_memory(allocator_t *allocator, uintptr_t addr, size_t size)
+static error_t
+freelist_heap_add_memory(allocator_list_t *allocator, uintptr_t addr,
+			 size_t size)
 {
 	allocator_node_t *block;
-	error_t		  ret = OK;
+	error_t		  ret;
+
+	uintptr_t block_addr;
+	size_t	  block_size;
 
 	assert(addr != 0U);
 
-	// Check input arguments
-	if (!util_is_baligned(addr, NODE_HEADER_SIZE)) {
-		uintptr_t new_addr = util_balign_up(addr, NODE_HEADER_SIZE);
-		size -= (new_addr - addr);
-		addr = new_addr;
-	}
-	if (!util_is_baligned(size, NODE_HEADER_SIZE)) {
-		size = util_balign_down(size, NODE_HEADER_SIZE);
-	}
 	if (util_add_overflows(addr, size)) {
 		ret = ERROR_ADDR_OVERFLOW;
-	} else if (size < (2UL * NODE_HEADER_SIZE)) {
+		goto out;
+	} else if (size < NODE_HEADER_SIZE) {
+		// Ensures block_size calc below can't underflow
 		ret = ERROR_ARGUMENT_SIZE;
+		goto out;
 	} else {
-		// FIXME: Check if added memory is in kernel address space
+		// Align-up start address, and align-down end address
+		block_addr = util_balign_up(addr, NODE_HEADER_SIZE);
+		block_size = size - (block_addr - addr);
 
-		block = (allocator_node_t *)addr;
-
-		// Add memory to the freelist
-		spinlock_acquire(&allocator->lock);
-
-		ret = list_add(&allocator->heap, block, size);
-		if (ret == OK) {
-			allocator->total_size += size;
-		}
-
-		spinlock_release(&allocator->lock);
+		block_size = util_balign_down(block_size, NODE_HEADER_SIZE);
+	}
+	if (block_size < (NODE_HEADER_SIZE + HEAP_MIN_ALLOC)) {
+		// Not enough space for an allocation
+		ret = ERROR_ARGUMENT_SIZE;
+		goto out;
 	}
 
+	block = (allocator_node_t *)block_addr;
+
+	// Add memory to the freelist
+	spinlock_acquire(&allocator->lock);
+
+	ret = list_add(&allocator->heap, block, block_size);
+	if (ret == OK) {
+		allocator->total_size += block_size;
+	}
+
+	spinlock_release(&allocator->lock);
+
+out:
 	return ret;
 }
 
 error_t
 allocator_list_handle_allocator_add_ram_range(partition_t *owner,
-					      paddr_t	   phys_base,
-					      uintptr_t virt_base, size_t size)
+					      uintptr_t virt_base, size_t size,
+					      allocator_memattr_t attr)
 {
+	error_t		    err;
+	allocator_memtype_t memtype = allocator_memattr_get_type(&attr);
+
 	assert(owner != NULL);
 
-	(void)phys_base;
+	if (memtype == ALLOCATOR_MEMTYPE_HYPERVISOR) {
+		err = freelist_heap_add_memory(&owner->allocator.hyp, virt_base,
+					       size);
+#if defined(PLATFORM_ALLOCATOR_S2PT_HEAP)
+	} else if (memtype == ALLOCATOR_MEMTYPE_VM_PAGE_TABLE) {
+		err = freelist_heap_add_memory(&owner->allocator.s2pt,
+					       virt_base, size);
+#endif
+	} else {
+		err = ERROR_ARGUMENT_INVALID;
+	}
 
-	return allocator_heap_add_memory(&owner->allocator, virt_base, size);
+	return err;
 }
 
 // Cases:
@@ -442,9 +463,9 @@ out:
 	return ret;
 }
 
-void_ptr_result_t
-allocator_allocate_object(allocator_t *allocator, size_t size,
-			  size_t min_alignment)
+static void_ptr_result_t
+freelist_allocate_object(allocator_list_t *allocator, size_t size,
+			 size_t min_alignment)
 {
 	void_ptr_result_t ret;
 
@@ -471,45 +492,46 @@ allocator_allocate_object(allocator_t *allocator, size_t size,
 		goto error;
 	}
 
-	size = util_balign_up(size, HEAP_MIN_ALLOC);
+	size_t alloc_size = util_balign_up(size, HEAP_MIN_ALLOC);
 
 	if (alignment < HEAP_MIN_ALIGN) {
 		alignment = HEAP_MIN_ALIGN;
 	}
 
 #if defined(DEBUG_PRINT)
-	printf("After alignment. size: %zu alignment: %zu\n", size, alignment);
+	printf("After alignment. size: %zu alignment: %zu\n", alloc_size,
+	       alignment);
 #endif
 
 #if defined(OVERFLOW_DEBUG)
-	size += 2UL * OVERFLOW_REDZONE_SIZE;
+	alloc_size += 2UL * OVERFLOW_REDZONE_SIZE;
 #endif
 
 	CHECK_HEAP(allocator->heap);
-	ret = allocate_block(&allocator->heap, size, alignment);
+	ret = allocate_block(&allocator->heap, alloc_size, alignment);
 	CHECK_HEAP(allocator->heap);
 
 	if (ret.e != OK) {
 		goto error;
 	}
 
-	allocator->alloc_size += size;
+	allocator->alloc_size += alloc_size;
 
 #if defined(ALLOCATOR_DEBUG)
 	char  *data  = (char *)ret.r;
 	size_t start = 0UL;
-	size_t end   = size;
+	size_t end   = alloc_size;
 
 #if defined(OVERFLOW_DEBUG)
 	end = OVERFLOW_REDZONE_SIZE;
 	memset(&data[start], 0xe7, end - start);
 	start = end;
-	end   = size - OVERFLOW_REDZONE_SIZE;
+	end   = alloc_size - OVERFLOW_REDZONE_SIZE;
 #endif
 	memset(&data[start], 0xa5, end - start);
 #if defined(OVERFLOW_DEBUG)
 	start = end;
-	end   = size;
+	end   = alloc_size;
 	memset(&data[start], 0xe8, end - start);
 
 	// Return address after the overflow check values
@@ -522,29 +544,59 @@ error:
 	return ret;
 }
 
+void_ptr_result_t
+allocator_allocate_object(allocator_t *allocator, size_t size,
+			  size_t min_alignment, allocator_hint_t hint)
+{
+	void_ptr_result_t   ret;
+	allocator_memattr_t memattr = allocator_hint_get_memattr(&hint);
+	allocator_memtype_t memtype = allocator_memattr_get_type(&memattr);
+
+#if defined(PLATFORM_ALLOCATOR_S2PT_HEAP)
+	if (memtype == ALLOCATOR_MEMTYPE_VM_PAGE_TABLE) {
+		ret = freelist_allocate_object(&allocator->s2pt, size,
+					       min_alignment);
+		if (ret.e != ERROR_NOMEM) {
+			goto out;
+		}
+
+		// If we fail to allocate from the S2PT heap, use the regular
+		// hypervisor heap as a fallback.
+	}
+#endif
+
+	if ((memtype != ALLOCATOR_MEMTYPE_HYPERVISOR) &&
+	    allocator_hint_get_strict(&hint)) {
+		ret = void_ptr_result_error(ERROR_NOMEM);
+		goto out;
+	}
+
+	ret = freelist_allocate_object(&allocator->hyp, size, min_alignment);
+
+out:
+	return ret;
+}
+
+#if defined(UNIT_TESTS)
 // We will probably not be using list_remove() and heap_remove memory()
 // functions since we will only have the possibility of adding memory to the
 // heap. We will maybe remove when deleting a partition.
 static void
-list_remove(allocator_node_t **head, allocator_node_t *remove,
+list_remove(allocator_node_t **head, const allocator_node_t *remove_ptr,
 	    allocator_node_t *previous)
 {
 	if (previous == NULL) {
-		*head = remove->next;
+		*head = remove_ptr->next;
 	} else {
-		previous->next = remove->next;
+		previous->next = remove_ptr->next;
 	}
 }
 
-// TODO: Exported only for test code currently
-error_t
-allocator_heap_remove_memory(allocator_t *allocator, void *obj, size_t size);
-
 // Returns -1 if addresses are still being used and therefore cannot be freed.
-error_t NOINLINE
-allocator_heap_remove_memory(allocator_t *allocator, void *obj, size_t size)
+static error_t
+freelist_heap_remove_memory(allocator_list_t *allocator, void *obj, size_t size)
 {
-	error_t ret = ERROR_ALLOCATOR_MEM_INUSE;
+	error_t ret;
 
 	assert(obj != NULL);
 	assert(allocator->heap != NULL);
@@ -558,7 +610,14 @@ allocator_heap_remove_memory(allocator_t *allocator, void *obj, size_t size)
 
 	spinlock_acquire(&allocator->lock);
 
-	size = util_balign_up(size, HEAP_MIN_ALLOC);
+	if (size < HEAP_MIN_ALLOC) {
+		ret = ERROR_ARGUMENT_SIZE;
+		goto out;
+	}
+	if (!util_is_baligned(size, NODE_HEADER_SIZE)) {
+		ret = ERROR_ARGUMENT_ALIGNMENT;
+		goto out;
+	}
 
 	while (((uint64_t)obj > (uint64_t)current) && (current != NULL)) {
 		assert((uint64_t)previous < (uint64_t)obj);
@@ -579,6 +638,7 @@ allocator_heap_remove_memory(allocator_t *allocator, void *obj, size_t size)
 
 	if (current_location == object_location) {
 		if ((current_location + current->size) < aligned_alloc_end) {
+			ret = ERROR_ALLOCATOR_MEM_INUSE;
 			goto out;
 		} else if ((current_location + current->size) ==
 			   aligned_alloc_end) {
@@ -596,6 +656,7 @@ allocator_heap_remove_memory(allocator_t *allocator, void *obj, size_t size)
 		}
 	} else if (previous != NULL) {
 		if ((previous_location + previous->size) < aligned_alloc_end) {
+			ret = ERROR_ALLOCATOR_MEM_INUSE;
 			goto out;
 		}
 
@@ -615,6 +676,7 @@ allocator_heap_remove_memory(allocator_t *allocator, void *obj, size_t size)
 			previous->size = object_location - previous_location;
 		}
 	} else {
+		ret = ERROR_ALLOCATOR_MEM_INUSE;
 		goto out;
 	}
 
@@ -625,6 +687,14 @@ out:
 	spinlock_release(&allocator->lock);
 	return ret;
 }
+
+// TODO: Exported only for test code currently
+error_t
+allocator_heap_remove_memory(allocator_t *allocator, void *obj, size_t size)
+{
+	return freelist_heap_remove_memory(&allocator->hyp, obj, size);
+}
+#endif
 
 static void
 deallocate_block(allocator_node_t **head, void *object, size_t size)
@@ -669,7 +739,7 @@ deallocate_block(allocator_node_t **head, void *object, size_t size)
 	assert((object_location <= next_location) || (next_location == 0UL));
 
 	if ((previous != NULL) &&
-	    (previous_location + previous->size) == object_location) {
+	    ((previous_location + previous->size) == object_location)) {
 		// Combine the free memory into the previous node.
 		assert(!util_add_overflows(previous->size, size));
 		previous->size += size;
@@ -717,8 +787,9 @@ out:
 	return;
 }
 
-error_t
-allocator_deallocate_object(allocator_t *allocator, void *object, size_t size)
+static void
+freelist_deallocate_object(allocator_list_t *allocator, void *object,
+			   size_t size)
 {
 	assert(object != NULL);
 	assert(size > 0UL);
@@ -732,33 +803,48 @@ allocator_deallocate_object(allocator_t *allocator, void *object, size_t size)
 	}
 #endif
 
-	size = util_balign_up(size, HEAP_MIN_ALLOC);
+	size_t alloc_size = util_balign_up(size, HEAP_MIN_ALLOC);
 
 #if defined(OVERFLOW_DEBUG)
 	// Increment size +(2*NODE_HEADER_SIZE) to also free the overflow check
 	// values in NODE_HEADER_SIZE addresses before and after the object
 	// And go to the address where the overflow check values start
-	size += 2UL * OVERFLOW_REDZONE_SIZE;
+	alloc_size += 2UL * OVERFLOW_REDZONE_SIZE;
 	object = (void *)((uintptr_t)object - OVERFLOW_REDZONE_SIZE);
 #endif
 
 #if defined(ALLOCATOR_DEBUG)
-	memset(object, 0xe3, size);
+	memset(object, 0xe3, alloc_size);
 #endif
 
 	CHECK_HEAP(allocator->heap);
-	deallocate_block(&allocator->heap, object, size);
+	deallocate_block(&allocator->heap, object, alloc_size);
 	CHECK_HEAP(allocator->heap);
 
-	allocator->alloc_size -= size;
+	allocator->alloc_size -= alloc_size;
 
 	spinlock_release(&allocator->lock);
-
-	return OK;
 }
 
-error_t
-allocator_init(allocator_t *allocator)
+void
+allocator_deallocate_object(allocator_t *allocator, void *object, size_t size,
+			    allocator_memattr_t attr)
+{
+	allocator_memtype_t memtype = allocator_memattr_get_type(&attr);
+
+#if defined(PLATFORM_ALLOCATOR_S2PT_HEAP)
+	if (memtype == ALLOCATOR_MEMTYPE_VM_PAGE_TABLE) {
+		freelist_deallocate_object(&allocator->s2pt, object, size);
+	} else
+#endif
+	{
+		assert(memtype == ALLOCATOR_MEMTYPE_HYPERVISOR);
+		freelist_deallocate_object(&allocator->hyp, object, size);
+	}
+}
+
+static void
+freelist_init(allocator_list_t *allocator)
 {
 	assert(allocator->heap == NULL);
 
@@ -766,5 +852,15 @@ allocator_init(allocator_t *allocator)
 	allocator->alloc_size = 0UL;
 
 	spinlock_init(&allocator->lock);
+}
+
+error_t
+allocator_init(allocator_t *allocator)
+{
+	freelist_init(&allocator->hyp);
+#if defined(PLATFORM_ALLOCATOR_S2PT_HEAP)
+	freelist_init(&allocator->s2pt);
+#endif
+
 	return OK;
 }

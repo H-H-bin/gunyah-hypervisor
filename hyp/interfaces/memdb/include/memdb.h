@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 // FIXME: replace with a selector event
-typedef error_t (*memdb_fnptr)(paddr_t, size_t, void *);
+typedef error_t (*memdb_fnptr)(paddr_t base, size_t size, void *arg);
 
 // Populate the memory database. If any entry from the range already has an
 // owner, return error and do not update the database.
@@ -48,5 +48,5 @@ memdb_walk(uintptr_t object, memdb_type_t type, memdb_fnptr fn, void *arg);
 // Walk through a range of the database and add the address ranges that are
 // owned by the object passed as argument.
 error_t
-memdb_range_walk(uintptr_t object, memdb_type_t type, paddr_t start,
-		 paddr_t end, memdb_fnptr fn, void *arg);
+memdb_range_walk(uintptr_t object, memdb_type_t type, paddr_t start_addr,
+		 paddr_t end_addr, memdb_fnptr fn, void *arg);

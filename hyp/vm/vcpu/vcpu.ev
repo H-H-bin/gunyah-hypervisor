@@ -27,6 +27,7 @@ subscribe virq_set_mode[VIRQ_TRIGGER_VCPU_HALT]
 subscribe vcpu_bind_virq[VCPU_VIRQ_TYPE_HALT](vcpu, vic, virq)
 
 subscribe vcpu_unbind_virq[VCPU_VIRQ_TYPE_HALT](vcpu)
+	exclude_preempt_disabled
 
 interface vcpu
 

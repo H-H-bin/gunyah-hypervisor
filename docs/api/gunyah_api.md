@@ -123,6 +123,10 @@ Generic rights are valid for all object types.
 | Address Space Attach | `0x00000001` |
 | Address Space Map | `0x00000002` |
 | Address Space Lookup | `0x00000004` |
+| Address Space Add VMMIO Range | `0x00000008` |
+| Address Space Map Protected | `0x00000010` |
+| Address Space Modify Protected | `0x00000020` |
+| Address Space Add Info Entry | `0x00000040` |
 
 ### Memory Extent Rights
 
@@ -133,6 +137,9 @@ Generic rights are valid for all object types.
 | Memory Extent Attach | `0x00000004` |
 | Memory Extent Lookup | `0x00000008` |
 | Memory Extent Donate | `0x00000010` |
+| Memory Extent Protected Host | `0x00000020` |
+| Memory Extent Protected Guest | `0x00000040` |
+| Memory Extent Map Private | `0x00000080` |
 
 ### Thread Rights
 
@@ -194,14 +201,14 @@ Generic rights are valid for all object types.
 | Watchdog Attach VCPU | `0x00000001` |
 | Watchdog Bind VIRQ   | `0x00000002` |
 
-### Virtual IO MMIO Rights
+### Virtual IO Rights
 
 | Right             |  Value            |
 |-------------------|-------------------|
-| Virtual IO MMIO Bind Backend VIRQ  | `0x00000001` |
+| Virtual IO Bind Backend VIRQ  | `0x00000001` |
 | Virtual IO MMIO Bind Frontend VIRQ | `0x00000002` |
-| Virtual IO MMIO Assert VIRQ   | `0x00000004` |
-| Virtual IO MMIO Config        | `0x00000008` |
+| Virtual IO Assert VIRQ   | `0x00000004` |
+| Virtual IO Config        | `0x00000008` |
 
 ### Virtual GIC ITS
 
@@ -259,8 +266,10 @@ Identifies the hypervisor version and feature set.
 
 | Bits | Mask | Description |
 |-|---|-----|
-|     0                |     `0x1`                  |     1 = ARM v8.2 SVE support    |
-|     63:1             |     `0xFFFFFFFF.FFFFFFFF ` |     Reserved = 0                |
+|     0                |     `0x1`                  |     1 = ARM v8.2 SVE support         |
+|     1                |     `0x2`                  |     1 = vGIC extended SPI support    |
+|     2                |     `0x4`                  |     1 = vGIC extended PPI support    |
+|     63:3             |     `0xFFFFFFFF.FFFFFFF8 ` |     Reserved = 0                     |
 
 *API Flags 2:*
 
@@ -501,20 +510,22 @@ ERROR_NOMEM – the creation failed due to memory allocation error.
 
 Also see: [Capability Errors](#capability-errors)
 
-### Virtual IO MMIO object creation
+### Virtual IO Backend object creation
 
-Allocates a new Virtual IO MMIO object from the Partition and allocates a Capability ID from the CSpace.
+Allocates a new Virtual IO Backend object from the Partition and allocates a Capability ID from the CSpace.
 
-|    **Hypercall**:       |      `partition_create_virtio_mmio`   |
-|-------------------------|---------------------------------------|
-|     Call number:        |     `hvc 0x6048`                      |
-|     Inputs:             |     X0: Partition CapID               |
-|                         |     X1: CSpace CapID                  |
-|                         |     X2: Reserved — Must be Zero       |
-|     Outputs:            |     X0: Error Result                  |
-|                         |     X1: VirtioMMIO CapID              |
+|    **Hypercall**:       |      `partition_create_virtio_backend` |
+|-------------------------|----------------------------------------|
+|     Call number:        |     `hvc 0x6048`                       |
+|     Inputs:             |     X0: Partition CapID                |
+|                         |     X1: CSpace CapID                   |
+|                         |     X2: Reserved — Must be Zero        |
+|     Outputs:            |     X0: Error Result                   |
+|                         |     X1: Virtio CapID                   |
 
-On successful creation, the new Virtual IO MMIO object is created and its state is OBJECT_STATE_INIT.
+This hypercall was formerly named `partition_create_virtio_mmio`.
+
+On successful creation, the new Virtual IO Interface object is created and its state is OBJECT_STATE_INIT.
 
 **Errors:**
 
@@ -1181,17 +1192,21 @@ Also see: [Capability Errors](#capability-errors)
 
 ## Interrupt Management
 
-### Hardware IRQ Bind
+### Virtual IRQ Bind to controller
 
-Binds a hardware IRQ number to a virtual IRQ number.
+Binds a virtual IRQ to an IRQ source. The source may be any hypervisor object that generates IRQs, including an object representing a hardware IRQ line. For objects that have more than one IRQ source, the index argument may be used to select the source to operate on; otherwise, the index should be set to zero.
 
-|    **Hypercall**:       |      `hwirq_bind_virq`               |
+This hypercall was previously known as `hwirq_bind_virq`.
+
+Some hypervisor object types have their own IRQ binding hypercalls, which should be used instead. In future, these will be deprecated and replaced with this hypercall.
+
+|    **Hypercall**:       |      `vic_bind_virq`                 |
 |-------------------------|--------------------------------------|
 |     Call number:        |     `hvc 0x6026`                     |
-|     Inputs:             |     X0: HW IRQ CapID                 |
+|     Inputs:             |     X0: IRQSource CapID              |
 |                         |     X1: Virtual IC CapID             |
 |                         |     X2: Virtual IRQ Info             |
-|                         |     X3: Reserved — Must be Zero      |
+|                         |     X3: Index                        |
 |     Outputs:            |     X0: Error Result                 |
 
 **Errors:**
@@ -1200,7 +1215,7 @@ OK – the operation was successful, and the result is valid.
 
 ERROR_NOMEM – the operation failed due to memory allocation error.
 
-ERROR_VIRQ_BOUND – the specified hardware IRQ is already bound to a VIRQ number.
+ERROR_VIRQ_BOUND – the specified VIRQ number is already bound to a source.
 
 ERROR_BUSY – the specified VIRQ number is already bound to a source.
 
@@ -1208,15 +1223,20 @@ ERROR_ARGUMENT_INVALID – a value passed in an argument was invalid. This could
 
 Also see: [Capability Errors](#capability-errors)
 
-### Hardware IRQ Unbind
+### Virtual IRQ Unbind from controller
 
-Unbinds a hardware IRQ number from a virtual IRQ number.
+Unbinds a virtual IRQ from an IRQ source. The source may be any hypervisor object that generates IRQs, including an object representing a hardware IRQ line. For objects that have more than one IRQ source, the index argument may be used to select the source to operate on; otherwise, the index should be set to zero.
 
-|    **Hypercall**:       |      `hwirq_unbind_virq`             |
+This hypercall was previously known as `hwirq_unbind_virq`.
+
+Some hypervisor object types have their own IRQ unbinding hypercalls, which should be used instead. In future, these will be deprecated and replaced with this hypercall.
+
+
+|    **Hypercall**:       |      `vic_unbind_virq`               |
 |-------------------------|--------------------------------------|
 |     Call number:        |     `hvc 0x6027`                     |
-|     Inputs:             |     X0: HW IRQ CapID                 |
-|                         |     X1: Reserved — Must be Zero      |
+|     Inputs:             |     X0: IRQSource CapID              |
+|                         |     X1: Index                        |
 |     Outputs:            |     X0: Error Result                 |
 
 **Errors:**
@@ -1294,7 +1314,6 @@ In the current implementation, the only type of MSI source supported is a GICv4 
 |                         |     X3: Reserved — Must be Zero                               |
 |     Outputs:            |     X0: Error Result                                          |
 
-
 **Errors:**
 
 OK – the operation was successful, and the result is valid.
@@ -1335,9 +1354,61 @@ Also see: [capability errors](#capability-errors)
 
 Map a memory extent into a specified address space. By default, the entire memory extent is mapped, except for any carveouts contained within the extent.
 
+#### Partial Mapping
+
 If the Partial flag is set in Map Flags, only the range of the memory extent specified by Offset and Size will be mapped. If not set, these arguments are ignored. Partial mappings are only supported by sparse memory extents.
 
-If successful, the hypervisor will automatically synchronise with other cores to ensure they have observed the map operation. This behaviour is skipped if the NoSync flag is set.
+#### Private Mapping
+
+If the Private flag is set in Map Flags, then the map operation creates a private memory mapping in a protected guest VM. This is mutually exclusive with the VMMIO flag.
+
+This flag changes the capability rights required for both the Address Space and Memory Extent CapIDs to the protected and private map rights, respectively, instead of regular map rights.
+
+Apart from the capability rights, map operations that have the Private flag set differ from regular map operations in the following ways:
+
+* The memory region must not already be mapped at a different address in the specified address space.
+* The memory region must not already be mapped in any other address space.
+* The memory region must be wholly owned by the specified memory extent.
+* The specified address range must have previously been marked as paged memory by a call to `addrspace_configure_range`.
+* The Kernel Access field of the Map Attributes must specify write permission. Note that this may also constrain the User Access field of the Map Attributes, if the architecture requires the fields to be consistent.
+* The memory region will be cleaned and invalidated in all caches prior to being mapped.
+* Each mapped page will be marked as private.
+
+Pages marked as private may subsequently be automatically marked as locked by the hypervisor, possibly with assistance from the hardware. This has the following effects:
+
+* A map or unmap operation with the Private flag set can only remove or replace a private page if it is not marked as locked.
+* If an unlocked private page is written by the guest, it will be automatically locked before the write completes.
+
+Note that it is not specified whether a private page is initially locked when mapped, or whether it will be automatically locked upon a read access by the guest. However, a private page will never be automatically locked by a speculative memory access.
+
+The size of the page that is automatically marked as locked upon a memory access is not specified. It may not be the smallest page size of the address space.
+
+If a private page is marked as locked, the guest may unlock it by calling `addrspace_modify_pages`.
+
+#### VMMIO Mapping
+
+If the VMMIO flag is set in Map Flags, then the map operation creates a Virtual Memory-Mapped IO mapping in a protected guest VM. This is mutually exclusive with the Private flag.
+
+This flag changes the capability right required for the Address Space CapID to the protected map right instead of the regular map right. Unlike the Private flag, it does _not_ change the right required for the Memory Extent CapID.
+
+Apart from the capability rights, map operations that have the VMMIO flag set differ from regular map operations in the following ways:
+
+* The specified address range must have previously been marked as VMMIO by a call to `addrspace_configure_range`.
+* The Kernel Access and User Access fields of the Map Attributes must not specify execute permission.
+
+#### Synchronisation
+
+If successful, the hypervisor will automatically synchronise with other cores to ensure they have completed any successful accesses to pages that were previously mapped in the given address range and were implicitly unmapped by this map operation. Any subsequent accesses to those pages will access the new mapping. Note that in some cases, due to architectural limitations, concurrent accesses to pages which are updated by the map operation or pages adjacent to the mapped pages may fault. If possible, the hypervisor will detect and retry such transiently faulting accesses.
+
+The implicit synchronisation is skipped if the NoSync flag is set. In this case, the caller can synchronise a batch of map and unmap operations either by making a `memextent_modify` call, or by making the final map or unmap call in the batch with the NoSync flag clear.
+
+#### Rollback on Failure
+
+If an error occurs and the Private flag is not set, then any mappings that were created by this operation prior to the failure will be removed. Any existing mappings that were removed and replaced by the failed operation will not be restored.
+
+Note that mappings created by a failed operation may be briefly accessible in the address space prior to being removed. If the NoSync flag is set, then accesses to the mapped pages may still be in progress when the call returns.
+
+If the Private flag is set, then any mappings created by this operation will remain in place even if an error occurs.
 
 |    **Hypercall**:       |      `addrspace_map`                 |
 |-------------------------|--------------------------------------|
@@ -1367,8 +1438,10 @@ If successful, the hypervisor will automatically synchronise with other cores to
 | Bits | Mask | Description |
 |-|---|-----|
 |     0                |     `0x1`                  |     Partial                       |
+|     1                |     `0x2`                  |     Private (protected)           |
+|     2                |     `0x4`                  |     VMMIO (protected)             |
 |     31               |     `0x80000000`           |     NoSync                        |
-|     30:1             |     `0x7FFFFFFE`           |     Reserved, Must be Zero        |
+|     30:1             |     `0x7FFFFFF8`           |     Reserved, Must be Zero        |
 
 **Errors:**
 
@@ -1378,7 +1451,7 @@ ERROR_ARGUMENT_INVALID – a value passed in an argument was invalid. This could
 
 ERROR_MEMEXTENT_MAPPINGS_FULL – the memory extent has exceeded its mappings capacity. Currently it can have up to 4 mappings.
 
-ERROR_DENIED – the specified Address Space is not allowed to execute map operations.
+ERROR_DENIED – the specified Address Space is not allowed to execute map operations, or the Private or VMMIO flag was set and the specified range has not been correspondingly configured as Private or VMMIO.
 
 ERROR_ARGUMENT_ALIGNMENT – the specified base address is not page size aligned.
 
@@ -1390,9 +1463,31 @@ Also see: [capability errors](#capability-errors)
 
 Unmaps a memory extent from a specified address space. By default, the entire memory extent range is unmapped, except for any carveouts contained within the extent.
 
+#### Partial Unmapping
+
 If the Partial flag is set in Map Flags, only the range of the Memory Extent specified by Offset and Size will be unmapped. If not set, these arguments are ignored. Partial unmappings are only supported by sparse memory memextents.
 
-If successful, the hypervisor will automatically synchronise with other cores to ensure they have observed the unmap operation. This behaviour is skipped if the NoSync flag is set.
+#### Private Unmapping
+
+If the Private flag is set in Map Flags, then the operation attempts to remove a previously created private memory mapping from a protected address space. This is mutually exclusive with the VMMIO flag.
+
+This flag changes the capability rights required for both the Address Space and Memory Extent CapIDs to the protected and private map rights, respectively, instead of regular map rights.
+
+This flag also restricts the operation to only unmapping pages that were created by an `addrspace_map` call with the Private flag set, and which have not been locked or have been unlocked by an `addrspace_modify_pages` call after they were last locked; see that hypercall for more details. If a private unmap operation finds a mapped page that matches the specified memory range but is either locked or not private, it will fail with `ERROR_BUSY`.
+
+#### VMMIO Unmapping
+
+If the VMMIO flag is set in Map Flags, then the operation attempts to remove a mapping from a protected VMMIO region. This is mutually exclusive with the Private flag.
+
+This flag changes the capability right required for the Address Space CapID to the protected map right instead of the regular map right. Unlike the Private flag, it does _not_ change the right required for the Memory Extent CapID.
+
+This flag also restricts the operation to only unmapping pages from an address range that was previously marked as VMMIO by a call to `addrspace_configure_range`. Note that unlike the Private flag, it does _not_ require the pages to be unlocked by `addrspace_modify_pages`.
+
+#### Synchronisation
+
+If successful, the hypervisor will automatically synchronise with other cores to ensure they have completed any successful accesses to pages that were unmapped by this map operation. Any subsequent accesses to those pages will fault. Note that in some cases, due to architectural limitations, concurrent accesses to pages adjacent to the unmapped pages may fault. If possible, the hypervisor will detect and retry such transiently faulting accesses.
+
+The implicit synchronisation is skipped if the NoSync flag is set. In this case, the caller can synchronise a batch of map and unmap operations either by making a `memextent_modify` call, or by making the final map or unmap call in the batch with the NoSync flag clear.
 
 |    **Hypercall**:       |      `addrspace_unmap`               |
 |-------------------------|--------------------------------------|
@@ -1411,7 +1506,9 @@ OK – the operation was successful, and the result is valid.
 
 ERROR_ARGUMENT_INVALID – a value passed in an argument was invalid. This could be due to an invalid Address Space or a non-existing mapping.
 
-ERROR_DENIED – the specified Address Space is not allowed to execute map operations.
+ERROR_DENIED – the specified Address Space is not allowed to execute map operations, or the VMMIO flag was set and the specified range has not been correspondingly configured as VMMIO.
+
+ERROR_BUSY — the Private flag was specified, and a matching mapping was found that was either locked, or not private.
 
 ERROR_ARGUMENT_ALIGNMENT – the specified base address is not page size aligned.
 
@@ -1421,9 +1518,9 @@ Also see: [capability errors](#capability-errors)
 
 Update access rights on an existing mapping.
 
-If the Partial flag is set in Map Flags, only the range of the Memory Extent specified by Offset and Size will be updated. If not set, these arguments are ignored. Partial access updates are only supported by sparse memory extents.
+This call has a similar effect to `addrspace_map`, except that the mapping is required to already exist, and to be unchanged by this call except for the Attributes.
 
-If successful, the hypervisor will automatically synchronise with other cores to ensure they have observed the mapping update. This behaviour is skipped if the NoSync flag is set.
+The semantics of the Map Flags argument are the same as for `addrspace_map`. See the description of that hypercall for further details.
 
 |    **Hypercall**:       |      `addrspace_update_access`       |
 |-------------------------|--------------------------------------|
@@ -1459,6 +1556,71 @@ ERROR_DENIED – the specified Address Space is not allowed to update access of 
 
 Also see: [capability errors](#capability-errors)
 
+### Address Space Modify Pages
+
+Perform one or more of the following operations on pages in a specified range of the address space:
+* Unlock private pages, allowing a subsequent `addrspace_unmap` operation with the Private flag set to unmap them.
+* Sanitise locked private pages.
+
+These operations may fail after partial completion. To allow the operation to be retried or resumed after a failure, this API returns the size of the address space range that was not modified prior to the failure. This value is always 0 on success.
+
+#### Unlocking
+
+If the Unlock flag is set in the Modify Flags argument, this call will unlock any locked private pages in the specified address range. The host VM can then use an `addrspace_unmap` operation with the Private flag set to reclaim those pages, without having the right to unconditionally unmap them (by calling `addrspace_unmap` with the Private flag unset). Note that the latter right would also give the host VM the ability to read or modify the contents of the guest VM's memory, so this call is necessary to protect the guest VM from direct access by the host VM.
+
+This call operates directly on a virtual address range in an Address Space, and therefore does not require any knowledge of the Memory Extent objects providing the physical memory backing the unlocked mappings.
+
+The hypervisor does not guarantee that all VCPUs in the guest VM have completed any concurrent accesses to an unlocked page before it is unlocked, and therefore before the host VM reclaims it. It is the caller's responsibility to ensure this is the case.
+
+The hypervisor normally guarantees that after this call returns, the guest VM is no longer able to access the unlocked page without faulting, unless it is re-mapped (and thus re-locked) by the host VM. However, providing this guarantee is expensive. Therefore, a guest that wishes to unlock a large number of pages may wish to postpone this operation until after the last page is unlocked. To do this, the guest may set the No Unlock Sync flag in the Modify Flags argument.
+
+A call made with the No Unlock Sync flag set does not guarantee that the unlocked pages will fault afterwards. A call made with the No Unlock Sync flag clear (and the Unlock flag set) guarantees that all pages unlocked by this or any preceding call will fault if an access happens after the call returns success, other than pages that have been subsequently re-locked. This is the case even if the call does not unlock any pages because the specified size is zero.
+
+#### Sanitisation
+
+If the Sanitise flag is set in the Modify Flags argument, the hypervisor will zero and cache clean the contents of any private and locked pages. This is done in addition to unlocking the pages, if the Unlock flag is also set.
+
+The hypervisor does not provide any guarantee that all VCPUs in the guest VM have completed any concurrent accesses to a sanitised page before sanitisation occurs. It is the caller's responsibility to ensure this is the case.
+
+Note that sanitisation may be performed with internal locks held in the hypervisor, which may delay other operations on the same Address Space. Therefore, a caller that is performing this operation on its own address space may achieve better performance by performing the sanitisation itself prior to the call.
+
+|    **Hypercall**:       |      `addrspace_modify_pages`        |
+|-------------------------|--------------------------------------|
+|     Call number:        |     `hvc 0x6069`                     |
+|     Inputs:             |     X0: Address Space CapID          |
+|                         |     X1: Base VMAddr                  |
+|                         |     X2: Size                         |
+|                         |     X3: Modify Flags                 |
+|     Outputs:            |     X0: Error Result                 |
+|                         |     X1: Size Remaining               |
+
+**Types:**
+
+*Modify Flags:*
+
+| Bits | Mask | Description |
+|-|---|-----|
+| 0    | `0x1`                  | Unlock                  |
+| 1    | `0x2`                  | Sanitise                |
+| 2    | `0x4`                  | No Sync Unlock          |
+| 63:3 | `0xFFFFFFFF.FFFFFFF8`  | Reserved — Must be Zero |
+
+**Errors:**
+
+OK – the operation was successful, and the result is valid.
+
+ERROR_RETRY — the operation was interrupted or exceeded an internal time limit.
+
+ERROR_ARGUMENT_INVALID – a value passed in an argument was invalid. This could be due to an invalid Address Space, or unrecognised bits set in Unlock Flags.
+
+ERROR_DENIED – the specified Address Space is not allowed to execute map operations.
+
+ERROR_ARGUMENT_ALIGNMENT – the specified base address is not page size aligned.
+
+ERROR_ADDR_OVERFLOW – the specified base address and size may cause an overflow.
+
+Also see: [capability errors](#capability-errors)
+
 ### Configure an Address Space
 
 Configure an address space whose state is OBJECT_STATE_INIT.
@@ -1487,7 +1649,11 @@ Also see: [capability errors](#capability-errors)
 
 ### Configure the information area of an Address Space
 
-Configure the information area of an address space whose state is OBJECT_STATE_INIT.
+Specifies the address of the read-only hypervisor information area of an address space, and the Memory Extent object to be used as storage for the information area. The state of the address space must be OBJECT_STATE_INIT.
+
+The specified Memory Extent must be a basic memory extent that permits cacheable write accesses. Its size determines the size of the information area, and there must be a valid IPA range starting at the specified IPA with the extent's size.
+
+The caller is responsible for actually mapping the specified extent into the address space after it is activated. This should be a read-only mapping.
 
 |    **Hypercall**:       |     `addrspace_configure_info_area`  |
 |-------------------------|--------------------------------------|
@@ -1504,9 +1670,91 @@ OK – The operation was successful, and the result is valid.
 
 ERROR_OBJECT_STATE – The Address Space object has already been activated.
 
-ERROR_ADDR_INVALID – The provided IPA is invalid.
+ERROR_ARGUMENT_ALIGNMENT – The provided IPA is not page-aligned.
 
-ERROR_ARGUMENT_INVALID – A value passed in an argument was invalid.
+ERROR_ADDR_OVERFLOW – The range beginning at the specified IPA extends past the end of the address space.
+
+ERROR_MEMEXTENT_TYPE – The specified Memory Extent object is not a basic extent.
+
+ERROR_DENIED – The specified Memory Extent object does not have write access to the memory or does not permit cacheable mappings.
+
+Also see: [capability errors](#capability-errors)
+
+### Locate the Information Area
+
+Returns the configured IPA range of the information area of the caller's address space. No capability is required to perform this operation.
+
+|    **Hypercall**:       |     `addrspace_find_info_area`       |
+|-------------------------|--------------------------------------|
+|     Call number:        |     `hvc 0x606a`                     |
+|     Inputs:             |     X0: Reserved — Must be Zero      |
+|     Outputs:            |     X0: Error Result                 |
+|                         |     X1: Info area IPA                |
+|                         |     X2: Info area size               |
+
+The information area starts with a variable-length array of info area entry descriptors. Each descriptor is 16 bytes long and has the following format:
+
+| Bits | Description |
+|-|-----|
+| 31..0  | Entry Type |
+| 63..32 | Payload size in bytes |
+| 95..64 | Payload offset from info area base |
+| 126..96 | Reserved — Must be Zero |
+| 127 | Valid |
+
+If the offset field is zero, then the entry is the last in the array, and all other fields must be ignored. Otherwise, if the Valid bit is clear or the Entry Type is unknown, the entry should be ignored.
+
+An appropriate memory fence should separate the read of the Valid bit of the entry descriptor from any access to the Entry Type or payload. The barrier should be equivalent to a call to the C11 standard function `atomic_thread_fence(memory_order_seq_cst)`.
+
+If the information area is accessed through a non-cacheable mapping or with the caches disabled, then it must be cleaned in the caches first. On a target that has virtually indexed caches or which does not support cleaning of caches through an uncached mapping, the hypervisor will clean the caches after writing to the information area.
+
+**Errors:**
+
+OK – The operation was successful, and the result is valid.
+
+ERROR_ADDR_INVALID – The caller has no information area.
+
+### Add an Information Area Entry
+
+Allocates a new entry in an Address Space's information area, and copies the provided payload into it.
+
+The information area is intended to be read-only for the guest VM and append-only for the hypervisor and management VM. The info area is intended for providing low-level hypervisor configuration to a VM. It is not intended to replace DTB or other mechanisms for conveying general static VM configuration.  It is not possible to remove or amend an entry after it has been added to the information area.
+
+The hypervisor info area allocator may result in unused info_area data due to the use of large alignments. The hypervisor does not guarantee to use this unused area for subsequently added small entries. Care should be used with large alignments to prevent exhausting the available info area.
+
+|    **Hypercall**:       |     `addrspace_info_area_add_entry`  |
+|-------------------------|--------------------------------------|
+|     Call number:        |     `hvc 0x606b`                     |
+|     Inputs:             |     X0: Address Space CapID          |
+|                         |     X1: Entry Type                   |
+|                         |     X2: Payload Buffer VMAddr        |
+|                         |     X3: Data Info                    |
+|                         |     X4: Reserved — Must be Zero      |
+|     Outputs:            |     X0: Error Result                 |
+|                         |     X1: Info entry IPA               |
+
+*Data Info:*
+
+| Bits |Description |
+|-|-----|
+| 31:0 | Size |
+| 63:32 | Alignment |
+
+**Errors:**
+
+OK – The operation was successful, and the result is valid.
+
+ERROR_OBJECT_STATE – The Address Space object has not been activated.
+
+ERROR_ARGUMENT_SIZE – The specified alignment is too large.
+
+ERROR_ARGUMENT_ALIGNMENT – The specified alignment is too large.
+
+ERROR_IDLE – The specified Address Space object has no info area.
+
+ERROR_NOMEM – There is insufficient free space in the info area to allocate with the requested size and alignment.
+
+ERROR_ADDR_INVALID – The specified payload buffer is not mapped in the caller's address space.
 
 Also see: [capability errors](#capability-errors)
 
@@ -1629,15 +1877,27 @@ ERROR_MEMDB_NOT_OWNER – the memory mapped in the Address Space is not owned by
 
 Also see: [capability errors](#capability-errors)
 
-### Address Space Virtual MMIO Area Configuration
+### Address Space Range Configuration
 
-Configure the virtual MMIO device regions for the address space.
+This hypercall configures modified behaviours for specific address ranges in the address space.
 
-A virtual MMIO device region is a region of the address space in which translation faults may be handled by an unprivileged VMM residing in another VM.
+There are currently two modified behaviours defined: virtual MMIO regions, and dynamically paged regions.
+
+A virtual MMIO device region is a region of the address space in which translation faults may be handled by an unprivileged VMM residing in another VM, by emulating the faulting access or mapping a non-executable page to the faulting region.
+A fault in such a region will report the faulting address, access size, and written register contents to the unprivileged VMM, and block the VCPU until the access is handled.
+Once the VMM acknowledges the fault, the VCPU state will be updated with the read register contents provided by the VMM, and the faulting instruction will be skipped.
 This allows the unprivileged VMM to emulate memory-mapped I/O devices.
 Note that other types of fault, such as permission or alignment faults, cannot be handled by this mechanism.
 Also, depending on the architecture, this mechanism may only support translation faults generated by specific types of instruction.
 On AArch64, it is limited to single-register load & store instructions without base register writeback, which are decoded by the CPU into the `ESR_EL2` syndrome bits.
+
+A dynamically paged region is a region of the address space in which translation or permission faults may be handled by an unprivileged VMM residing in another VM, by mapping a page to the faulting region.
+The faulting page will be reported to the unprivileged VMM, along with an indication of whether the failed access was a read or a write.
+The VCPU will be blocked until the VMM has acknowledged the fault; once unblocked, the faulting instruction will be retried.
+This allows the unprivileged VMM to allocate VM memory and map it prior to unblocking the VCPU, without emulating the accesses.
+Unlike virtual MMIO, the access size, offset into the page, and register contents will not be communicated to the VMM.
+Also, this mechanism is guaranteed to work for all memory access instructions.
+Note that other types of fault, such as alignment faults, cannot be handled by this mechanism.
 
 This call may be made before or after activation of the address space object.
 This is to permit delegation of the right to call this API to the VM that runs in the address space, so it can explicitly acknowledge that the specified region should not be used for sensitive data.
@@ -1648,24 +1908,26 @@ However, a limit may be imposed on the total number of ranges added to an addres
 
 A removed address range must exactly match a single previously added address range. Note that removal of a range will prevent the VMM receiving any new faults that occur in that range after the removal operation completes, but does not guarantee that the VMM has finished handling all faults in the removed range.
 
-|    **Hypercall**:       |      `addrspace_configure_vmmio`   |
+|    **Hypercall**:       |      `addrspace_configure_range`   |
 |-------------------------|------------------------------------|
 |     Call number:        |     `hvc 0x6060`                   |
 |     Inputs:             |     X0: Address Space CapID        |
 |                         |     X1: Base VMAddr                |
 |                         |     X2: Size                       |
-|                         |     X3: VMMIOConfigureOperation    |
+|                         |     X3: RangeConfigureOperation    |
 |                         |     X4: Reserved   – Must be Zero  |
 |     Outputs:            |     X0: Error Result               |
 
 **Types:**
 
-*VMMIOConfigureOperation:*
+*RangeConfigureOperation:*
 
-|      Operation Enumerator               |      Integer Value     |
-|-----------------------------------------|------------------------|
-|     VMMIO_CONFIGURE_OP_ADD_RANGE        |     0                  |
-|     VMMIO_CONFIGURE_OP_REMOVE_RANGE     |     1                  |
+| Operation Enumerator | Integer Value |
+|-----------------------------------------|---|
+| VMMIO_CONFIGURE_OP_ADD_VMMIO_RANGE        | 0 |
+| VMMIO_CONFIGURE_OP_REMOVE_VMMIO_RANGE     | 1 |
+| VMMIO_CONFIGURE_OP_ADD_PRIVATE_RANGE      | 2 |
+| VMMIO_CONFIGURE_OP_REMOVE_PRIVATE_RANGE   | 3 |
 
 **Errors:**
 
@@ -1687,11 +1949,15 @@ Also see: [capability errors](#capability-errors)
 
 ### Memory Extent Modify
 
-Perform a modification on a memory extent.
+Perform a modification on a memory extent, or synchronise previous operations on the memory extent.
 
 For range operations, only the range of the memory extent specified by Offset and Size will be modified. For all other operations these arguments are ignored.
 
 For operations that affect address space mappings, the hypervisor will automatically synchronise with other cores to ensure they have observed any successful changes in mappings. This behaviour is skipped if the NoSync flag is set. For other operations the NoSync flag must be set as specified below.
+
+The Sanitise on Reset operation affects all contents of the memory extent, subject to any future donation to or from the extent. It is also inherited by any child extent derived from it. On platforms that sanitise fixed memory ranges at reset or do not sanitise any memory at reset, this operation will fail if the extent contains any memory that is not within a sanitised range, and will prohibit any future donation of unsanitised memory to the extent.
+
+The Sync All operation is used to synchronise the effects of operations that were previously executed with the NoSync flag set. This includes the return of memory from a deleted child extent, which occurs as a delayed side-effect of deleting the child extent's last capability rather than an explicit Memory Extent hypercall, and always acts as if the NoSync flag was set.
 
 |    **Hypercall**:       |      `memextent_modify`              |
 |-------------------------|--------------------------------------|
@@ -1720,6 +1986,7 @@ For operations that affect address space mappings, the hypervisor will automatic
 |   MEMEXTENT_MODIFY_OP_ZERO_RANGE          |   1               |   Zero the owned memory of an extent within the specified range. The NoSync flag must be set.          |
 |   MEMEXTENT_MODIFY_OP_CACHE_CLEAN_RANGE   |   2               |   Cache clean the owned memory of an extent within the specified range. The NoSync flag must be set.   |
 |   MEMEXTENT_MODIFY_OP_CACHE_FLUSH_RANGE   |   3               |   Cache flush the owned memory of an extent within the specified range. The NoSync flag must be set.   |
+|   MEMEXTENT_MODIFY_OP_SANITISE_ON_RESET   |   4               |   Request sanitisation of the extent by the device firmware after warm reset. The NoSync flag must be set.  |
 |   MEMEXTENT_MODIFY_OP_SYNC_ALL            |   255             |   Synchronise all previous memory extent operations. The NoSync flag must not be set.                  |
 
 **Errors:**
@@ -1753,8 +2020,7 @@ Configure a memory extent whose state is OBJECT_STATE_INIT.
 |     2..0             |     `0x7`         |     Access Rights               |
 |     9:8              |     `0x300`       |     MemExtent MemType           |
 |     17:16            |     `0x30000`     |     MemExtent Type              |
-|     31               |     `0x80000000`  |     List Append                 |
-|     30:18,15:10,7:3  |     `0x7FFCFCF8`  |     Reserved,   Must be Zero    |
+|     31:18,15:10,7:3  |     `0xFFFCFCF8`  |     Reserved,   Must be Zero    |
 
 *Memextent Type*
 
@@ -1809,7 +2075,27 @@ Donate memory from one extent to another. This includes donations from parent to
 
 For non-derived memory extents, the parent is considered to be the partition that was used to create the extent. Donation is only supported for sparse memory extents.
 
-If successful, the hypervisor will automatically synchronise with other cores to ensure they have observed the donation and any mapping changes that may have occurred. This behaviour is skipped if the NoSync flag is set.
+#### Protected Donation
+
+The `TO_PROTECTED` and `FROM_PROTECTED` donation types will donate between Memory Extents, with some additional restrictions. These restrictions are intended to allow a host VM to dynamically assign or remove memory from a guest VM, without allowing the host VM to directly access the guest VM's data.
+
+These two operations require distinct and asymmetric capability rights instead of the usual Memory Extent Donate right:
+
+* The capability for the host VM's memory extent, which is the source for `TO_PROTECTED` and the destination for `FROM_PROTECTED`, must have the Memory Extent Protected Host right.
+* The capability for the guest VM's memory extent, which is the source for `FROM_PROTECTED` and the destination for `TO_PROTECTED`, must have the Memory Extent Protected Guest right.
+* The host VM's memory extent must be the parent of the guest VM's memory extent.
+
+The `FROM_PROTECTED` donation type requires that the specified memory range is not mapped in any address space; it will not implicitly unmap the memory.
+Typically the host VM will only be given the Map Protected right for the guest VM's memory extent, not the unrestricted Map right, which limits its ability to explicitly unmap the memory.
+In combination, these restrictions mean the host VM can only unmap protected guest VM memory after the guest VM has explicitly released it by calling `addrspace_modify_pages`.
+
+#### Synchronisation
+
+If successful, the hypervisor will automatically synchronise with other cores to ensure they have completed any successful accesses to pages that were implicitly unmapped by this donate operation. Any subsequent accesses to the unmapped pages will fault. Note that in some cases, due to architectural limitations, concurrent accesses to pages mapped by the donate operation or pages adjacent to those mapped or unmapped by the donate operation may fault. If possible, the hypervisor will detect and retry such transiently faulting accesses.
+
+Note that any page that is mapped by both the source extent and the destination extent may briefly be accessible via both mappings concurrently. If the caller needs to prevent this, it must use an explicit `addrspace_unmap` call to remove the source extent's mapping prior to the donation.
+
+The implicit synchronisation is skipped if the NoSync flag is set. In this case, the caller can synchronise a batch of map and unmap operations either by making a `memextent_modify` call, or by making the final map or unmap call in the batch with the NoSync flag clear.
 
 |    **Hypercall**:       |      `memextent_donate`               |
 |-------------------------|---------------------------------------|
@@ -1834,11 +2120,13 @@ If successful, the hypervisor will automatically synchronise with other cores to
 
 *Memextent Donate Type*
 
-|    Memextent Donate Type     |   Integer Value     |   Description                                   |
-|------------------------------|---------------------|-------------------------------------------------|
-|     TO_CHILD                 |    0                |    Donate to a child extent from its parent.    |
-|     TO_PARENT                |    1                |    Donate from a child extent to its parent.    |
-|     TO_SIBLING               |    2                |    Donate from one sibling extent to another.   |
+| Memextent Donate Type | Integer Value | Description |
+|---|-|-----|
+| TO_CHILD       | 0 | Donate to a child extent from its parent.       |
+| TO_PARENT      | 1 | Donate from a child extent to its parent.       |
+| TO_SIBLING     | 2 | Donate from one sibling extent to another.      |
+| TO_PROTECTED   | 3 | Protected donate from a host VM to a guest VM.  |
+| FROM_PROTECTED | 4 | Protected reclaim from a guest VM by a host VM. |
 
 **Errors:**
 
@@ -1874,7 +2162,7 @@ Configure a VCPU Thread whose state is OBJECT_STATE_INIT.
 |-|---|-----|
 |     0                |     `0x1`                  |     AArch64 Self-hosted Debug Enable    |
 |     1                |     `0x2`                  |     VCPU containing HLOS VM             |
-|     63:2             |     `0xFFFFFFFF.FFFFFFFE`  |     Reserved,   Must be Zero            |
+|     63:2             |     `0xFFFFFFFF.FFFFFFFC`  |     Reserved,   Must be Zero            |
 
 AArch64 Self-hosted Debug: give the VCPU access to use AArch64 Self-hosted debug functionality and registers.
 
@@ -1902,17 +2190,30 @@ If the call targets a VCPU that is currently running on a different physical CPU
 |-------------------------|------------------------------------|
 |     Call number:        |     `hvc 0x603d`                   |
 |     Inputs:             |     X0:   vCPU CapID               |
-|                         |     X1: Affinity CPUIndex          |
-|                         |     X2: Reserved — Must be -1      |
+|                         |     X1: AffinityValue              |
+|                         |     X2: AffinityType               |
 |     Outputs:            |     X0: Error Result               |
 
 **Types:**
 
-CPUIndex — a number identifying the target physical CPU.
+*VCPU Affinity Type*
+
+|    VCPU Affinity Type     |   Integer Value     |   Description                                         |
+|---------------------------|---------------------|-------------------------------------------------------|
+|     CPU_INDEX             |    -1               |    Affinity value is of type CPUIndex.                |
+|     PLATFORM_CPU_INDEX    |    0                |    Affinity value is of type PlatformCPUIndex.        |
+
+*CPUIndex* — an unsigned 16-bit number identifying the target physical CPU.
 
 For hardware platforms with physical CPUs that are linearly numbered from 0, this is equal to the physical CPU number; for AArch64 platforms, this is the case if three of the four affinity fields in `MPIDR_EL1` have a zero value on every physical PE, and the CPUIndex corresponds to the value of the remaining `MPIDR_EL1` affinity field. Otherwise, the hypervisor’s platform driver defines the mapping between CPUIndex values and physical CPUs, and VMs may be informed of this mapping at boot time via the boot environment data.
 
-The value -1 (`CPU_INDEX_INVALID`) may be used to indicate that the VCPU should not have affinity to any physical CPU. If the scheduler does not support automatic migration of threads, this will effectively disable the VCPU, so an additional object right (Thread Disable) is required in this case.
+The value 0xFFFF (`CPU_INDEX_INVALID`) may be used to indicate that the VCPU should not have affinity to any physical CPU. If the scheduler does not support automatic migration of threads, this will effectively disable the VCPU, so an additional object right (Thread Disable) is required in this case.
+
+*PlatformCPUIndex* — a number identifying the target physical CPU using a platform-specific encoding.
+
+For AArch64 platforms, the physical CPU is specified using the ARM multi-core `MPIDR_EL1` encoding, which embeds CPU topology information into the number.
+
+For other platforms, the use of PlatformCPUIndex is currently reserved.
 
 **Errors:**
 
@@ -2197,17 +2498,19 @@ For this call to behave as intended, the specified VCPU should have lower schedu
 
 The following table shows the expected types of the state-specific data and resume data for each state. A 0 indicates that the argument or result is currently reserved and must be zero.
 
-| State | Name | State Data 1 | State Data 2 | State Data 3 | Resume Data 1 |
-|-|--|--|--|--|--|
-| 0x0 | `READY` | 0 | 0 | 0 | 0 |
-| 0x1 | `EXPECTS_WAKEUP` | VCPU Sleep Type | 0 | 0 | 0 |
-| 0x2 | `POWERED_OFF` | VCPU Poweroff Type | 0 | 0 | 0 |
-| 0x3 | `BLOCKED` | 0 | 0 | 0 | 0 |
-| 0x4 | `ADDRSPACE_VMMIO_READ` | VMPhysAddr | Size | 0 | Register |
-| 0x5 | `ADDRSPACE_VMMIO_WRITE` | VMPhysAddr | Size | Register | 0 |
-| 0x100 | `PSCI_SYSTEM_RESET` | PSCI Reset Type | 0 | 0 | 0 |
+| State | Name | State Data 1 | State Data 2 | State Data 3 | Resume Data 1 | Resume Data 2
+|-|--|--|--|--|--|--|
+| 0x0 | `READY` | 0 | 0 | 0 | 0 | 0 |
+| 0x1 | `EXPECTS_WAKEUP` | VCPU Sleep Type | 0 | 0 | 0 | 0 |
+| 0x2 | `POWERED_OFF` | VCPU Poweroff Type | 0 | 0 | 0 | 0 |
+| 0x3 | `BLOCKED` | 0 | 0 | 0 | 0 | 0 |
+| 0x4 | `ADDRSPACE_VMMIO_READ` | VMPhysAddr | Size | 0 | Register | Action |
+| 0x5 | `ADDRSPACE_VMMIO_WRITE` | VMPhysAddr | Size | Register | 0 | Action |
+| 0x6 | `FAULT` | 0 | 0 | 0 | 0 | 0 |
+| 0x7 | `ADDRSPACE_PAGE_FAULT` | VMPhysAddr | Access Type | 0 | Action | 0 |
+| 0x100 | `PSCI_SYSTEM_RESET` | PSCI Reset Type | 0 | 0 | 0 | 0 |
 
-The Resume Data 2 and 3 arguments are currently unused and must be zero for all states.
+The Resume Data 3 argument is currently unused and must be zero for all states.
 
 0x0 `READY`
 :The caller's hypervisor timeslice ended, or the caller received an interrupt. The caller should retry after handling any pending interrupts.
@@ -2219,19 +2522,37 @@ The Resume Data 2 and 3 arguments are currently unused and must be zero for all 
 :The VCPU has not yet been started by calling `vcpu_poweron`, or has stopped itself by calling `vcpu_poweroff`, or has been terminated due to a reset request from another VM. If PSCI is implemented, this state is also reachable via PSCI calls. The `VCPU_RUN_WAKEUP` VIRQ will be asserted when the VCPU leaves this state. The first state data word contains a VCPU Poweroff Type value (defined below).
 
 0x3 `BLOCKED`
-:The VCPU is temporarily unable to run due to a hypervisor operation. This may include a hypercall made by the VCPU that transiently blocks it, or by an incomplete migration from another physical CPU. The caller should retry after yielding to the calling VM's scheduler.
+:The VCPU is temporarily unable to run due to a hypervisor operation. This may include a hypercall made by the VCPU that transiently blocks it, or an incomplete migration from another physical CPU. The caller should retry after yielding to the calling VM's scheduler.
 
 0x4 `ADDRSPACE_VMMIO_READ`
-:The VCPU has performed a read access to an unmapped stage 2 address inside a range previously nominated by a call to `addrspace_configure_vmmio`. The first two state data words contain the base IPA and the access size, respectively. The VCPU will be automatically resumed by the next `vcpu_run` call. The first resume data word for that call should be set to the value that will be returned by the read access.
+:The VCPU has attempted to read an unmapped stage 2 address inside a range previously nominated as a VMMIO range by a call to `addrspace_configure_range`. The first two state data words contain the base IPA and the access size, respectively. The VCPU will be automatically resumed by the next `vcpu_run` call. The second resume data word is a resume action; if it is set to `DEFAULT` (0), the faulting instruction will be skipped when the CPU resumes, and the first resume data word for that call should be set to the value that will be returned by the read access.
 
 0x5 `ADDRSPACE_VMMIO_WRITE`
-:The VCPU has performed a write access to an unmapped stage 2 address inside a range previously nominated by a call to `addrspace_configure_vmmio`. The three state data words contain the base IPA, access size, and the value written by the access, respectively. The VCPU will be automatically resumed by the next `vcpu_run` call.
+:The VCPU has attempted to write an unmapped stage 2 address inside a range previously nominated as a VMMIO range by a call to `addrspace_configure_range`. The three state data words contain the base IPA, access size, and the value written by the access, respectively. The VCPU will be automatically resumed by the next `vcpu_run` call. The second resume data word is a resume action; if it is set to `DEFAULT` (0), the faulting instruction will be skipped when the CPU resumes.
 
 0x6 `FAULT`
-: The VCPU has an unrecoverable fault.
+:The VCPU has encountered an unrecoverable fault.
+
+0x7 `ADDRSPACE_PAGE_FAULT`
+:The VCPU has attempted to access an unmapped stage 2 address, or performed an access that it does not have permissions for, inside a range previously nominated as a paged range by a call to `addrspace_configure_range`. The first three state data words contain the base IPA of the access rounded down to the nearest page boundary, an enumeration value indicating the type of access, and a boolean value indicating whether the access was a permission fault on a mapped page. The VCPU will be automatically resumed by the next `vcpu_run` call. The first resume data word is a resume action; if it is set to `DEFAULT` (0), the faulting instruction will be retried.
+
+:This state is also used when the VCPU has attempted to access an unmapped stage 2 address inside a range previously nominated as a VMMIO range by a call to `addrspace_configure_range`, and the hypervisor is unable to emulate the faulting instruction. For example, this may occur for an instruction that updates its address register, performs an atomic read and write, or reads or writes multiple registers.
 
 0x100 `PSCI_SYSTEM_RESET`
 :On a platform that implements PSCI, the VCPU has made a call to `PSCI_SYSTEM_RESET` or `PSCI_SYSTEM_RESET2`. The first state data word contains a PSCI Reset Type value (defined below). For a `PSCI_SYSTEM_RESET2` call, the second state data word contains the cookie value.
+
+*VCPU Resume Action:*
+
+When resuming a VCPU that has been halted by a fault, one of the resume data words can specify an alternate action to take, rather than the state-specific default action.
+
+0x0 `DEFAULT`
+:The default action for the VCPU state. See above for details.
+
+0x1 `RETRY`
+:Retry the faulting instruction.
+
+0x2 `FAULT`
+:Emulate a synchronous external data abort to EL1 from the faulting instruction.
 
 *VCPU Sleep Type:*
 
@@ -2255,6 +2576,15 @@ If the platform implements PSCI, nonzero values are power state values as passed
 | 61:32 | `0x3FFFFFFF.00000000` | Reserved — Must be Zero    |
 | 62    | `0x40000000.00000000` | 1: `PSCI_SYSTEM_RESET2` SMC64 call, 0: SMC32 call |
 | 63    | `0x80000000.00000000` | 1: `PSCI_SYSTEM_RESET` call, 0: `PSCI_SYSTEM_RESET2` |
+
+*Access Type*:
+
+| Value | Description |
+|-|-----|
+| 0 | Read-only access. |
+| 1 | Write access, or atomic read and write access. |
+| 2 | Execute access. |
+| >2 | Reserved. |
 
 **Errors:**
 
@@ -2647,24 +2977,29 @@ ERROR_BUSY – the operation failed because it would otherwise have overflowed o
 
 Also see: [Capability Errors](#capability-errors)
 
-## Virtual IO MMIO Management
 
-### Configure a Virtual IO Interface Object
+## Virtual IO Management
 
-Configure a Virtual IO Interface Object whose state is OBJECT_STATE_INIT.
+### Configure a Virtual IO Backend Object
 
-Every Virtual IO device must be attached to a Memory Extent Object that contains its common registers and assumed to be mapped with write permissions into the backend VM's address space. The caller must also bind the backend IRQs to the backend VM's Virtual Interrupt Controller.
+Configure a Virtual IO Backend Object whose state is OBJECT_STATE_INIT.
 
-The number of queues presented by the device must be set at configuration time, so the hypervisor can allocate memory for tracking the queue states.
+This hypercall currently only supports creation of a backend interface that is presented to the frontend VM as an MMIO transport device. This call may be extended in future to support other transport types.
+
+Every Virtual IO Backend using the MMIO transport must be attached to a Memory Extent Object that contains its common registers and assumed to be mapped with write permissions into the backend VM's address space. The caller must also bind the backend IRQs to the backend VM's Virtual Interrupt Controller.
+
+The number of queues presented by the device must be set at configuration time, because it may determine the size of memory allocations made in the backend implementation.
 
 The Memory Extent must be 4KiB in size. Its layout matches the register layout specified for MMIO devices in section 4.2.2 of the Virtual I/O Device (VIRTIO) 1.1 specification, followed by optional device-specific configuration starting at offset 0x100. The caller must map it with read-only permissions into the frontend VM's address space, and bind the device's frontend IRQs to the frontend VM's Virtual Interrupt Controller.
 
 If the device type valid flag is set, then the specified device type must be one that is known to the hypervisor, and any appropriate type-specific hypercalls must be made before the device is permitted to exit its reset state. Otherwise, the device type argument is ignored.
 
+The newly created interface will initially have the `DEVICE_NEEDS_RESET` status flag set, to prevent the device being probed by the frontend before the backend has initialised it.
+
 |    **Hypercall**:       |      `virtio_mmio_configure`         |
 |-------------------------|--------------------------------------|
 |     Call number:        |     `hvc 0x6049`                     |
-|     Inputs:             |     X0: VirtioMMIO CapID             |
+|     Inputs:             |     X0: Virtio CapID                 |
 |                         |     X1: Memextent CapID              |
 |                         |     X2: VQsNum Integer               |
 |                         |     X3: VirtioOptionFlags            |
@@ -2685,32 +3020,34 @@ If the device type valid flag is set, then the specified device type must be one
 
 OK – the operation was successful.
 
-ERROR_OBJECT_STATE – if the Virtual IO MMIO object is not in OBJECT_STATE_INIT state.
+ERROR_OBJECT_STATE – if the Virtual IO object is not in OBJECT_STATE_INIT state.
 
 ERROR_ARGUMENT_INVALID – a value passed in an argument was invalid. This could be due to VQsNum being larger than the maximum, or the specified Memory Extent object being of an unsupported type.
 
 Also see: [Capability Errors](#capability-errors)
 
-### Virtual IO MMIO Backend vIRQ Bind
+### Virtual IO MMIO Transport vIRQ Bind
 
-Binds a Virtual IO MMIO backend interface to a virtual interrupt.
+Binds a Virtual IO MMIO Transport's interrupt source to a virtual IRQ in the frontend VM. This is only applicable when the MMIO transport is being used.
 
-|    **Hypercall**:       |      `virtio_mmio_bind_backend_virq`   |
+|    **Hypercall**:       |      `virtio_mmio_frontend_bind_virq`   |
 |-------------------------|----------------------------------------|
 |     Call number:        |     `hvc 0x604a`                       |
-|     Inputs:             |     X0: VirtioMMIO CapID               |
+|     Inputs:             |     X0: Virtio CapID                   |
 |                         |     X1: Virtual IC CapID               |
 |                         |     X2: Virtual IRQ Info               |
 |                         |     X3: Reserved — Must be Zero        |
 |     Outputs:            |     X0: Error Result                   |
 
+This hypercall was formerly named `virtio_mmio_bind_backend_virq`. Note that the new name reflects the recipient of the IRQ rather than the source of the interrupts.
+
 **Errors:**
 
-OK – the operation was successful, and the result is valid.
+OK – the operation was successful.
 
 ERROR_NOMEM – the operation failed due to memory allocation error.
 
-ERROR_VIRQ_BOUND – the specified virtual IO MMIO is already bound to a VIRQ number.
+ERROR_VIRQ_BOUND – the specified Virtual IO MMIO Transport is already bound to a frontend VIRQ number.
 
 ERROR_BUSY – the specified VIRQ number is already bound to a source.
 
@@ -2718,43 +3055,47 @@ ERROR_ARGUMENT_INVALID – a value passed in an argument was invalid. This could
 
 Also see: [Capability Errors](#capability-errors)
 
-### Virtual IO MMIO Backend vIRQ Unbind
+### Virtual IO MMIO Transport vIRQ Unbind
 
-Unbinds a Virtual IO MMIO backend interface from a virtual IRQ number.
+Unbinds a Virtual IO MMIO Transport's interrupt source from a virtual IRQ in the frontend VM. This is only applicable when the MMIO transport is being used.
 
-|    **Hypercall**:       |      `virtio_mmio_unbind_backend_virq`   |
+|    **Hypercall**:       |      `virtio_mmio_frontend_unbind_virq`  |
 |-------------------------|------------------------------------------|
 |     Call number:        |     `hvc 0x604b`                         |
-|     Inputs:             |     X0: VirtioMMIO CapID                 |
-|                         |     X1: Reserved — Must be Zero          |
+|     Inputs:             |     X0: Virtio CapID                     |
+|                         |     X1: Reserved   – Must be Zero        |
 |     Outputs:            |     X0: Error Result                     |
+
+This hypercall was formerly named `virtio_mmio_unbind_backend_virq`. Note that the new name reflects the recipient of the IRQ rather than the source of the interrupts.
 
 **Errors:**
 
-OK – the operation was successful, or the virtual IO MMIO interrupt was already unbound.
+OK – the operation was successful, or the Virtual IO MMIO Transport interrupt was already unbound.
 
 Also see: [Capability Errors](#capability-errors)
 
-### Virtual IO MMIO Frontend vIRQ Bind
+### Virtual IO Backend vIRQ Bind
 
-Binds a Virtual IO MMIO frontend interface to a virtual interrupt.
+Binds a Virtual IO Backend's interrupt source to a virtual IRQ in the backend VM.
 
-|    **Hypercall**:       |      `virtio_mmio_bind_frontend_virq`   |
+|    **Hypercall**:       |      `virtio_backend_bind_virq`         |
 |-------------------------|-----------------------------------------|
 |     Call number:        |     `hvc 0x604c`                        |
-|     Inputs:             |     X0: VirtioMMIO CapID                |
+|     Inputs:             |     X0: Virtio CapID                    |
 |                         |     X1: Virtual IC CapID                |
 |                         |     X2: Virtual IRQ Info                |
 |                         |     X3: Reserved — Must be Zero         |
 |     Outputs:            |     X0: Error Result                    |
 
+This hypercall was formerly named `virtio_mmio_bind_frontend_virq`. Note that the new name reflects the recipient of the IRQ rather than the source of the interrupts.
+
 **Errors:**
 
-OK – the operation was successful, and the result is valid.
+OK – the operation was successful.
 
 ERROR_NOMEM – the operation failed due to memory allocation error.
 
-ERROR_VIRQ_BOUND – the specified virtual IO MMIO is already bound to a VIRQ number.
+ERROR_VIRQ_BOUND – the specified Virtual IO Backend is already bound to a VIRQ number.
 
 ERROR_BUSY – the specified VIRQ number is already bound to a source.
 
@@ -2762,102 +3103,121 @@ ERROR_ARGUMENT_INVALID – a value passed in an argument was invalid. This could
 
 Also see: [Capability Errors](#capability-errors)
 
-### Virtual IO MMIO Frontend vIRQ Unbind
+### Virtual IO Backend vIRQ Unbind
 
-Unbinds a Virtual IO MMIO backend interface from a virtual IRQ number.
+Unbinds a Virtual IO Backend's interrupt source from a virtual IRQ in the backend VM.
 
-|    **Hypercall**:       |      `virtio_mmio_unbind_frontend_virq`   |
+
+|    **Hypercall**:       |      `virtio_backend_unbind_virq`         |
 |-------------------------|-------------------------------------------|
 |     Call number:        |     `hvc 0x604d`                          |
-|     Inputs:             |     X0: VirtioMMIO CapID                  |
-|                         |     X1: Reserved — Must be Zero           |
+|     Inputs:             |     X0: Virtio CapID                      |
+|                         |     X1: Reserved   – Must be Zero         |
 |     Outputs:            |     X0: Error Result                      |
+
+This hypercall was formerly named `virtio_mmio_unbind_frontend_virq`. Note that the new name reflects the recipient of the IRQ rather than the source of the interrupts.
 
 **Errors:**
 
-OK – the operation was successful, or the virtual IO MMIO interrupt was already unbound.
+OK – the operation was successful, or the Virtual IO MMIO Backend interrupt was already unbound.
 
 Also see: [Capability Errors](#capability-errors)
 
-### Virtual IO MMIO Backend Assert vIRQ
+### Virtual IO Backend Notify
 
-The backend makes this call to assert the virtual IRQ directed to the frontend and writes a bit mask of events that caused the assertion.
+The backend makes this call to signal to the frontend that a configuration change has occurred or a queue has had buffers used.
 
-|    **Hypercall**:       |      `virtio_mmio_backend_assert_virq`   |
+This call was formerly known as `virtio_mmio_backend_assert_virq`.
+
+|    **Hypercall**:       |      `virtio_backend_notify`             |
 |-------------------------|------------------------------------------|
 |     Call number:        |     `hvc 0x604e`                         |
-|     Inputs:             |     X0: VirtioMMIO CapID                 |
+|     Inputs:             |     X0: Virtio CapID                     |
 |                         |     X1: InterruptStatus                  |
 |                         |     X2: Reserved — Must be Zero          |
 |     Outputs:            |     X0: Error Result                     |
 
 **Errors:**
 
-OK – the operation was successful, or the virtual IO MMIO interrupt was already unbound.
+OK – the operation was successful.
 
-ERROR_DENIED – Cannot assert irq since there is a reset currently pending.
+ERROR_DENIED – Cannot assert the IRQ since there is a reset currently pending.
 
 ERROR_ARGUMENT_INVALID – A value passed in an argument was invalid.
 
 Also see: [Capability Errors](#capability-errors)
 
-### Virtual IO MMIO Backend Set DeviceFeatures
+### Virtual IO Backend Set Device Features
 
-Set the device features flags based on the specified device features selector. The device features specified must comply with the features enforced by the hypervisor (VIRTIO_F_VERSION_1, VIRTIO_F_ACCESS_PLATFORM, !VIRTIO_F_NOTIFICATION_DATA).
+Set the device feature flags for the specified device feature selector. The device features specified must comply with the features enforced by the hypervisor (`VIRTIO_F_VERSION_1`, `VIRTIO_F_ACCESS_PLATFORM`, `!VIRTIO_F_NOTIFICATION_DATA`).
 
-|    **Hypercall**:       |      `virtio_mmio_backend_set_dev_features`   |
+The device features can only be modified while a reset is pending.
+
+|    **Hypercall**:       |      `virtio_backend_set_dev_features`   |
 |-------------------------|-----------------------------------------------|
 |     Call number:        |     `hvc 0x604f`                              |
-|     Inputs:             |     X0: VirtioMMIO CapID                      |
+|     Inputs:             |     X0: Virtio CapID                          |
 |                         |     X1: DeviceFeaturesSel                     |
 |                         |     X2: DeviceFeatures                        |
 |                         |     X3: Reserved — Must be Zero               |
 |     Outputs:            |     X0: Error Result                          |
 
+This hypercall was formerly named `virtio_mmio_backend_set_dev_features`.
+
 **Errors:**
 
-OK – The operation was successful, and the result is valid.
+OK – The operation was successful.
 
 ERROR_ARGUMENT_INVALID – A value passed in an argument was invalid.
+
+ERROR_BUSY – The device features cannot be modified because there is no reset pending.
 
 ERROR_DENIED – Device features passed do not comply with the features enforced by the hypervisor.
 
 Also see: [Capability Errors](#capability-errors)
 
-### Virtual IO MMIO Backend Set QueueNumMax
+### Virtual IO Backend Set Max Queue Size
 
-Set maximum virtual queue size of the queue specified by the queue selector.
+Set maximum queue size (in buffers) of the queue specified by the queue selector. This size is presented to the frontend as a 16-bit unsigned integer, and therefore must not exceed 65535.
 
-|    **Hypercall**:       |      `virtio_mmio_backend_set_queue_num_max`   |
+The maximum queue size can only be modified while a reset is pending.
+
+|    **Hypercall**:       |      `virtio_backend_set_queue_size_max`       |
 |-------------------------|------------------------------------------------|
 |     Call number:        |     `hvc 0x6050`                               |
-|     Inputs:             |     X0: VirtioMMIO CapID                       |
+|     Inputs:             |     X0: Virtio CapID                           |
 |                         |     X1: QueueSel                               |
 |                         |     X2: QueueNumMax                            |
 |                         |     X3: Reserved — Must be Zero                |
 |     Outputs:            |     X0: Error Result                           |
 
+This hypercall was formerly named `virtio_mmio_backend_set_queue_num_max`.
+
 **Errors:**
 
-OK – The operation was successful, and the result is valid.
+OK – The operation was successful.
+
+ERROR_BUSY – The maximum queue size cannot be modified because there is no reset pending.
 
 ERROR_ARGUMENT_INVALID – A value passed in an argument was invalid.
 
 Also see: [Capability Errors](#capability-errors)
 
-### Virtual IO MMIO Backend Get DriverFeatures
+### Virtual IO Backend Get Driver Features
 
 Get the driver features flags based on the specified driver features selector.
 
-|    **Hypercall**:       |      `virtio_mmio_backend_get_drv_features`   |
+|    **Hypercall**:       |      `virtio_backend_get_drv_features`        |
 |-------------------------|-----------------------------------------------|
 |     Call number:        |     `hvc 0x6051`                              |
-|     Inputs:             |     X0: VirtioMMIO CapID                      |
+|     Inputs:             |     X0: Virtio CapID                          |
 |                         |     X1: DriverFeaturesSel                     |
 |                         |     X2: Reserved — Must be Zero               |
 |     Outputs:            |     X0: Error Result                          |
 |                         |     X1: DriverFeatures                        |
 
+This hypercall was formerly named `virtio_mmio_backend_get_drv_features`.
+
 **Errors:**
 
 OK – The operation was successful, and the result is valid.
@@ -2866,23 +3226,25 @@ ERROR_ARGUMENT_INVALID – A value passed in an argument was invalid.
 
 Also see: [Capability Errors](#capability-errors)
 
-### Virtual IO MMIO Backend Get Queue Info
+### Virtual IO Backend Get Queue Info
 
-Get information from the queue specified by the queue selector.
+Fetch the current configuration of the queue specified by the queue selector.
 
-|    **Hypercall**:       |      `virtio_mmio_backend_get_queue_info`   |
+|    **Hypercall**:       |      `virtio_backend_get_queue_info`        |
 |-------------------------|---------------------------------------------|
 |     Call number:        |     `hvc 0x6052`                            |
-|     Inputs:             |     X0: VirtioMMIO CapID                    |
+|     Inputs:             |     X0: Virtio CapID                        |
 |                         |     X1: QueueSel                            |
 |                         |     X2: Reserved — Must be Zero             |
 |     Outputs:            |     X0: Error Result                        |
-|                         |     X1: QueueNum                            |
+|                         |     X1: QueueSize                           |
 |                         |     X2: QueueReady                          |
 |                         |     X3: QueueDesc (low and high)            |
 |                         |     X4: QueueDriver (low and high)          |
 |                         |     X5: QueueDevice (low and high)          |
 
+This hypercall was formerly named `virtio_mmio_backend_get_queue_info`.
+
 **Errors:**
 
 OK – The operation was successful, and the result is valid.
@@ -2891,18 +3253,20 @@ ERROR_ARGUMENT_INVALID – A value passed in an argument was invalid.
 
 Also see: [Capability Errors](#capability-errors)
 
-### Virtual IO MMIO Backend Get Notification
+### Virtual IO Backend Get Notification
 
-The backend should make this call, when its VIRQ is asserted, to get a bitmap of the virtual queues that need to be notified and a bitmap of the reasons why the VIRQ was asserted. This calls also deasserts the backend’s VIRQ.
+The backend should make this call from its VIRQ handler, to obtain a bitmap of the virtual queues that need to be notified and a bitmap of the reasons why the VIRQ was asserted. Making this call acknowledges the returned notifications, so the VIRQ will be deasserted if it is configured as level-triggered.
 
-|    **Hypercall**:       |      `virtio_mmio_backend_get_notification`   |
+|    **Hypercall**:       |      `virtio_backend_get_notification`        |
 |-------------------------|-----------------------------------------------|
 |     Call number:        |     `hvc 0x6053`                              |
-|     Inputs:             |     X0: VirtioMMIO CapID                      |
-|                         |     X1: Reserved — Must be Zero               |
+|     Inputs:             |     X0: Virtio CapID                          |
+|                         |     X1: Reserved   – Must be Zero             |
 |     Outputs:            |     X0: Error Result                          |
 |                         |     X1: VQs Bitmap                            |
 |                         |     X2: NotifyReason Bitmap                   |
+
+This hypercall was formerly named `virtio_mmio_backend_set_dev_features`.
 
 **Types:**
 
@@ -2924,42 +3288,52 @@ ERROR_ARGUMENT_INVALID – A value passed in an argument was invalid.
 
 Also see: [Capability Errors](#capability-errors)
 
-### Virtual IO MMIO Backend Acknowledge Reset
+### Virtual IO Backend Acknowledge Reset
 
-The backend should make this call after a device reset is completed. This call will clear all bits in QueueReady for all queues in the device.
+The backend should make this call after a device reset is completed. This call will reset the status field to 0 to allow the frontend driver to begin probing.
 
-|    **Hypercall**:       |      `virtio_mmio_backend_acknowledge_reset`   |
+Before calling this function, the backend must initialise all interface state that might be accessed by the frontend during probe, including the device features, maximum queue length, ID registers (for MMIO interfaces), and device-specific configuration registers.
+
+|    **Hypercall**:       |      `virtio_backend_acknowledge_reset`        |
 |-------------------------|------------------------------------------------|
 |     Call number:        |     `hvc 0x6054`                               |
-|     Inputs:             |     X0: VirtioMMIO CapID                       |
-|                         |     X1: Reserved — Must be Zero                |
+|     Inputs:             |     X0: Virtio CapID                           |
+|                         |     X1: Reserved   – Must be Zero              |
 |     Outputs:            |     X0: Error Result                           |
+
+This hypercall was formerly named `virtio_mmio_backend_acknowledge_reset`.
 
 **Errors:**
 
 OK – The operation was successful, and the result is valid.
+
+ERROR_BUSY – There was no pending device reset.
 
 ERROR_ARGUMENT_INVALID – A value passed in an argument was invalid.
 
 Also see: [Capability Errors](#capability-errors)
 
-### Virtual IO MMIO Backend Set Status
+### Virtual IO Backend Update Status
 
-This calls sets status register.
+This calls sets bits in the status register. Once a bit has been set, it can only be cleared by acknowledging a reset request.
 
-|    **Hypercall**:       |      `virtio_mmio_backend_set_status`   |
+The only bits that are permitted to be set by this call are the `FEATURES_OK` bit (after receiving a notification that the frontend has attempted to set it), and the `DEVICE_NEEDS_RESET` bit (if the status register is currently non-zero). All other status bits are ignored.
+
+|    **Hypercall**:       |      `virtio_backend_update_status`     |
 |-------------------------|-----------------------------------------|
 |     Call number:        |     `hvc 0x6055`                        |
-|     Inputs:             |     X0: VirtioMMIO CapID                |
+|     Inputs:             |     X0: Virtio CapID                    |
 |                         |     X1: Status                          |
 |                         |     X2: Reserved — Must be Zero         |
 |     Outputs:            |     X0: Error Result                    |
+
+This hypercall was formerly named `virtio_mmio_backend_set_status`.
 
 **Errors:**
 
 OK – The operation was successful, and the result is valid.
 
-ERROR_ARGUMENT_INVALID – A value passed in an argument was invalid.
+ERROR_DENIED — A status bit was specified that can be set by this call, but setting it is currently not allowed.
 
 Also see: [Capability Errors](#capability-errors)
 

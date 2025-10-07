@@ -20,9 +20,9 @@
 #include "event_handlers.h"
 
 error_t
-vrtc_pl031_handle_object_create_vrtc(vrtc_create_t params)
+vrtc_pl031_handle_object_create_vrtc(vrtc_create_t vrtc_create)
 {
-	vrtc_t *vrtc = params.vrtc;
+	vrtc_t *vrtc = vrtc_create.vrtc;
 	assert(vrtc != NULL);
 
 	vrtc->ipa	= VMADDR_INVALID;
@@ -60,51 +60,54 @@ vrtc_pl031_handle_object_deactivate_addrspace(addrspace_t *addrspace)
 	}
 }
 
-static void
-vrtc_pl031_reg_read(vrtc_t *vrtc, size_t offset, register_t *value)
+static uint32_t
+vrtc_pl031_reg_read(vrtc_t *vrtc, size_t offset)
 {
+	uint32_t value;
+
 	if (offset == offsetof(vrtc_pl031_t, RTCDR)) {
 		uint64_t now = platform_timer_get_current_ticks();
-		*value = platform_timer_convert_ticks_to_ns(vrtc->time_base +
-							    now) /
-			 TIMER_NANOSECS_IN_SECOND;
+		value	     = (uint32_t)(platform_timer_convert_ticks_to_ns(
+						  vrtc->time_base + now) /
+					  TIMER_NANOSECS_IN_SECOND);
 	} else if (offset == offsetof(vrtc_pl031_t, RTCLR)) {
-		*value = vrtc->lr;
+		value = vrtc->lr;
 	} else if (offset == offsetof(vrtc_pl031_t, RTCCR)) {
 		// Always enabled
-		*value = 1U;
+		value = 1U;
 	} else if ((offset >= offsetof(vrtc_pl031_t, RTCPeriphID0)) &&
 		   (offset <= offsetof(vrtc_pl031_t, RTCPeriphID3))) {
 		// Calculate which byte in the ID register they are after
 		uint8_t id = (uint8_t)((offset -
 					offsetof(vrtc_pl031_t, RTCPeriphID0)) >>
 				       2);
-		*value	   = ((register_t)VRTC_PL031_PERIPH_ID >> (id << 3)) &
-			 0xffU;
+		value = ((uint32_t)VRTC_PL031_PERIPH_ID >> (id << 3)) & 0xffU;
 	} else if ((offset >= offsetof(vrtc_pl031_t, RTCPCellID0)) &&
 		   (offset <= offsetof(vrtc_pl031_t, RTCPCellID3))) {
 		// Calculate which byte in the ID register they are after
 		uint8_t id = (uint8_t)((offset -
 					offsetof(vrtc_pl031_t, RTCPCellID0)) >>
 				       2);
-		*value = ((register_t)VRTC_PL031_PCELL_ID >> (id << 3)) & 0xffU;
+		value = ((uint32_t)VRTC_PL031_PCELL_ID >> (id << 3)) & 0xffU;
 	} else {
 		// All other PL031 registers are treated as RAZ
-		*value = 0U;
+		value = 0U;
 	}
+
+	return value;
 }
 
 static void
-vrtc_pl031_reg_write(vrtc_t *vrtc, size_t offset, register_t *value)
+vrtc_pl031_reg_write(vrtc_t *vrtc, size_t offset, uint32_t value)
 {
 	if (offset == offsetof(vrtc_pl031_t, RTCLR)) {
 		ticks_t value_ticks = platform_timer_convert_ns_to_ticks(
-			*value * TIMER_NANOSECS_IN_SECOND);
+			(uint64_t)value * TIMER_NANOSECS_IN_SECOND);
 		preempt_disable();
 		ticks_t now	= platform_timer_get_current_ticks();
 		vrtc->time_base = value_ticks - now;
 		preempt_enable();
-		vrtc->lr = (rtc_seconds_t)(*value);
+		vrtc->lr = (rtc_seconds_t)value;
 	}
 	// The rest of the registers are WI.
 }
@@ -130,7 +133,7 @@ vrtc_pl031_handle_vdevice_access_fixed_addr(vmaddr_t ipa, size_t access_size,
 	}
 
 	// Only 32-bit registers of PL031 are emulated
-	if (access_size != sizeof(uint32_t) ||
+	if ((access_size != sizeof(uint32_t)) ||
 	    !util_is_baligned(ipa, sizeof(uint32_t))) {
 		ret = VCPU_TRAP_RESULT_FAULT;
 		goto out;
@@ -139,9 +142,9 @@ vrtc_pl031_handle_vdevice_access_fixed_addr(vmaddr_t ipa, size_t access_size,
 	size_t offset = (size_t)(ipa - vrtc->ipa);
 
 	if (is_write) {
-		vrtc_pl031_reg_write(vrtc, offset, value);
+		vrtc_pl031_reg_write(vrtc, offset, (uint32_t)*value);
 	} else {
-		vrtc_pl031_reg_read(vrtc, offset, value);
+		*value = vrtc_pl031_reg_read(vrtc, offset);
 	}
 
 	ret = VCPU_TRAP_RESULT_EMULATED;

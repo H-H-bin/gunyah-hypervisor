@@ -70,6 +70,7 @@ subscribe vic_bind_hwirq[HWIRQ_ACTION_VGIC_FORWARD_SPI]
 
 subscribe vic_unbind_hwirq[HWIRQ_ACTION_VGIC_FORWARD_SPI]
 	handler vgic_unbind_hwirq_spi(hwirq)
+	exclude_preempt_disabled
 
 subscribe virq_set_enabled[VIRQ_TRIGGER_VGIC_FORWARDED_SPI]
 	handler vgic_handle_virq_set_enabled_hwirq_spi(source, enabled)

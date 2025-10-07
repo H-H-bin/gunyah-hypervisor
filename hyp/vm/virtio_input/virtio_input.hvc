@@ -4,7 +4,7 @@
 
 define virtio_input_configure hypercall {
 	call_num	0x5e;
-	virtio_mmio_cap	input type cap_id_t;
+	virtio_backend	input type cap_id_t;
 	devids		input uint64;
 	prop_bits	input uint32;
 	num_evtypes	input uint32;
@@ -15,7 +15,7 @@ define virtio_input_configure hypercall {
 
 define virtio_input_set_data hypercall {
 	call_num	0x5f;
-	virtio_mmio_cap	input type cap_id_t;
+	virtio_backend	input type cap_id_t;
 	sel		input uint32;
 	subsel		input uint32;
 	size		input uint32;

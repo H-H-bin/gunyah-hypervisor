@@ -96,6 +96,12 @@ def get_type(c, ir):
     sys.exit(1)
 
 
+# FIXME:
+# The ABI should be updated to include the supported number of input/output
+# registers, the abi.register_size should be used instead of hard coding
+# register size, and the ARM X and W register use should also be selected by
+# using the ABI register_name() function.
+
 def get_hypercalls(tree, hypercalls, hyp_num, ir):
     for c in tree.children:
         if isinstance(c, Tree):

@@ -4,26 +4,52 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-#import math
-
+#set $ms_in_s = 1000000
 #set $ns_in_s = 1000000000
-#set $gcd = math.gcd(ns_in_s, $PLATFORM_ARCH_TIMER_FREQ)
 
-#set $ns_to_freq_mult = $PLATFORM_ARCH_TIMER_FREQ//$gcd
-#set $freq_to_ns_mult = $ns_in_s//$gcd
+// This generates constants for conversion between ticks and time (ms/ns). The
+// approach uses 128-bit multiply-high and shift right, instead of divide, to
+// support large time ranges and for performance reasons.
+//
+// We don't use the GCD-based multiply & divide approach to converting time
+// because the inherent uint64_t base types limits the size of the ticks/time
+// values significantly because we need to avoid overflow in the multiply step.
 
-## Ensure that we can have at least 20 yrs uptime without timer overflow
-#set $secs_per_year = 60*60*24*365.25
-#assert ($PLATFORM_ARCH_TIMER_FREQ * $freq_to_ns_mult * $secs_per_year * 20) < (1 << 64)
+#set nsfreq_shift = 0
+#set ns_shift = 0
+#set $freq = $PLATFORM_ARCH_TIMER_FREQ
+#while freq / ($ns_in_s << $ns_shift) > 1
+#set ns_shift += 1
+#end while
+#while $ns_in_s / ($freq << $nsfreq_shift) > 1
+#set nsfreq_shift += 1
+#end while
 
-\#define PLATFORM_TIMER_NS_TO_FREQ_MULT (uint64_t)$ns_to_freq_mult
-\#define PLATFORM_TIMER_FREQ_TO_NS_MULT (uint64_t)$freq_to_ns_mult
+#set msfreq_shift = 0
+#set ms_shift = 0
+#set $freq = $PLATFORM_ARCH_TIMER_FREQ
+#while freq / ($ms_in_s << $ms_shift) > 1
+#set ms_shift += 1
+#end while
+#while $ms_in_s / ($freq << $msfreq_shift) > 1
+#set msfreq_shift += 1
+#end while
 
-#set $ms_in_s = 1000
-#set $gcd = math.gcd(ms_in_s, $PLATFORM_ARCH_TIMER_FREQ)
+\#define NS_IN_S (uint64_t)${ns_in_s}U
+\#define MS_IN_S (uint64_t)${ms_in_s}U
 
-#set $ms_to_freq_mult = $PLATFORM_ARCH_TIMER_FREQ//$gcd
-#set $freq_to_ms_mult = $ms_in_s//$gcd
+\#define PLATFORM_TIMER_NSFREQ_SHIFT $nsfreq_shift
+\#define PLATFORM_TIMER_NS_SHIFT $ns_shift
 
-\#define PLATFORM_TIMER_MS_TO_FREQ_MULT (uint64_t)$ms_to_freq_mult
-\#define PLATFORM_TIMER_FREQ_TO_MS_MULT (uint64_t)$freq_to_ms_mult
+\#define PLATFORM_TIMER_MSFREQ_SHIFT $msfreq_shift
+\#define PLATFORM_TIMER_MS_SHIFT $ms_shift
+
+\#define PLATFORM_TIMER_NS_FREQ_SCALE					       \
+	 (uint64_t)(((__uint128_t)$freq << 64) / (${ns_in_s}U << $ns_shift))
+\#define PLATFORM_TIMER_NS_SCALE					       \
+	 (uint64_t)(((__uint128_t)$ns_in_s << 64) / (${freq}U << $nsfreq_shift))
+
+\#define PLATFORM_TIMER_MS_FREQ_SCALE					       \
+	 (uint64_t)(((__uint128_t)$freq << 64) / (${ms_in_s}U << $ms_shift))
+\#define PLATFORM_TIMER_MS_SCALE					       \
+	 (uint64_t)(((__uint128_t)$ms_in_s << 64) / (${freq}U << $msfreq_shift))

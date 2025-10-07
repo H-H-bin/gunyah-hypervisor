@@ -1,0 +1,16 @@
+// © 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+module arm_sbsa_watchdog
+
+#if defined(INTERFACE_VCPU)
+
+subscribe object_create_watchdog(watchdog_create)
+
+subscribe addrspace_attach_vdevice(addrspace, vdevice_cap, vbase, size, flags)
+subscribe vdevice_access[VDEVICE_TYPE_WATCHDOG]
+
+subscribe watchdog_pat_pre
+
+#endif

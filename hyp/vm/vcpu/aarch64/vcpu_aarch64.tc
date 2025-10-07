@@ -82,8 +82,11 @@ extend vcpu object {
 
 #if !defined(PREEMPT_NULL)
 extend vcpu_runtime_flags bitfield {
-	auto	vcpu_interrupted	bool = 0;
 	auto	vcpu_can_idle		bool = 0;
+};
+
+extend thread object module vcpu {
+	interrupted bool(atomic, group(context_switch, x));
 };
 #endif
 

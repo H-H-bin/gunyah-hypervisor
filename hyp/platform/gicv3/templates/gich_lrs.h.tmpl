@@ -64,7 +64,7 @@ gicv3_ich_ap${group}r_clear_highest(void) {
 	apr = register_ICH_AP${group}R${i}_EL2_read();
         if (apr != 0U) {
 		index_t bit = compiler_ctz(apr);
-		apr &= ~util_bit(bit);
+		apr &= ~(uint32_t)util_bit(bit);
 		register_ICH_AP${group}R${i}_EL2_write(apr);
 		goto out;
         }
@@ -73,3 +73,29 @@ out:
 	return;
 }
 #end for
+
+static inline uint8_t
+gicv3_ich_apr_find_highest(void) {
+	uint32_t apr	  = 0U;
+	index_t	 bit	  = 0U;
+	bool	 all_zero = true;
+
+#for i in range(0, $CPU_GICH_APR_COUNT)
+	apr = register_ICH_AP0R${i}_EL2_read() |
+	      register_ICH_AP1R${i}_EL2_read();
+	if (apr != 0U) {
+		bit = compiler_ctz(apr) + ${i * 32}U;
+		all_zero = false;
+		goto read_done;
+	}
+#end for
+
+	uint8_t prio;
+read_done:
+	if (!all_zero) {
+		prio = (uint8_t)(bit << ${4 - $CPU_GICH_APR_COUNT.bit_length()}U);
+	} else {
+		prio = GIC_PRIORITY_LOWEST;
+	}
+	return prio;
+}

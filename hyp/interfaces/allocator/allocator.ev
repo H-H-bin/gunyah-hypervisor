@@ -12,5 +12,6 @@ setup_event allocator_add_ram_range
 	param phys_base: paddr_t
 	param virt_base: uintptr_t
 	param size: size_t
+	param attr: allocator_memattr_t
 	return: error_t = ERROR_FAILURE
 	success: OK

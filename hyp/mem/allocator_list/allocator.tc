@@ -7,9 +7,16 @@ define allocator_node structure {
 	next pointer structure allocator_node;
 };
 
-extend allocator structure {
+define allocator_list structure {
 	heap pointer structure allocator_node;
 	lock structure spinlock;
 	total_size size;
 	alloc_size size;
+};
+
+extend allocator structure {
+	hyp structure allocator_list;
+#if defined(PLATFORM_ALLOCATOR_S2PT_HEAP)
+	s2pt structure allocator_list;
+#endif
 };

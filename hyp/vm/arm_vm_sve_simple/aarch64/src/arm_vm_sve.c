@@ -12,6 +12,7 @@
 #include <compiler.h>
 #include <log.h>
 #include <platform_features.h>
+#include <qcbor.h>
 #include <thread.h>
 #include <trace.h>
 #include <vcpu.h>
@@ -28,31 +29,6 @@ static bool sve_disabled = false;
 // Ensure the value of SVE_Z_REG_SIZE (PLATFORM_SVE_REG_SIZE) is sane
 static_assert(SVE_Z_REG_SIZE >= SVE_Z_MIN_REG_SIZE,
 	      "SVE register size should be minimum 16 bytes");
-
-// Due a LLVM12.0 design choice, "-mgeneral-regs-only" also excludes the SVE
-// registers. Therefore ".arch_extension sve;" needs to be added to all the
-// inline "asm" statements that access SVE.
-// For this reason the SVE code uses MSR/MRS directly instead of generated
-// read/write accessors.
-static inline void
-register_ZCR_EL2_write(const ZCR_EL2_t val)
-{
-	register_t raw = (register_t)ZCR_EL2_raw(val);
-	__asm__ volatile(".arch_extension sve;"
-			 "msr ZCR_EL2, %[r]"
-			 :
-			 : [r] "rz"(raw));
-}
-
-static inline uint64_t
-register_ID_AA64ZFR0_EL1_read(void)
-{
-	register_t val;
-	__asm__ volatile(".arch_extension sve;"
-			 "mrs %0, ID_AA64ZFR0_EL1;"
-			 : "=r"(val));
-	return (uint64_t)(val);
-}
 
 void
 arm_vm_sve_simple_handle_boot_runtime_init(void)

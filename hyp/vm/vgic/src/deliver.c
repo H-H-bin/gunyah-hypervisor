@@ -22,6 +22,7 @@
 #include <platform_cpu.h>
 #include <platform_irq.h>
 #include <preempt.h>
+#include <qcbor.h>
 #include <rcu.h>
 #include <scheduler.h>
 #include <spinlock.h>
@@ -43,6 +44,7 @@
 #include "event_handlers.h"
 #include "gich_lrs.h"
 #include "gicv3.h"
+#include "gicv3_its.h"
 #include "internal.h"
 
 static hwirq_t *vgic_maintenance_hwirq;
@@ -391,11 +393,6 @@ vgic_sync_lr_update_delivery_state(vic_t *vic, thread_t *vcpu,
 		new_dstate = vgic_delivery_state_difference(old_dstate,
 							    clear_dstate);
 
-		// Determine whether the LR can be left in pending state.
-		allow_pending = (!lr_hw || !lr_active) &&
-				vgic_delivery_state_get_enabled(&new_dstate) &&
-				vgic_route_allowed(vic, vcpu, new_dstate);
-
 		// We always handle HW detachment, even if not delisting. Note
 		// that nobody can concurrently clear hw_detached, so we don't
 		// need to reset the local hw_detached variable if it is false.
@@ -403,6 +400,13 @@ vgic_sync_lr_update_delivery_state(vic_t *vic, thread_t *vcpu,
 			vgic_delivery_state_set_hw_detached(&new_dstate, false);
 			hw_detach = true;
 		}
+
+		// Determine whether the LR can be left in pending state. This
+		// is the case if it's enabled and correctly routed, and will
+		// not be left active with HW=1.
+		allow_pending = (!lr_hw || hw_detach || !lr_active) &&
+				vgic_delivery_state_get_enabled(&new_dstate) &&
+				vgic_route_allowed(vic, vcpu, new_dstate);
 
 		// Check the VIRQ's source and update the delivery state.
 		deactivate_hw = vgic_sync_lr_check_src(
@@ -436,7 +440,7 @@ vgic_sync_lr_update_delivery_state(vic_t *vic, thread_t *vcpu,
 static void
 vgic_sync_lr_update_lr(vic_t *vic, thread_t *vcpu, vgic_lr_status_t *status,
 		       bool lr_pending, virq_t virq, bool lr_active,
-		       bool virq_pending, bool allow_pending, bool lr_hw,
+		       bool virq_pending, bool allow_pending,
 		       vgic_delivery_state_t new_dstate, bool use_local_vcpu)
 	REQUIRE_PREEMPT_DISABLED
 {
@@ -474,9 +478,9 @@ vgic_sync_lr_update_lr(vic_t *vic, thread_t *vcpu, vgic_lr_status_t *status,
 			// The VIRQ is still pending. We need to set the EOI
 			// trap bit in the LR to ensure that the IRQ can be
 			// delivered again later. The HW=1 bit must be cleared
-			// to do this; so, if it was previously set, we must
-			// have reset hw_active in the dstate already.
-			assert(!lr_hw ||
+			// to do this; so, if it is currently set, we must have
+			// reset hw_active in the dstate already.
+			assert(!ICH_LR_EL2_base_get_HW(&status->lr.base) ||
 			       vgic_delivery_state_get_hw_active(&new_dstate));
 			ICH_LR_EL2_base_set_HW(&status->lr.base, false);
 			ICH_LR_EL2_HW0_set_EOI(&status->lr.sw, true);
@@ -531,6 +535,7 @@ vgic_sync_lr_update_lr(vic_t *vic, thread_t *vcpu, vgic_lr_status_t *status,
 					&new_dstate));
 		} else {
 			// Existing HW delivery; EOI handled by physical GIC
+			assert(!lr_active);
 		}
 	} else {
 		// The IRQ is remaining listed, is allowed to remain pending,
@@ -653,7 +658,7 @@ vgic_sync_lr(vic_t *vic, thread_t *vcpu, vgic_lr_status_t *status,
 
 	// Update the LR.
 	vgic_sync_lr_update_lr(vic, vcpu, status, lr_pending, virq, lr_active,
-			       virq_pending, allow_pending, lr_hw, new_dstate,
+			       virq_pending, allow_pending, new_dstate,
 			       use_local_vcpu);
 
 	return !vgic_delivery_state_get_listed(&new_dstate);
@@ -667,10 +672,28 @@ vgic_undeliver_update_hw_detach_and_sync(const vic_t *vic, const thread_t *vcpu,
 					 vgic_delivery_state_t old_dstate,
 					 bool		       check_route)
 {
-	vgic_delivery_state_t new_dstate;
+	// Note that this can't clear the pending state of an edge triggered
+	// interrupt, so in that case we log a warning.
+#if !defined(NDEBUG)
+	if (vgic_delivery_state_get_edge(&clear_dstate)) {
+		static _Thread_local bool warned_about_ignored_icpendr = false;
+		if (!warned_about_ignored_icpendr) {
+			TRACE_AND_LOG(
+				DEBUG, INFO,
+				"vcpu {:#x}: trapped GIC[DR]_ICPENDR write "
+				"was cross-CPU; vIRQ {:d} may be left pending",
+				(uintptr_t)(thread_t *)thread_get_self(), virq);
+			warned_about_ignored_icpendr = true;
+		}
+	}
+#endif
+
+	// We can't directly clear hw_active on a remote CPU; we need to use
+	// the hw_detached bit to ask the remote CPU to do it.
 	bool hw_detach = vgic_delivery_state_get_hw_active(&clear_dstate);
 	vgic_delivery_state_set_hw_active(&clear_dstate, false);
 
+	vgic_delivery_state_t new_dstate;
 	do {
 		new_dstate = vgic_delivery_state_difference(old_dstate,
 							    clear_dstate);
@@ -824,24 +847,6 @@ vgic_undeliver(vic_t *vic, thread_t *vcpu,
 	}
 
 	// Fall back to requesting a sync.
-	//
-	// Note that this can't clear the pending state of an edge triggered
-	// interrupt, so in that case we log a warning.
-#if !defined(NDEBUG)
-	if (vgic_delivery_state_get_edge(&clear_dstate)) {
-		static _Thread_local bool warned_about_ignored_icpendr = false;
-		if (!warned_about_ignored_icpendr) {
-			TRACE_AND_LOG(
-				DEBUG, INFO,
-				"vcpu {:#x}: trapped GIC[DR]_ICPENDR write "
-				"was cross-CPU; vIRQ {:d} may be left pending",
-				(uintptr_t)(thread_t *)thread_get_self(), virq);
-			warned_about_ignored_icpendr = true;
-		}
-	}
-#endif
-	// We can't directly clear hw_active on a remote CPU; we need to use
-	// the hw_detached bit to ask the remote CPU to do it.
 	unlisted = vgic_undeliver_update_hw_detach_and_sync(
 		vic, vcpu, virq, dstate, clear_dstate, old_dstate, check_route);
 
@@ -880,10 +885,15 @@ vgic_redeliver_lr_update_state(const vic_t *vic, const thread_t *vcpu,
 		// done when this interrupt ends.
 		ICH_LR_EL2_base_set_HW(&new_lr.base, is_hw);
 		if (is_hw) {
-			vgic_delivery_state_set_hw_active(&new_dstate, false);
 			ICH_LR_EL2_HW1_set_pINTID(
 				&new_lr.hw,
 				hwirq_from_virq_source(source)->irq);
+			vgic_delivery_state_set_hw_active(&new_dstate, false);
+			// The previously detached IRQ was deactivated when the
+			// LR entered invalid state. Clear the hw_detached bit
+			// so it isn't incorrectly applied to the newly
+			// delivered IRQ.
+			vgic_delivery_state_set_hw_detached(&new_dstate, false);
 		}
 		ICH_LR_EL2_base_set_State(&new_lr.base,
 					  ICH_LR_EL2_STATE_PENDING);
@@ -1189,24 +1199,84 @@ out:
 	return result;
 }
 
-// The number of VIRQs in each low (SPI + PPI) range other than the last SPI
-// range (which has 4 fewer because of the "special" IRQ numbers 1020-1023).
-#define VGIC_LOW_RANGE_SIZE                                                    \
-	(count_t)((GIC_SPI_BASE + GIC_SPI_NUM + VGIC_LOW_RANGES - 1U) /        \
-		  VGIC_LOW_RANGES)
-static_assert(util_is_p2(VGIC_LOW_RANGE_SIZE),
-	      "VGIC search ranges must have power-of-two sizes");
-static_assert(VGIC_LOW_RANGE_SIZE > GIC_SPECIAL_INTIDS_NUM,
-	      "VGIC search ranges must have size greater than 4");
+// Returns the search_ranges bitmap index for a given VIRQ. See vgic.tc for
+// bitmap layout details.
+static index_t
+vgic_search_range_index(virq_t virq)
+{
+	virq_t adjusted_virq;
+	switch (vgic_get_irq_type(virq)) {
+	case VGIC_IRQ_TYPE_SGI:
+	case VGIC_IRQ_TYPE_PPI:
+	case VGIC_IRQ_TYPE_SPI:
+		adjusted_virq = virq;
+		break;
+#if VGIC_HAS_EXT_SPIS
+	case VGIC_IRQ_TYPE_SPI_EXT:
+		adjusted_virq =
+			(virq - GIC_SPI_EXT_BASE) +
+			(VGIC_SEARCH_SPI_EXT_BASE * VGIC_SEARCH_RANGE_SIZE);
+		break;
+#endif
+#if VGIC_HAS_EXT_PPIS
+	case VGIC_IRQ_TYPE_PPI_EXT:
+		adjusted_virq =
+			(virq - GIC_PPI_EXT_BASE) +
+			(VGIC_SEARCH_PPI_EXT_BASE * VGIC_SEARCH_RANGE_SIZE);
+		break;
+#endif
+	case VGIC_IRQ_TYPE_RESERVED:
+#if VGIC_HAS_LPI
+	case VGIC_IRQ_TYPE_LPI:
+#endif
+	default:
+		// Reserved, LPI and out-of-range virqs should not be passed
+		panic("Illegal virq for vgic search ranges");
+	}
 
-// The number of VIRQs in a specific low range, taking into account the special
+	return (index_t)(adjusted_virq / VGIC_SEARCH_RANGE_SIZE);
+}
+
+// Inverse of vgic_search_range_index(). Returns the base VIRQ for a range.
+// See vgic.tc for bitmap layout details.
+static virq_t
+vgic_search_base_virq(index_t range)
+{
+	virq_t virq;
+	if (range < VGIC_SEARCH_NORMAL_RANGES) {
+		// Normal SGI, SPI, PPI ranges
+		virq = range * VGIC_SEARCH_RANGE_SIZE;
+	}
+#if VGIC_HAS_EXT_SPIS
+	else if ((range >= VGIC_SEARCH_SPI_EXT_BASE) &&
+		 (range < VGIC_SEARCH_SPI_EXT_END)) {
+		// Extended SPIs
+		virq = GIC_SPI_EXT_BASE + ((range - VGIC_SEARCH_SPI_EXT_BASE) *
+					   VGIC_SEARCH_RANGE_SIZE);
+	}
+#endif
+#if VGIC_HAS_EXT_PPIS
+	else if ((range >= VGIC_SEARCH_PPI_EXT_BASE) &&
+		 (range < VGIC_SEARCH_PPI_EXT_END)) {
+		// Extended PPIs
+		virq = GIC_PPI_EXT_BASE + ((range - VGIC_SEARCH_PPI_EXT_BASE) *
+					   VGIC_SEARCH_RANGE_SIZE);
+	}
+#endif
+	else {
+		virq = VIRQ_INVALID;
+	}
+	return virq;
+}
+
+// The number of VIRQs in a specific range, taking into account the special
 // IRQ numbers that immediately follow the SPIs.
 static count_t
-vgic_low_range_size(index_t range)
+vgic_search_range_size(index_t range)
 {
-	return (range == (VGIC_LOW_RANGES - 1U))
-		       ? (VGIC_LOW_RANGE_SIZE - GIC_SPECIAL_INTIDS_NUM)
-		       : VGIC_LOW_RANGE_SIZE;
+	return (range == (VGIC_SEARCH_NORMAL_RANGES - 1U))
+		       ? (VGIC_SEARCH_RANGE_SIZE - GIC_SPECIAL_INTIDS_NUM)
+		       : VGIC_SEARCH_RANGE_SIZE;
 }
 
 // Mark an unlisted interrupt as pending on a VCPU.
@@ -1227,8 +1297,8 @@ vgic_flag_locked(virq_t virq, thread_t *vcpu, uint8_t priority, bool group1,
 
 	count_t priority_shifted = (count_t)priority >> VGIC_PRIO_SHIFT;
 
-	bitmap_atomic_set(vcpu->vgic_search_ranges_low[priority_shifted],
-			  virq / VGIC_LOW_RANGE_SIZE, memory_order_release);
+	bitmap_atomic_set(vcpu->vgic_search_ranges[priority_shifted],
+			  vgic_search_range_index(virq), memory_order_release);
 
 	bitmap_atomic_set(vcpu->vgic_search_prios, priority_shifted,
 			  memory_order_release);
@@ -1273,8 +1343,8 @@ vgic_flag_unlocked(virq_t virq, thread_t *vcpu, uint8_t priority)
 	count_t priority_shifted = (count_t)priority >> VGIC_PRIO_SHIFT;
 
 	if (!bitmap_atomic_test_and_set(
-		    vcpu->vgic_search_ranges_low[priority_shifted],
-		    virq / VGIC_LOW_RANGE_SIZE, memory_order_release)) {
+		    vcpu->vgic_search_ranges[priority_shifted],
+		    vgic_search_range_index(virq), memory_order_release)) {
 		if (!bitmap_atomic_test_and_set(vcpu->vgic_search_prios,
 						priority_shifted,
 						memory_order_release)) {
@@ -1315,7 +1385,7 @@ vgic_flag_unlocked(virq_t virq, thread_t *vcpu, uint8_t priority)
 static void
 vgic_flag_unrouted(vic_t *vic, virq_t virq)
 {
-	bitmap_atomic_set(vic->search_ranges_low, virq / VGIC_LOW_RANGE_SIZE,
+	bitmap_atomic_set(vic->search_ranges, vgic_search_range_index(virq),
 			  memory_order_release);
 }
 
@@ -2026,9 +2096,7 @@ vgic_deliver_update_state(virq_t virq, vgic_delivery_state_t prev_dstate,
 	assert(lr_r.e != OK);
 
 	vgic_delivery_state_t new_dstate;
-	vgic_delivery_state_t old_dstate    = prev_dstate;
-	bool		      need_wakeup   = true;
-	bool		      need_sync_all = false;
+	vgic_delivery_state_t old_dstate = prev_dstate;
 
 	do {
 		new_dstate =
@@ -2076,6 +2144,8 @@ vgic_deliver_update_state(virq_t virq, vgic_delivery_state_t prev_dstate,
 		   virq, vgic_delivery_state_raw(old_dstate),
 		   vgic_delivery_state_raw(new_dstate));
 
+	bool need_wakeup, need_sync_all;
+
 	if (vcpu == NULL) {
 		// VIRQ is unrouted. Flag it in the shared search bitmap.
 		if (pending && enabled) {
@@ -2089,22 +2159,29 @@ vgic_deliver_update_state(virq_t virq, vgic_delivery_state_t prev_dstate,
 			// There is no VCPU to wake.
 			need_wakeup = false;
 #endif
-		} else {
-			need_wakeup = false;
-		}
 
-		goto out;
+			// The IRQ may still be listed on a remote CPU that it
+			// is no longer deliverable on; broadcast a sync IPI to
+			// delist it so it can be routed.
+			need_sync_all =
+				vgic_delivery_state_get_need_sync(&new_dstate);
+		} else {
+			need_wakeup   = false;
+			need_sync_all = false;
+		}
+	} else {
+		vgic_deliver_list_or_flag_info_t info =
+			vgic_deliver_list_or_flag(vic, vcpu, source, old_dstate,
+						  new_dstate, lr_r, dstate,
+						  virq, remote_cpu, lr_priority,
+						  is_private, to_self, is_hw,
+						  priority, pending, enabled,
+						  route_valid);
+
+		need_wakeup   = info.need_wakeup;
+		need_sync_all = info.need_sync_all;
 	}
 
-	vgic_deliver_list_or_flag_info_t info = vgic_deliver_list_or_flag(
-		vic, vcpu, source, old_dstate, new_dstate, lr_r, dstate, virq,
-		remote_cpu, lr_priority, is_private, to_self, is_hw, priority,
-		pending, enabled, route_valid);
-
-	need_wakeup   = info.need_wakeup;
-	need_sync_all = info.need_sync_all;
-
-out:
 	return (vgic_deliver_info_t){
 		.new_dstate    = new_dstate,
 		.old_dstate    = old_dstate,
@@ -2184,9 +2261,9 @@ vgic_deliver(virq_t virq, vic_t *vic, thread_t *vcpu, virq_source_t *source,
 
 	assert((source != NULL) ||
 	       !vgic_delivery_state_get_level_src(&assert_dstate));
-	assert((source == NULL) ||
-	       (vgic_get_irq_type(source->virq) == VGIC_IRQ_TYPE_PPI) ||
-	       (vgic_get_irq_type(source->virq) == VGIC_IRQ_TYPE_SPI));
+
+	assert((source == NULL) || vgic_irq_is_spi(source->virq) ||
+	       vgic_irq_is_ppi(source->virq));
 
 	cpu_index_t remote_cpu = vgic_lr_owner_lock(vcpu);
 
@@ -2760,18 +2837,18 @@ vgic_find_pending_at_priority(vic_t *vic, thread_t *vcpu, index_t prio_index,
 	bool	listed	 = false;
 	uint8_t priority = (uint8_t)(prio_index << VGIC_PRIO_SHIFT);
 
-	_Atomic BITMAP_DECLARE_PTR(VGIC_LOW_RANGES, ranges) =
-		&vcpu->vgic_search_ranges_low[prio_index];
-	BITMAP_ATOMIC_FOREACH_SET_BEGIN(range, *ranges, VGIC_LOW_RANGES)
+	_Atomic BITMAP_DECLARE_PTR(VGIC_SEARCH_RANGES, ranges) =
+		&vcpu->vgic_search_ranges[prio_index];
+	BITMAP_ATOMIC_FOREACH_SET_BEGIN(range, *ranges, VGIC_SEARCH_RANGES)
 		if (compiler_unexpected(!bitmap_atomic_test_and_clear(
 			    *ranges, range, memory_order_acquire))) {
 			continue;
 		}
 
 		bool reset_range = false;
-		for (index_t i = 0; i < vgic_low_range_size(range); i++) {
+		for (index_t i = 0; i < vgic_search_range_size(range); i++) {
 			virq_t virq =
-				(virq_t)((range * VGIC_LOW_RANGE_SIZE) + i);
+				(virq_t)(vgic_search_base_virq(range) + i);
 
 			error_t err = vgic_list_if_pending(vic, vcpu, virq,
 							   priority, lr);
@@ -3208,11 +3285,10 @@ vgic_retry_unrouted(vic_t *vic)
 {
 	spinlock_acquire(&vic->search_lock);
 
-	BITMAP_ATOMIC_FOREACH_SET_BEGIN(range, vic->search_ranges_low,
-					VGIC_LOW_RANGES)
+	BITMAP_ATOMIC_FOREACH_SET_BEGIN(range, vic->search_ranges,
+					VGIC_SEARCH_RANGES)
 		if (compiler_unexpected(!bitmap_atomic_test_and_clear(
-			    vic->search_ranges_low, range,
-			    memory_order_acquire))) {
+			    vic->search_ranges, range, memory_order_acquire))) {
 			continue;
 		}
 
@@ -3220,9 +3296,9 @@ vgic_retry_unrouted(vic_t *vic)
 				 range);
 
 		bool unclaimed = false;
-		for (index_t i = 0; i < vgic_low_range_size(range); i++) {
+		for (index_t i = 0; i < vgic_search_range_size(range); i++) {
 			virq_t virq =
-				(virq_t)((range * VGIC_LOW_RANGE_SIZE) + i);
+				(virq_t)(vgic_search_base_virq(range) + i);
 			if (vgic_irq_is_spi(virq) &&
 			    vgic_retry_unrouted_virq(vic, virq)) {
 				unclaimed = true;
@@ -3232,7 +3308,7 @@ vgic_retry_unrouted(vic_t *vic)
 		if (unclaimed) {
 			// We didn't succeed in routing all of the IRQs in
 			// this range, so reset the range's search bit.
-			bitmap_atomic_set(vic->search_ranges_low, range,
+			bitmap_atomic_set(vic->search_ranges, range,
 					  memory_order_acquire);
 		}
 	BITMAP_ATOMIC_FOREACH_SET_END
@@ -3267,14 +3343,14 @@ vgic_check_unrouted(vic_t *vic, thread_t *vcpu)
 {
 	bool wakeup_found = false;
 
-	BITMAP_ATOMIC_FOREACH_SET_BEGIN(range, vic->search_ranges_low,
-					VGIC_LOW_RANGES)
+	BITMAP_ATOMIC_FOREACH_SET_BEGIN(range, vic->search_ranges,
+					VGIC_SEARCH_RANGES)
 		VGIC_DEBUG_TRACE(ROUTE, vic, NULL, "unrouted: check range {:d}",
 				 range);
 
-		for (index_t i = 0; i < vgic_low_range_size(range); i++) {
+		for (index_t i = 0; i < vgic_search_range_size(range); i++) {
 			virq_t virq =
-				(virq_t)((range * VGIC_LOW_RANGE_SIZE) + i);
+				(virq_t)(vgic_search_base_virq(range) + i);
 			if (vgic_irq_is_spi(virq) &&
 			    vgic_check_unrouted_virq(vic, vcpu, virq)) {
 				wakeup_found = true;
@@ -3312,13 +3388,13 @@ vgic_undeliver_all(vic_t *vic, thread_t *vcpu)
 
 	BITMAP_ATOMIC_FOREACH_SET_BEGIN(prio, vcpu->vgic_search_prios,
 					VGIC_PRIORITIES)
-		BITMAP_ATOMIC_FOREACH_SET_BEGIN(
-			range, vcpu->vgic_search_ranges_low[prio],
-			VGIC_LOW_RANGES)
-			for (index_t i = 0; i < vgic_low_range_size(range);
+		BITMAP_ATOMIC_FOREACH_SET_BEGIN(range,
+						vcpu->vgic_search_ranges[prio],
+						VGIC_SEARCH_RANGES)
+			for (index_t i = 0; i < vgic_search_range_size(range);
 			     i++) {
 				virq_t virq =
-					(virq_t)((range * VGIC_LOW_RANGE_SIZE) +
+					(virq_t)(vgic_search_base_virq(range) +
 						 i);
 				if (!vgic_irq_is_spi(virq)) {
 					// The IRQ can't be rerouted.
@@ -3355,17 +3431,17 @@ vgic_do_reroute(vic_t *vic, thread_t *vcpu, index_t prio_index)
 {
 	bool reset_prio = false;
 
-	_Atomic BITMAP_DECLARE_PTR(VGIC_LOW_RANGES, ranges) =
-		&vcpu->vgic_search_ranges_low[prio_index];
-	BITMAP_ATOMIC_FOREACH_SET_BEGIN(range, *ranges, VGIC_LOW_RANGES)
+	_Atomic BITMAP_DECLARE_PTR(VGIC_SEARCH_RANGES, ranges) =
+		&vcpu->vgic_search_ranges[prio_index];
+	BITMAP_ATOMIC_FOREACH_SET_BEGIN(range, *ranges, VGIC_SEARCH_RANGES)
 		if (compiler_unexpected(!bitmap_atomic_test_and_clear(
 			    *ranges, range, memory_order_acquire))) {
 			continue;
 		}
 		bool reset_range = false;
-		for (index_t i = 0; i < vgic_low_range_size(range); i++) {
+		for (index_t i = 0; i < vgic_search_range_size(range); i++) {
 			virq_t virq =
-				(virq_t)((range * VGIC_LOW_RANGE_SIZE) + i);
+				(virq_t)(vgic_search_base_virq(range) + i);
 			if (!vgic_irq_is_spi(virq)) {
 				// IRQ can't be rerouted; reset the
 				// pending flag
@@ -3560,7 +3636,7 @@ vgic_deliver_pending_sgi(vic_t *vic, thread_t *vcpu)
 				    memory_order_relaxed);
 
 		_Atomic vgic_delivery_state_t *dstate =
-			&vcpu->vgic_private_states[virq];
+			vgic_find_dstate(vic, vcpu, virq);
 		vgic_delivery_state_t assert_dstate =
 			vgic_delivery_state_default();
 		vgic_delivery_state_set_edge(&assert_dstate, true);
@@ -4057,7 +4133,7 @@ vgic_send_sgi(vic_t *vic, thread_t *vcpu, virq_t virq, bool is_group_1)
 	REQUIRE_RCU_READ
 {
 	_Atomic vgic_delivery_state_t *dstate =
-		&vcpu->vgic_private_states[virq];
+		vgic_find_dstate(vic, vcpu, virq);
 	vgic_delivery_state_t old_dstate = atomic_load_relaxed(dstate);
 
 	if (!is_group_1 && vgic_delivery_state_get_group1(&old_dstate)) {

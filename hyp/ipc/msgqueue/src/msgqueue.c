@@ -64,9 +64,9 @@ msgqueue_configure_send(msgqueue_t *msgqueue, count_t notfull_thd,
 	spinlock_acquire(&msgqueue->lock);
 
 	if (notfull_thd != MSGQUEUE_THRESHOLD_UNCHANGED) {
-		msgqueue->notfull_thd = notfull_thd;
+		atomic_store_relaxed(&msgqueue->notfull_thd, notfull_thd);
 
-		if (msgqueue->count <= msgqueue->notfull_thd) {
+		if (atomic_load_relaxed(&msgqueue->count) <= notfull_thd) {
 			(void)virq_assert(&msgqueue->send_source, false);
 		} else {
 			(void)virq_clear(&msgqueue->send_source);
@@ -100,18 +100,18 @@ msgqueue_configure_receive(msgqueue_t *msgqueue, count_t notempty_thd,
 
 	spinlock_acquire(&msgqueue->lock);
 
-	if (notempty_thd == MSGQUEUE_THRESHOLD_MAXIMUM) {
-		msgqueue->notempty_thd = msgqueue->queue_depth;
-	} else if (notempty_thd != MSGQUEUE_THRESHOLD_UNCHANGED) {
-		msgqueue->notempty_thd = notempty_thd;
+	if (notempty_thd != MSGQUEUE_THRESHOLD_UNCHANGED) {
+		count_t new_notempty_thd =
+			(notempty_thd == MSGQUEUE_THRESHOLD_MAXIMUM)
+				? msgqueue->queue_depth
+				: notempty_thd;
+		atomic_store_relaxed(&msgqueue->notempty_thd, new_notempty_thd);
 
-		if (msgqueue->count >= msgqueue->notempty_thd) {
+		if (atomic_load_relaxed(&msgqueue->count) >= new_notempty_thd) {
 			(void)virq_assert(&msgqueue->rcv_source, false);
 		} else {
 			(void)virq_clear(&msgqueue->rcv_source);
 		}
-	} else {
-		// Nothing to do. Value stays the same.
 	}
 
 	spinlock_release(&msgqueue->lock);
@@ -146,9 +146,9 @@ msgqueue_unbind_receive(msgqueue_t *msgqueue)
 }
 
 error_t
-msgqueue_handle_object_create_msgqueue(msgqueue_create_t params)
+msgqueue_handle_object_create_msgqueue(msgqueue_create_t msgqueue_create)
 {
-	msgqueue_t *msgqueue = params.msgqueue;
+	msgqueue_t *msgqueue = msgqueue_create.msgqueue;
 	assert(msgqueue != NULL);
 	spinlock_init(&msgqueue->lock);
 
@@ -202,13 +202,13 @@ msgqueue_handle_object_activate_msgqueue(msgqueue_t *msgqueue)
 		goto out;
 	}
 
-	msgqueue->buf	       = (uint8_t *)res.r;
-	msgqueue->count	       = 0U;
-	msgqueue->queue_size   = queue_size;
-	msgqueue->head	       = 0U;
-	msgqueue->tail	       = 0U;
-	msgqueue->notfull_thd  = msgqueue->queue_depth - 1U;
-	msgqueue->notempty_thd = 1U;
+	msgqueue->buf = (uint8_t *)res.r;
+	atomic_init(&msgqueue->count, 0U);
+	msgqueue->queue_size = queue_size;
+	msgqueue->head	     = 0U;
+	msgqueue->tail	     = 0U;
+	atomic_init(&msgqueue->notfull_thd, msgqueue->queue_depth - 1U);
+	atomic_init(&msgqueue->notempty_thd, 1U);
 
 out:
 	return ret;
@@ -220,15 +220,9 @@ msgqueue_handle_object_deactivate_msgqueue(msgqueue_t *msgqueue)
 	assert(msgqueue != NULL);
 
 	if (msgqueue->buf != NULL) {
-		error_t	     ret;
 		partition_t *partition = msgqueue->header.partition;
 
-		ret = partition_free(partition, msgqueue->buf,
-				     msgqueue->queue_size);
-
-		if (ret != OK) {
-			panic("Error freeing msgqueue buffer");
-		}
+		partition_free(partition, msgqueue->buf, msgqueue->queue_size);
 		msgqueue->buf = NULL;
 	}
 

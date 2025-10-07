@@ -43,6 +43,11 @@ class ABI(metaclass=abc.ABCMeta):
         )
         self.c_types = {t.name: t for t in basic_ctypes}
 
+    @abc.abstractproperty
+    def isa_name(self):
+        """The name of the instruction set this ABI is for."""
+        raise NotImplementedError
+
     @staticmethod
     def is_power2(val):
         """Returns true if number is a power of two"""
@@ -135,6 +140,11 @@ class AArch64ABI(ABI):
         'uregister_t': 'uint64_t',
         'sregister_t': 'int64_t',
     }
+
+    @property
+    def isa_name(self):
+        """The name of the instruction set this ABI is for."""
+        return 'aarch64'
 
     @property
     def pointer_size(self):

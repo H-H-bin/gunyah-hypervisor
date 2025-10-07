@@ -4,6 +4,8 @@
 
 define virq_t public newtype uint32;
 
+define VIRQ_INVALID public constant type virq_t = -1;
+
 define virq_trigger enumeration {
 	// Used for VIRQs with no virq_check_pending handler; if level
 	// triggered, the source must call virq_clear().

@@ -9,6 +9,7 @@
 #include <atomic.h>
 #include <compiler.h>
 #include <log.h>
+#include <thread.h>
 #include <trace.h>
 
 #include <events/tests.h>

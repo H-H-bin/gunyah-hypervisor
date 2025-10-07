@@ -15,7 +15,7 @@ platform_get_cpu_features(void)
 #if defined(MODULE_VM_ARM_VM_MTE)
 	platform_cpu_features_set_mte_disable(&features, false);
 #endif
-#if defined(INTERFACE_VET)
+#if defined(INTERFACE_VCPU) && defined(ARCH_ARM_FEAT_TRF)
 	platform_cpu_features_set_trace_disable(&features, false);
 #endif
 #if defined(INTERFACE_DEBUG)

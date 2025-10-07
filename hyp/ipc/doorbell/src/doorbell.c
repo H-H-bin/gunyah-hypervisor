@@ -19,25 +19,25 @@
 doorbell_flags_result_t
 doorbell_send(doorbell_t *doorbell, doorbell_flags_t new_flags)
 {
-	doorbell_flags_result_t ret = { 0 };
-
 	assert(doorbell != NULL);
-	ret.e = OK;
 
 	spinlock_acquire(&doorbell->lock);
 
-	ret.r = doorbell->flags;
+	doorbell_flags_t	flags = atomic_load_relaxed(&doorbell->flags);
+	doorbell_flags_result_t ret   = doorbell_flags_result_ok(flags);
 
-	doorbell->flags |= new_flags;
+	flags |= new_flags;
 
-	// Level-triggered assert if there are flags enabled; else edge-only
-	bool edge_only = (doorbell->flags & doorbell->enable_mask) == 0U;
-	(void)virq_assert(&doorbell->source, edge_only);
-
-	// Automatically clear ack_mask flags if there was a level assertion
+	// Level-triggered assert if there are flags enabled; else edge-only.
+	bool edge_only =
+		(flags & atomic_load_relaxed(&doorbell->enable_mask)) == 0U;
+	// Automatically clear ack_mask flags before a level assertion.
 	if (!edge_only) {
-		doorbell->flags &= ~doorbell->ack_mask;
+		flags &= ~doorbell->ack_mask;
 	}
+	atomic_store_relaxed(&doorbell->flags, flags);
+
+	(void)virq_assert(&doorbell->source, edge_only);
 
 	spinlock_release(&doorbell->lock);
 
@@ -47,22 +47,23 @@ doorbell_send(doorbell_t *doorbell, doorbell_flags_t new_flags)
 doorbell_flags_result_t
 doorbell_receive(doorbell_t *doorbell, doorbell_flags_t clear_flags)
 {
-	doorbell_flags_result_t ret = { 0 };
+	doorbell_flags_result_t ret;
 
 	assert(doorbell != NULL);
-	ret.e = OK;
 
 	if (clear_flags == 0U) {
-		ret.e = ERROR_ARGUMENT_INVALID;
+		ret = doorbell_flags_result_error(ERROR_ARGUMENT_INVALID);
 		goto out;
 	}
 
 	spinlock_acquire(&doorbell->lock);
 
-	ret.r = doorbell->flags;
+	doorbell_flags_t flags = atomic_load_relaxed(&doorbell->flags);
+	ret		       = doorbell_flags_result_ok(flags);
 
-	doorbell->flags &= ~clear_flags;
+	flags &= ~clear_flags;
 
+	atomic_store_relaxed(&doorbell->flags, flags);
 	spinlock_release(&doorbell->lock);
 
 out:
@@ -78,12 +79,11 @@ doorbell_reset(doorbell_t *doorbell)
 
 	spinlock_acquire(&doorbell->lock);
 
-	// If there is a pending bound interrupt, it will be de-asserted
-	(void)virq_clear(&doorbell->source);
+	atomic_store_relaxed(&doorbell->flags, 0U);
+	doorbell->ack_mask = 0U;
+	atomic_store_relaxed(&doorbell->enable_mask, ~doorbell->ack_mask);
 
-	doorbell->flags	      = 0U;
-	doorbell->ack_mask    = 0U;
-	doorbell->enable_mask = ~doorbell->ack_mask;
+	(void)virq_clear(&doorbell->source);
 
 	spinlock_release(&doorbell->lock);
 
@@ -100,11 +100,13 @@ doorbell_mask(doorbell_t *doorbell, doorbell_flags_t new_enable_mask,
 
 	spinlock_acquire(&doorbell->lock);
 
-	bool was_asserted = (doorbell->flags & doorbell->enable_mask) != 0U;
-	bool now_asserted = (doorbell->flags & new_enable_mask) != 0U;
+	doorbell_flags_t flags = atomic_load_relaxed(&doorbell->flags);
+	bool		 was_asserted =
+		(flags & atomic_load_relaxed(&doorbell->enable_mask)) != 0U;
+	bool now_asserted = (flags & new_enable_mask) != 0U;
 
-	doorbell->enable_mask = new_enable_mask;
-	doorbell->ack_mask    = new_ack_mask;
+	atomic_store_relaxed(&doorbell->enable_mask, new_enable_mask);
+	doorbell->ack_mask = new_ack_mask;
 
 	if (was_asserted && !now_asserted) {
 		// Deassert if new mask disables all currently asserted flags
@@ -112,10 +114,12 @@ doorbell_mask(doorbell_t *doorbell, doorbell_flags_t new_enable_mask,
 
 	} else if (!was_asserted && now_asserted) {
 		// Assert if new mask enables flags that are already set
+		atomic_store_relaxed(&doorbell->flags,
+				     flags & ~doorbell->ack_mask);
 		(void)virq_assert(&doorbell->source, false);
-		doorbell->flags &= ~doorbell->ack_mask;
 	} else if (was_asserted && now_asserted) {
-		doorbell->flags &= ~doorbell->ack_mask;
+		atomic_store_relaxed(&doorbell->flags,
+				     flags & ~doorbell->ack_mask);
 	} else {
 		// Nothing to do.
 	}
@@ -140,7 +144,14 @@ doorbell_handle_virq_check_pending(virq_source_t *source, bool reasserted)
 		// doorbell_send() or doorbell_mask() on another CPU.
 		ret = true;
 	} else {
-		ret = ((doorbell->flags & doorbell->enable_mask) != 0U);
+		// These two variable accesses are not ordered with respect to
+		// each other, but they are ordered after the load that
+		// determined that the reasserted argument should be false.
+		// If we race with a function that sets flag bits or clears mask
+		// bits, such that we incorrectly return false, then that other
+		// function's virq_assert() will overrride the false result.
+		ret = ((atomic_load_relaxed(&doorbell->flags) &
+			atomic_load_relaxed(&doorbell->enable_mask)) != 0U);
 	}
 
 	return ret;
@@ -169,19 +180,20 @@ doorbell_unbind(doorbell_t *doorbell)
 }
 
 error_t
-doorbell_handle_object_create_doorbell(doorbell_create_t params)
+doorbell_handle_object_create_doorbell(doorbell_create_t doorbell_create)
 {
-	assert(params.doorbell != NULL);
+	assert(doorbell_create.doorbell != NULL);
 
-	spinlock_init(&params.doorbell->lock);
+	spinlock_init(&doorbell_create.doorbell->lock);
 
-	spinlock_acquire(&params.doorbell->lock);
+	spinlock_acquire(&doorbell_create.doorbell->lock);
 
-	params.doorbell->flags	     = 0U;
-	params.doorbell->ack_mask    = 0U;
-	params.doorbell->enable_mask = ~params.doorbell->ack_mask;
+	atomic_init(&doorbell_create.doorbell->flags, 0U);
+	doorbell_create.doorbell->ack_mask = 0U;
+	atomic_init(&doorbell_create.doorbell->enable_mask,
+		    ~doorbell_create.doorbell->ack_mask);
 
-	spinlock_release(&params.doorbell->lock);
+	spinlock_release(&doorbell_create.doorbell->lock);
 
 	return OK;
 }

@@ -8,6 +8,7 @@
 #include <compiler.h>
 #include <cpulocal.h>
 #include <idle.h>
+#include <thread.h>
 #include <trace.h>
 
 #include "event_handlers.h"
@@ -21,14 +22,22 @@ cpulocal_index_valid(cpu_index_t index)
 cpu_index_t
 cpulocal_check_index(cpu_index_t index)
 {
-	assert(cpulocal_index_valid(index));
+	assert_debug(cpulocal_index_valid(index));
 	return index;
+}
+
+cpu_index_t
+cpulocal_ptr_check_index(ptrdiff_t index)
+{
+	assert_safety(index >= (ptrdiff_t)0);
+	assert_safety(cpulocal_index_valid((cpu_index_t)index));
+	return (cpu_index_t)index;
 }
 
 cpu_index_t
 cpulocal_get_index_for_thread(const thread_t *thread)
 {
-	assert(thread != NULL);
+	assert_safety(thread != NULL);
 	return thread->cpulocal_current_cpu;
 }
 
@@ -40,17 +49,17 @@ cpulocal_get_index_unsafe(void)
 }
 
 void
-cpulocal_handle_boot_cpu_cold_init(cpu_index_t cpu_index)
+cpulocal_handle_boot_cpu_cold_init(cpu_index_t cpu)
 {
 	thread_t *self = thread_get_self();
-	assert(self != NULL);
+	assert_safety(self != NULL);
 
 	// Ensure that the index is set early on the primary idle thread
-	self->cpulocal_current_cpu = cpulocal_check_index(cpu_index);
+	self->cpulocal_current_cpu = cpulocal_check_index(cpu);
 
 	// This is the earliest point at which we can call TRACE(), so let's
 	// do that now to let debuggers know that the CPU is coming online.
-	TRACE_LOCAL(DEBUG, INFO, "CPU {:d} coming online", cpu_index);
+	TRACE_LOCAL(DEBUG, INFO, "CPU {:d} coming online", cpu);
 }
 
 error_t
@@ -70,24 +79,24 @@ void
 cpulocal_handle_thread_context_switch_post(thread_t *prev)
 {
 	thread_t *self = thread_get_self();
-	assert(self != NULL);
+	assert_safety(self != NULL);
 	cpu_index_t this_cpu = CPU_INDEX_INVALID;
 
 #if SCHEDULER_CAN_MIGRATE
 	if (compiler_unexpected(prev == self)) {
-		assert(idle_thread() == prev);
+		assert_safety(idle_thread() == prev);
 		this_cpu = self->scheduler_affinity;
 	} else {
-		assert(prev != NULL);
+		assert_safety(prev != NULL);
 		this_cpu = cpulocal_check_index(prev->cpulocal_current_cpu);
-		assert((self->kind != THREAD_KIND_IDLE) ||
-		       (this_cpu == self->scheduler_affinity));
+		assert_debug((self->kind != THREAD_KIND_IDLE) ||
+			     (this_cpu == self->scheduler_affinity));
 	}
 #else
 	this_cpu = self->scheduler_affinity;
 #endif
 
-	assert(this_cpu != CPU_INDEX_INVALID);
+	assert_safety(this_cpu != CPU_INDEX_INVALID);
 	prev->cpulocal_current_cpu = CPU_INDEX_INVALID;
 	self->cpulocal_current_cpu = this_cpu;
 }

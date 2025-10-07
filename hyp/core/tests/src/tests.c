@@ -19,6 +19,7 @@
 #include <partition_init.h>
 #include <preempt.h>
 #include <scheduler.h>
+#include <thread.h>
 #include <trace.h>
 #include <util.h>
 
@@ -146,16 +147,14 @@ tests_thread_init(void)
 }
 
 static void
-tests_main(uintptr_t cpu_index)
+tests_main(uintptr_t cpu_index) EXCLUDE_PREEMPT_DISABLED
 {
-	preempt_disable();
 	if (trigger_tests_start_event()) {
 		panic("Tests are failing.");
 	} else {
 		LOG(DEBUG, INFO, "Tests completed successfully on CPU {:d}",
 		    cpu_index);
 	}
-	preempt_enable();
 }
 
 thread_func_t

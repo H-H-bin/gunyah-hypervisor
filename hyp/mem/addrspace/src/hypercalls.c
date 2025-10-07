@@ -18,9 +18,11 @@
 #include <pgtable.h>
 #include <rcu.h>
 #include <spinlock.h>
+#include <thread.h>
 
 #include "addrspace.h"
 #include "events/addrspace.h"
+#include "useraccess.h"
 
 error_t
 hypercall_addrspace_attach_thread(cap_id_t addrspace_cap, cap_id_t thread_cap)
@@ -124,14 +126,33 @@ hypercall_addrspace_map(cap_id_t addrspace_cap, cap_id_t memextent_cap,
 	error_t	  ret;
 	cspace_t *cspace = cspace_get_self();
 
+	// Ensure that no unknown or unsupported flags are set
+	addrspace_map_flags_t checked_flags = addrspace_map_flags_default();
+	addrspace_map_flags_copy_private(&checked_flags, &map_flags);
+	addrspace_map_flags_copy_vmmio(&checked_flags, &map_flags);
+	addrspace_map_flags_copy_partial(&checked_flags, &map_flags);
+	addrspace_map_flags_copy_no_sync(&checked_flags, &map_flags);
+
 	if ((memextent_mapping_attrs_get_res_0(&map_attrs) != 0U) ||
-	    (addrspace_map_flags_get_res0_0(&map_flags) != 0U)) {
+	    !addrspace_map_flags_is_clean(map_flags) ||
+	    !addrspace_map_flags_is_equal(map_flags, checked_flags)) {
+		ret = ERROR_ARGUMENT_INVALID;
+		goto out;
+	}
+
+	if (addrspace_map_flags_get_private(&map_flags) &&
+	    addrspace_map_flags_get_vmmio(&map_flags)) {
+		// These flags are mutually exclusive.
 		ret = ERROR_ARGUMENT_INVALID;
 		goto out;
 	}
 
 	addrspace_ptr_result_t c = cspace_lookup_addrspace(
-		cspace, addrspace_cap, CAP_RIGHTS_ADDRSPACE_MAP);
+		cspace, addrspace_cap,
+		(addrspace_map_flags_get_private(&map_flags) ||
+		 addrspace_map_flags_get_vmmio(&map_flags))
+			? CAP_RIGHTS_ADDRSPACE_MAP_PROTECTED
+			: CAP_RIGHTS_ADDRSPACE_MAP);
 	if (compiler_unexpected(c.e != OK)) {
 		ret = c.e;
 		goto out;
@@ -140,7 +161,10 @@ hypercall_addrspace_map(cap_id_t addrspace_cap, cap_id_t memextent_cap,
 	addrspace_t *addrspace = c.r;
 
 	memextent_ptr_result_t m = cspace_lookup_memextent(
-		cspace, memextent_cap, CAP_RIGHTS_MEMEXTENT_MAP);
+		cspace, memextent_cap,
+		addrspace_map_flags_get_private(&map_flags)
+			? CAP_RIGHTS_MEMEXTENT_MAP_PRIVATE
+			: CAP_RIGHTS_MEMEXTENT_MAP);
 	if (compiler_unexpected(m.e != OK)) {
 		ret = m.e;
 		goto out_addrspace_release;
@@ -150,9 +174,10 @@ hypercall_addrspace_map(cap_id_t addrspace_cap, cap_id_t memextent_cap,
 
 	if (addrspace_map_flags_get_partial(&map_flags)) {
 		ret = memextent_map_partial(memextent, addrspace, vbase, offset,
-					    size, map_attrs);
+					    size, map_attrs, map_flags);
 	} else {
-		ret = memextent_map(memextent, addrspace, vbase, map_attrs);
+		ret = memextent_map(memextent, addrspace, vbase, map_attrs,
+				    map_flags);
 	}
 
 	if ((ret == OK) && !addrspace_map_flags_get_no_sync(&map_flags)) {
@@ -175,13 +200,32 @@ hypercall_addrspace_unmap(cap_id_t addrspace_cap, cap_id_t memextent_cap,
 	error_t	  ret;
 	cspace_t *cspace = cspace_get_self();
 
-	if (addrspace_map_flags_get_res0_0(&map_flags) != 0U) {
+	// Ensure that no unknown or unsupported flags are set
+	addrspace_map_flags_t checked_flags = addrspace_map_flags_default();
+	addrspace_map_flags_copy_private(&checked_flags, &map_flags);
+	addrspace_map_flags_copy_vmmio(&checked_flags, &map_flags);
+	addrspace_map_flags_copy_partial(&checked_flags, &map_flags);
+	addrspace_map_flags_copy_no_sync(&checked_flags, &map_flags);
+
+	if (!addrspace_map_flags_is_clean(map_flags) ||
+	    !addrspace_map_flags_is_equal(map_flags, checked_flags)) {
+		ret = ERROR_ARGUMENT_INVALID;
+		goto out;
+	}
+
+	if (addrspace_map_flags_get_private(&map_flags) &&
+	    addrspace_map_flags_get_vmmio(&map_flags)) {
+		// These flags are mutually exclusive.
 		ret = ERROR_ARGUMENT_INVALID;
 		goto out;
 	}
 
 	addrspace_ptr_result_t c = cspace_lookup_addrspace(
-		cspace, addrspace_cap, CAP_RIGHTS_ADDRSPACE_MAP);
+		cspace, addrspace_cap,
+		(addrspace_map_flags_get_private(&map_flags) ||
+		 addrspace_map_flags_get_vmmio(&map_flags))
+			? CAP_RIGHTS_ADDRSPACE_MAP_PROTECTED
+			: CAP_RIGHTS_ADDRSPACE_MAP);
 	if (compiler_unexpected(c.e != OK)) {
 		ret = c.e;
 		goto out;
@@ -190,7 +234,10 @@ hypercall_addrspace_unmap(cap_id_t addrspace_cap, cap_id_t memextent_cap,
 	addrspace_t *addrspace = c.r;
 
 	memextent_ptr_result_t m = cspace_lookup_memextent(
-		cspace, memextent_cap, CAP_RIGHTS_MEMEXTENT_MAP);
+		cspace, memextent_cap,
+		addrspace_map_flags_get_private(&map_flags)
+			? CAP_RIGHTS_MEMEXTENT_MAP_PRIVATE
+			: CAP_RIGHTS_MEMEXTENT_MAP);
 	if (compiler_unexpected(m.e != OK)) {
 		ret = m.e;
 		goto out_addrspace_release;
@@ -200,9 +247,9 @@ hypercall_addrspace_unmap(cap_id_t addrspace_cap, cap_id_t memextent_cap,
 
 	if (addrspace_map_flags_get_partial(&map_flags)) {
 		ret = memextent_unmap_partial(memextent, addrspace, vbase,
-					      offset, size);
+					      offset, size, map_flags);
 	} else {
-		ret = memextent_unmap(memextent, addrspace, vbase);
+		ret = memextent_unmap(memextent, addrspace, vbase, map_flags);
 	}
 
 	if ((ret == OK) && !addrspace_map_flags_get_no_sync(&map_flags)) {
@@ -227,14 +274,33 @@ hypercall_addrspace_update_access(cap_id_t addrspace_cap,
 	error_t	  ret;
 	cspace_t *cspace = cspace_get_self();
 
+	// Ensure that no unknown or unsupported flags are set
+	addrspace_map_flags_t checked_flags = addrspace_map_flags_default();
+	addrspace_map_flags_copy_private(&checked_flags, &map_flags);
+	addrspace_map_flags_copy_vmmio(&checked_flags, &map_flags);
+	addrspace_map_flags_copy_partial(&checked_flags, &map_flags);
+	addrspace_map_flags_copy_no_sync(&checked_flags, &map_flags);
+
 	if ((memextent_access_attrs_get_res_0(&access_attrs) != 0U) ||
-	    (addrspace_map_flags_get_res0_0(&map_flags) != 0U)) {
+	    !addrspace_map_flags_is_clean(map_flags) ||
+	    !addrspace_map_flags_is_equal(map_flags, checked_flags)) {
+		ret = ERROR_ARGUMENT_INVALID;
+		goto out;
+	}
+
+	if (addrspace_map_flags_get_private(&map_flags) &&
+	    addrspace_map_flags_get_vmmio(&map_flags)) {
+		// These flags are mutually exclusive.
 		ret = ERROR_ARGUMENT_INVALID;
 		goto out;
 	}
 
 	addrspace_ptr_result_t c = cspace_lookup_addrspace(
-		cspace, addrspace_cap, CAP_RIGHTS_ADDRSPACE_MAP);
+		cspace, addrspace_cap,
+		(addrspace_map_flags_get_private(&map_flags) ||
+		 addrspace_map_flags_get_vmmio(&map_flags))
+			? CAP_RIGHTS_ADDRSPACE_MAP_PROTECTED
+			: CAP_RIGHTS_ADDRSPACE_MAP);
 	if (compiler_unexpected(c.e != OK)) {
 		ret = c.e;
 		goto out;
@@ -243,7 +309,10 @@ hypercall_addrspace_update_access(cap_id_t addrspace_cap,
 	addrspace_t *addrspace = c.r;
 
 	memextent_ptr_result_t m = cspace_lookup_memextent(
-		cspace, memextent_cap, CAP_RIGHTS_MEMEXTENT_MAP);
+		cspace, memextent_cap,
+		addrspace_map_flags_get_private(&map_flags)
+			? CAP_RIGHTS_MEMEXTENT_MAP_PRIVATE
+			: CAP_RIGHTS_MEMEXTENT_MAP);
 	if (compiler_unexpected(m.e != OK)) {
 		ret = m.e;
 		goto out_addrspace_release;
@@ -254,10 +323,10 @@ hypercall_addrspace_update_access(cap_id_t addrspace_cap,
 	if (addrspace_map_flags_get_partial(&map_flags)) {
 		ret = memextent_update_access_partial(memextent, addrspace,
 						      vbase, offset, size,
-						      access_attrs);
+						      access_attrs, map_flags);
 	} else {
 		ret = memextent_update_access(memextent, addrspace, vbase,
-					      access_attrs);
+					      access_attrs, map_flags);
 	}
 
 	if ((ret == OK) && !addrspace_map_flags_get_no_sync(&map_flags)) {
@@ -268,6 +337,46 @@ hypercall_addrspace_update_access(cap_id_t addrspace_cap,
 	object_put_memextent(memextent);
 out_addrspace_release:
 	object_put_addrspace(addrspace);
+out:
+	return ret;
+}
+
+hypercall_addrspace_modify_pages_result_t
+hypercall_addrspace_modify_pages(cap_id_t addrspace_cap, vmaddr_t vbase,
+				 size_t				size,
+				 addrspace_modify_pages_flags_t flags)
+{
+	hypercall_addrspace_modify_pages_result_t ret;
+	cspace_t				 *cspace = cspace_get_self();
+
+	if (!addrspace_modify_pages_flags_is_clean(flags)) {
+		ret = (hypercall_addrspace_modify_pages_result_t){
+			.error		= ERROR_ARGUMENT_INVALID,
+			.size_remaining = size,
+		};
+		goto out;
+	}
+
+	addrspace_ptr_result_t c = cspace_lookup_addrspace(
+		cspace, addrspace_cap, CAP_RIGHTS_ADDRSPACE_MODIFY_PROTECTED);
+	if (compiler_unexpected(c.e != OK)) {
+		ret = (hypercall_addrspace_modify_pages_result_t){
+			.error		= c.e,
+			.size_remaining = size,
+		};
+		goto out;
+	}
+
+	size_result_t modified_r =
+		addrspace_modify_pages(c.r, vbase, size, flags);
+
+	assert(modified_r.r <= size);
+	ret = (hypercall_addrspace_modify_pages_result_t){
+		.error		= modified_r.e,
+		.size_remaining = size - modified_r.r,
+	};
+
+	object_put_addrspace(c.r);
 out:
 	return ret;
 }
@@ -420,16 +529,89 @@ out_bad_cap:
 	return err;
 }
 
+hypercall_addrspace_find_info_area_result_t
+hypercall_addrspace_find_info_area(void)
+{
+	thread_t				   *current = thread_get_self();
+	hypercall_addrspace_find_info_area_result_t ret;
+
+	if (current->addrspace->info_area.me != NULL) {
+		ret = (hypercall_addrspace_find_info_area_result_t){
+			.base  = current->addrspace->info_area.ipa,
+			.size  = current->addrspace->info_area.me->size,
+			.error = OK,
+		};
+	} else {
+		ret = (hypercall_addrspace_find_info_area_result_t){
+			.error = ERROR_ADDR_INVALID,
+		};
+	}
+
+	return ret;
+}
+
+hypercall_addrspace_info_area_add_entry_result_t
+hypercall_addrspace_info_area_add_entry(
+	cap_id_t addrspace_cap, addrspace_info_area_entry_type_t type,
+	user_ptr_t data, addrspace_info_area_entry_data_info_t data_info)
+{
+	hypercall_addrspace_info_area_add_entry_result_t ret;
+	cspace_t *cspace = cspace_get_self();
+
+	addrspace_ptr_result_t o = cspace_lookup_addrspace(
+		cspace, addrspace_cap, CAP_RIGHTS_ADDRSPACE_ADD_INFO);
+	if (compiler_unexpected(o.e != OK)) {
+		ret = (hypercall_addrspace_info_area_add_entry_result_t){
+			.error = o.e,
+		};
+		goto out;
+	}
+
+	size_t size = addrspace_info_area_entry_data_info_get_size(&data_info);
+	size_t alignment =
+		addrspace_info_area_entry_data_info_get_alignment(&data_info);
+
+	addrspace_alloc_info_area_result_t alloc_r =
+		addrspace_alloc_info_area(o.r, size, alignment, true);
+	if (alloc_r.e != OK) {
+		ret = (hypercall_addrspace_info_area_add_entry_result_t){
+			.error = alloc_r.e,
+		};
+		goto out_ref;
+	}
+
+	error_t err = useraccess_copy_from_guest_va((void *)alloc_r.ptr, size,
+						    (gvaddr_t)data, size)
+			      .e;
+	if (err != OK) {
+		ret = (hypercall_addrspace_info_area_add_entry_result_t){
+			.error = err,
+		};
+		goto out_ref;
+	}
+
+	addrspace_enable_info_area(alloc_r.descriptor, type);
+
+	ret = (hypercall_addrspace_info_area_add_entry_result_t){
+		.error = OK,
+		.ipa   = alloc_r.ipa,
+	};
+out_ref:
+	object_put_addrspace(o.r);
+out:
+	return ret;
+}
+
 error_t
-hypercall_addrspace_configure_vmmio(cap_id_t addrspace_cap, vmaddr_t vbase,
+hypercall_addrspace_configure_range(cap_id_t addrspace_cap, vmaddr_t vbase,
 				    size_t			   size,
-				    addrspace_vmmio_configure_op_t op)
+				    addrspace_range_configure_op_t op)
 {
 	error_t	  err;
 	cspace_t *cspace = cspace_get_self();
 
 	addrspace_ptr_result_t o = cspace_lookup_addrspace_any(
-		cspace, addrspace_cap, CAP_RIGHTS_ADDRSPACE_ADD_VMMIO_RANGE);
+		cspace, addrspace_cap, CAP_RIGHTS_ADDRSPACE_CONFIGURE_RANGE);
 	if (compiler_unexpected(o.e != OK)) {
 		err = o.e;
 		goto out;
@@ -444,11 +626,19 @@ hypercall_addrspace_configure_vmmio(cap_id_t addrspace_cap, vmaddr_t vbase,
 	}
 
 	switch (op) {
-	case ADDRSPACE_VMMIO_CONFIGURE_OP_ADD:
-		err = addrspace_add_vmmio_range(target_as, vbase, size);
+	case ADDRSPACE_RANGE_CONFIGURE_OP_ADD_VMMIO:
+		err = addrspace_add_fault_range(target_as, vbase, size, true);
 		break;
-	case ADDRSPACE_VMMIO_CONFIGURE_OP_REMOVE:
-		err = addrspace_remove_vmmio_range(target_as, vbase, size);
+	case ADDRSPACE_RANGE_CONFIGURE_OP_REMOVE_VMMIO:
+		err = addrspace_remove_fault_range(target_as, vbase, size,
+						   true);
+		break;
+	case ADDRSPACE_RANGE_CONFIGURE_OP_ADD_PRIVATE:
+		err = addrspace_add_fault_range(target_as, vbase, size, false);
+		break;
+	case ADDRSPACE_RANGE_CONFIGURE_OP_REMOVE_PRIVATE:
+		err = addrspace_remove_fault_range(target_as, vbase, size,
+						   false);
 		break;
 	default:
 		err = ERROR_UNIMPLEMENTED;

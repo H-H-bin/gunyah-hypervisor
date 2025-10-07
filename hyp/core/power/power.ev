@@ -5,7 +5,7 @@
 module power
 
 subscribe boot_cold_init
-	priority 100
+	priority 90
 	require_preempt_disabled
 
 subscribe boot_cpu_warm_init

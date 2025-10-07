@@ -33,13 +33,15 @@ define hyp_api_flags0 public bitfield<64>(const) {
 	9		virtio_mmio	bool = 0;
 	10		prng		bool = 0;
 	11		vcpu_run	bool = 0;
+	12		trace_profile	bool = 0;
 	16		reserved_16	bool = 0;
 	31:28		scheduler	enumeration scheduler_variant = SCHEDULER_VARIANT;
-	63:32,27:17,15:12 res0_0	uint64 = 0;
+	63:32,27:17,15:13 res0_0	uint64 = 0;
 };
 
 define hyp_api_flags1 public bitfield<64>(const) {
-	63:0		res0_0		uint64 = 0;
+	31:0		arch_reserved	uint64 = 0;
+	others		unknown = 0;
 };
 
 define hyp_api_flags2 public bitfield<64>(const) {

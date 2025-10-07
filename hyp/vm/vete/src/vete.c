@@ -9,6 +9,7 @@
 
 #include <compiler.h>
 #include <cpulocal.h>
+#include <globals.h>
 #include <log.h>
 #include <preempt.h>
 #include <scheduler.h>
@@ -25,21 +26,15 @@
 #define ISS_TRFCR_EL1 ISS_OP0_OP1_CRN_CRM_OP2(3, 0, 1, 2, 1)
 
 void
-vete_handle_boot_cpu_cold_init(void)
-{
-	ID_AA64DFR0_EL1_t id_aa64dfr0 = register_ID_AA64DFR0_EL1_read();
-	// NOTE: ID_AA64DFR0.TraceVer just indicates if trace is implemented,
-	// so here we use equal for assertion.
-	assert(ID_AA64DFR0_EL1_get_TraceVer(&id_aa64dfr0) == 1U);
-}
-
-void
 vete_handle_boot_cpu_warm_init(void)
 {
-	TRFCR_EL2_t trfcr = TRFCR_EL2_default();
-	// prohibit trace of EL2
-	TRFCR_EL2_set_E2TRE(&trfcr, 0);
-	register_TRFCR_EL2_write_ordered(trfcr, &vet_ordering);
+	const global_options_t *options = globals_get_options();
+	if (global_options_get_ete_present(options)) {
+		TRFCR_EL2_t trfcr = TRFCR_EL2_default();
+		// prohibit trace of EL2
+		TRFCR_EL2_set_E2TRE(&trfcr, 0);
+		register_TRFCR_EL2_write_ordered(trfcr, &vet_ordering);
+	}
 }
 
 void
@@ -109,26 +104,32 @@ vet_enable_trace(void)
 void
 vet_restore_trace_power_context(bool was_poweroff)
 {
-	// enable trace register access by clear CPTR_EL2.TAA=0
-	vete_prohibit_registers_access(false);
-	asm_context_sync_ordered(&vet_ordering);
+	const global_options_t *options = globals_get_options();
+	if (global_options_get_ete_present(options)) {
+		// enable trace register access by clear CPTR_EL2.TAA=0
+		vete_prohibit_registers_access(false);
+		asm_context_sync_ordered(&vet_ordering);
 
-	ete_restore_context_percpu(cpulocal_get_index(), was_poweroff);
+		ete_restore_context_percpu(cpulocal_get_index(), was_poweroff);
 
-	// disable trace register access by clear CPTR_EL2.TAA=1
-	vete_prohibit_registers_access(true);
+		// disable trace register access by clear CPTR_EL2.TAA=1
+		vete_prohibit_registers_access(true);
+	}
 }
 
 void
 vet_save_trace_power_context(bool was_poweroff)
 {
-	vete_prohibit_registers_access(false);
-	asm_context_sync_ordered(&vet_ordering);
+	const global_options_t *options = globals_get_options();
+	if (global_options_get_ete_present(options)) {
+		vete_prohibit_registers_access(false);
+		asm_context_sync_ordered(&vet_ordering);
 
-	ete_save_context_percpu(cpulocal_get_index(), was_poweroff);
+		ete_save_context_percpu(cpulocal_get_index(), was_poweroff);
 
-	// disable trace register access by clear CPTR_EL2.TAA=1
-	vete_prohibit_registers_access(true);
+		// disable trace register access by clear CPTR_EL2.TAA=1
+		vete_prohibit_registers_access(true);
+	}
 }
 
 vcpu_trap_result_t
@@ -151,13 +152,19 @@ vete_handle_vcpu_trap_sysreg(ESR_EL2_ISS_MSR_MRS_t iss)
 		// This VCPU isn't allowed to access debug. Fault immediately.
 		ret = VCPU_TRAP_RESULT_FAULT;
 	} else if (!current->vet_trace_unit_enabled) {
-		// Lazily enable trace register access and restore context.
-		current->vet_trace_unit_enabled = true;
+		const global_options_t *options = globals_get_options();
+		if (global_options_get_ete_present(options)) {
+			// Lazily enable trace register access and restore
+			// context.
+			current->vet_trace_unit_enabled = true;
 
-		// only enable the register access
-		vete_prohibit_registers_access(false);
+			// only enable the register access
+			vete_prohibit_registers_access(false);
 
-		ret = VCPU_TRAP_RESULT_RETRY;
+			ret = VCPU_TRAP_RESULT_RETRY;
+		} else {
+			ret = VCPU_TRAP_RESULT_UNHANDLED;
+		}
 	} else {
 		// Probably an attempted OS lock; fall back to default RAZ/WI.
 		ret = VCPU_TRAP_RESULT_UNHANDLED;

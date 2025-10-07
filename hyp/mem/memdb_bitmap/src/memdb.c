@@ -117,10 +117,7 @@ memdb_bitmap_free_level_table(rcu_entry_t *entry)
 	memdb_level_table_t *table =
 		memdb_level_table_container_of_rcu_entry(entry);
 
-	error_t err = partition_free(hyp_partition, table, sizeof(*table));
-	if (err != OK) {
-		panic(__func__);
-	}
+	partition_free(hyp_partition, table, sizeof(*table));
 
 	return ret;
 }
@@ -141,10 +138,7 @@ memdb_bitmap_free_level_bitmap(rcu_entry_t *entry)
 	memdb_level_bitmap_t *bitmap =
 		memdb_level_bitmap_container_of_rcu_entry(entry);
 
-	error_t err = partition_free(hyp_partition, bitmap, sizeof(*bitmap));
-	if (err != OK) {
-		panic(__func__);
-	}
+	partition_free(hyp_partition, bitmap, sizeof(*bitmap));
 
 	return ret;
 }

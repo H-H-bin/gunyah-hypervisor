@@ -12,6 +12,7 @@
 #include <partition.h>
 #include <pgtable.h>
 #include <preempt.h>
+#include <qcbor.h>
 #include <spinlock.h>
 
 #include "event_handlers.h"
@@ -34,10 +35,14 @@ static char *banner = "[HYP] ";
 static void
 uart_write(const char *out, size_t size)
 {
-	size_t	    remain = size;
-	const char *pos	   = out;
+	size_t	       remain = size;
+	static rsize_t blen   = (rsize_t)-1U;
+	const char    *pos    = out;
 
-	for (size_t i = 0; i < strlen(banner); i++) {
+	if (blen == (rsize_t)-1U) {
+		blen = util_strnlen(banner, 16U);
+	}
+	for (size_t i = 0; i < blen; i++) {
 		uart_putc(banner[i]);
 	}
 
@@ -63,7 +68,7 @@ soc_qemu_console_puts(const char *msg)
 {
 	spinlock_acquire(&uart_lock);
 	if (uart != NULL) {
-		uart_write(msg, strlen(msg));
+		uart_write(msg, util_strnlen(msg, 79U));
 	}
 	spinlock_release(&uart_lock);
 }

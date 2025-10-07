@@ -5,6 +5,11 @@
 // FIXME: move this to the vm/address space module
 define vmid_t public newtype uint16;
 
+#if PGTABLE_HYP_PAGE_SIZE != PGTABLE_VM_PAGE_SIZE
+// There are many assumptions these are equal.
+#error Unsupported PAGE_SIZE configuration
+#endif
+
 #if defined(ARCH_AARCH64_USE_S2FWB)
 #if !defined(ARCH_ARM_FEAT_S2FWB)
 #error S2FWB requires ARCH_ARM_FEAT_S2FWB
@@ -99,7 +104,7 @@ define vmsa_common_lower_attrs bitfield<10> {
 	9		unknown;
 };
 
-// common upper attribute structure
+// common upper attribute structure (in the high 14 bits)
 define vmsa_common_upper_attrs bitfield<16> {
 	2:0		unknown = 0;
 	3		DBM			bool = 0;
@@ -110,7 +115,7 @@ define vmsa_common_upper_attrs bitfield<16> {
 	15		unknown = 0;
 };
 
-// page and block stage-1 upper attributes
+// page and block stage-1 upper attributes (in the high 14 bits)
 define vmsa_stg1_upper_attrs bitfield<16> {
 #if defined(ARCH_ARM_FEAT_BTI)
 	1:0		res0			uint8(const) = 0;
@@ -127,9 +132,12 @@ define vmsa_stg1_upper_attrs bitfield<16> {
 	5		unknown = 0;
 	6		XN			bool = 1;
 #endif
-	10:7		SW_Ignored1		uint8 = 0;
+	7		SW_55			bool;
+	8		SW_56			bool;
+	9		SW_57			bool;
+	10		SW_58			bool;
 	14:11		PBHA			uint8 = 0;
-	15		SW_Ignored2		uint8 = 0;
+	15		Ignored_63		bool;
 };
 
 define vmsa_stg1_ap enumeration(explicit) {
@@ -168,10 +176,13 @@ define vmsa_stg2_upper_attrs bitfield<16> {
 	5		unknown = 0;
 	6		XN			bool;
 #endif
-	10:7		SW_Ignored1		uint8 = 0;
+	7		SW_55			bool;
+	8		SW_56			bool;
+	9		SW_57			bool;
+	10		SW_58			bool;
 	// assume ttpbha is implemented
 	14:11		PBHA			uint8 = 0;
-	15		unknown = 0;
+	15		unknown = 0;		// Reserved for SMMU
 };
 
 define vmsa_s2ap enumeration(explicit) {
@@ -185,7 +196,7 @@ define vmsa_stg2_lower_attrs bitfield<10> {
 	3:0		mem_attr		enumeration pgtable_vm_memtype;
 	5:4		S2AP			enumeration vmsa_s2ap = 0;
 	7:6		SH			enumeration vmsa_shareability = 3;
-	8		AF			bool(const) = 1;
+	8		AF			bool = 1;
 	9		unknown = 0;
 };
 
@@ -257,6 +268,19 @@ extend vmsa_table_entry bitfield {
 #endif
 };
 
+// Gunyah extensions to stage 2 page / block upper attrs (software bit usage)
+extend vmsa_stg2_upper_attrs bitfield {
+	// Use one of the software bits to flag the page or block as
+	// unprotected, meaning that it cannot be removed by protected map or
+	// unmap operation. If this flag is clear, a protected map or unmap
+	// operation can remove the page or block, but only if it has been
+	// explicitly unlocked by the owner of the address space. Unlocking a
+	// page will optionally sanitise it and then clear AF in the lower
+	// attrs, so we don't need a second software bit to track that.
+	delete		SW_55;
+	7		unprotected	bool;
+};
+
 define pgtable_stage_type enumeration(noprefix) {
 	PGTABLE_HYP_STAGE_1;
 	PGTABLE_VM_STAGE_2;
@@ -298,7 +322,7 @@ define pgtable_level_info structure {
 	addr_size size;
 	entry_cnt type count_t;
 	level enumeration pgtable_level;
-	contiguous_entry_cnt size;
+	contiguous_entry_cnt type count_t;
 };
 
 // When on a cpu with ARMv8.2-LPA, and using a 52-bit VTCR_EL2.PS setting, the
@@ -318,6 +342,13 @@ define pgtable structure {
 	root pointer bitfield vmsa_general_entry(atomic);
 
 	address_bits type count_t;
+
+	// Set if a full stage 1 TLB invalidate is needed during commit. This
+	// is set to true by any operation that removes or changes an existing
+	// stage 2 mapping without flushing stage 1. It is not set by
+	// operations that work directly on stage 1; those always perform
+	// selective TLB invalidates.
+	s1_inval_needed	bool;
 };
 
 extend pgtable_vm structure {
@@ -347,6 +378,8 @@ define pgtable_translation_table_walk_event enumeration {
 	UNMAP_MATCH;
 	LOOKUP;
 	PREALLOC;
+	MODIFY_PROTECTED;
+	ACCESS_PROTECTED;
 #ifndef NDEBUG
 	DUMP;
 #endif
@@ -375,6 +408,11 @@ define pgtable_map_modifier_args structure {
 	stage enumeration pgtable_stage_type;
 	try_map bool;
 	outer_shareable bool;
+	cont_group uint64;
+	// Only used to determine whether it's ok to remove an existng mapping
+	// in pgtable_modify_mapping(). The unprotected flag for new mappings is
+	// in upper_attrs.
+	unprotected bool;
 };
 
 define pgtable_lookup_modifier_args structure {
@@ -385,6 +423,8 @@ define pgtable_lookup_modifier_args structure {
 };
 
 define pgtable_unmap_modifier_args structure {
+	orig_virtual_address type vmaddr_t;
+	orig_size size;
 	partition pointer object partition;
 	// original virtual address, unchanged
 	preserved_size size;
@@ -393,6 +433,8 @@ define pgtable_unmap_modifier_args structure {
 	size size;
 	stage enumeration pgtable_stage_type;
 	outer_shareable bool;
+	error enumeration error;
+	unprotected bool;
 };
 
 define pgtable_prealloc_modifier_args structure {
@@ -404,5 +446,22 @@ define pgtable_prealloc_modifier_args structure {
 	// With value == -1 means there's no new page table allocated since
 	// level 0 page table is always there.
 	new_page_start_level type index_t;
+	error enumeration error;
+	stage enumeration pgtable_stage_type;
+};
+
+define pgtable_modify_protected_modifier_args structure {
+	partition pointer object partition;
+	modified_size size;
+	orig_size size;
+	outer_shareable bool;
+	unlock bool;
+	sanitise bool;
+	sanitise_limit size;
+	error enumeration error;
+};
+
+define pgtable_access_protected_modifier_args structure {
+	write bool;
 	error enumeration error;
 };

@@ -10,3 +10,10 @@ define irq_trigger enumeration {
 	EDGE_BOTH;
 	MESSAGE;
 };
+
+define irq_range_type enumeration {
+	INVALID = 0;
+};
+
+define irq_range structure {
+};

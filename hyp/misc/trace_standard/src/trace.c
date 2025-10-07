@@ -15,6 +15,7 @@
 #include <hyp_aspace.h>
 #include <panic.h>
 #include <partition.h>
+#include <platform_cpu.h>
 #include <platform_mem.h>
 #include <thread.h>
 #include <trace.h>
@@ -66,16 +67,23 @@ trace_init_common(partition_t *partition, void *base, size_t size,
 			(count_t)(size / (size_t)TRACE_BUFFER_ENTRY_SIZE);
 		local_entries = 0;
 	} else {
-		// Ensure the count is one global buffer + one per each CPU
-		assert(buffer_count == TRACE_BUFFER_NUM);
+		// Ensure the total count is one global buffer + one per CPU
+		assert(buffer_count == (count_t)TRACE_BUFFER_NUM);
+
+		// The actual local buffer count, one for each existing CPU
+		count_t local_buffer_count = platform_get_existing_cpus_count();
+		assert(local_buffer_count < buffer_count);
+
 		// Ensure the size left for the global buffer is at least equal
 		// to the size reserved for each local buffer
-		assert(size >= (PER_CPU_TRACE_ENTRIES *
-				TRACE_BUFFER_ENTRY_SIZE * TRACE_BUFFER_NUM));
+		assert(size > ((size_t)PER_CPU_TRACE_ENTRIES *
+			       (size_t)TRACE_BUFFER_ENTRY_SIZE *
+			       ((size_t)local_buffer_count + 1U)));
+
 		global_entries =
 			(count_t)((size / (size_t)TRACE_BUFFER_ENTRY_SIZE) -
 				  ((size_t)PER_CPU_TRACE_ENTRIES *
-				   PLATFORM_MAX_CORES));
+				   local_buffer_count));
 		local_entries = PER_CPU_TRACE_ENTRIES;
 	}
 
@@ -91,17 +99,21 @@ trace_init_common(partition_t *partition, void *base, size_t size,
 		} else {
 			entries = local_entries;
 		}
-		trace_buffer_header_t *tb = ptr;
-		ptr += entries;
 
-		*tb		= (trace_buffer_header_t){ 0U };
-		tb->buf_magic	= TRACE_MAGIC_BUFFER;
-		tb->entries	= entries - 1U;
-		tb->not_wrapped = true;
+		if ((i == 0U) || platform_cpu_exists((cpu_index_t)(i - 1U))) {
+			trace_buffer_header_t *tb = ptr;
+			ptr += entries;
 
-		atomic_init(&tb->head, 0);
+			*tb		= (trace_buffer_header_t){ 0U };
+			tb->buf_magic	= TRACE_MAGIC_BUFFER;
+			tb->entries	= entries - 1U;
+			tb->not_wrapped = true;
 
-		tbuffers[i] = tb;
+			atomic_init(&tb->head, 0);
+			tbuffers[i] = tb;
+		} else {
+			tbuffers[i] = NULL;
+		}
 	}
 
 	hyp_trace.num_bufs = buffer_count;
@@ -146,7 +158,7 @@ static void
 trace_buffer_init(partition_t *partition, void *base, size_t size)
 	REQUIRE_PREEMPT_DISABLED
 {
-	assert(size != 0);
+	assert(size != 0U);
 	assert(base != NULL);
 
 	trace_buffer_header_t *tbs[TRACE_BUFFER_NUM];
@@ -154,9 +166,11 @@ trace_buffer_init(partition_t *partition, void *base, size_t size)
 	// The global buffer will be the first, followed by the local buffers
 	trace_buffer_global = tbs[0];
 	for (cpu_index_t i = 0U; i < PLATFORM_MAX_CORES; i++) {
-		bitmap_set(tbs[i + 1U]->cpu_mask, i);
+		if (platform_cpu_exists(i)) {
+			bitmap_set(tbs[i + 1U]->cpu_mask, i);
+		}
 		// The global buffer is first, hence the increment by 1
-		CPULOCAL_BY_INDEX(trace_buffer, i) = tbs[i + 1];
+		CPULOCAL_BY_INDEX(trace_buffer, i) = tbs[i + 1U];
 	}
 
 	// Copy the log entries from the boot trace into the newly allocated
@@ -175,7 +189,10 @@ trace_buffer_init(partition_t *partition, void *base, size_t size)
 		char *src_buf = (char *)(tb + 1);
 		char *dst_buf = (char *)(trace_buffer + 1);
 
-		(void)memcpy(dst_buf, src_buf, cpy_size);
+		(void)memscpy(dst_buf,
+			      trace_buffer->entries *
+				      sizeof(trace_buffer_entry_t),
+			      src_buf, cpy_size);
 
 		CACHE_CLEAN_INVALIDATE_RANGE(dst_buf, cpy_size);
 	}
@@ -183,7 +200,8 @@ trace_buffer_init(partition_t *partition, void *base, size_t size)
 	atomic_store_release(&trace_buffer->head, head);
 }
 
-#if defined(PLATFORM_TRACE_STANDALONE_REGION)
+#if defined(PLATFORM_TRACE_STANDALONE_REGION) &&                               \
+	PLATFORM_TRACE_STANDALONE_REGION
 void
 trace_single_region_init(partition_t *partition, paddr_t base, size_t size)
 {
@@ -197,7 +215,7 @@ trace_single_region_init(partition_t *partition, paddr_t base, size_t size)
 void
 trace_init(partition_t *partition, size_t size)
 {
-	assert(size != 0);
+	assert(size != 0U);
 
 	void_ptr_result_t alloc_ret = partition_alloc(
 		partition, size, alignof(trace_buffer_header_t));
@@ -216,9 +234,9 @@ trace_init(partition_t *partition, size_t size)
 // argn: information to store for this trace.
 void
 trace_standard_handle_trace_log(trace_id_t id, trace_action_t action,
-				const char *fmt, register_t arg0,
-				register_t arg1, register_t arg2,
-				register_t arg3, register_t arg4)
+				const char *arg0, register_t arg1,
+				register_t arg2, register_t arg3,
+				register_t arg4, register_t arg5)
 {
 	trace_buffer_header_t *tb;
 	trace_info_t	       trace_info;
@@ -273,17 +291,25 @@ trace_standard_handle_trace_log(trace_id_t id, trace_action_t action,
 
 	entries = tb->entries;
 
-	// Atomically grab the next entry in the buffer
-	head = atomic_fetch_add_explicit(&tb->head, 1, memory_order_consume);
+	// Atomically grab the next entry in the buffer.
+	head = atomic_fetch_add_explicit(&tb->head, 1, memory_order_relaxed);
+
+	// If we wrap, decrement by the number of entries.
 	if (compiler_unexpected(head >= entries)) {
-		index_t new_head = head + 1U;
+		index_t cur_head = head + 1U;
+		do {
+			(void)atomic_compare_exchange_ll_sc_weak(
+				&tb->head, &cur_head, cur_head - entries);
+		} while (cur_head >= entries);
 
+		// We only need to clear this once, however since the
+		// cache-line is likely local and dirty already, its is cheaper
+		// not to read not_wrapped first.
 		tb->not_wrapped = false;
-		head -= entries;
 
-		(void)atomic_compare_exchange_strong_explicit(
-			&tb->head, &new_head, head + 1U, memory_order_relaxed,
-			memory_order_relaxed);
+		head -= entries;
+		// If we reached 2x entries, something is really wrong
+		assert(head < entries);
 	}
 
 	trace_buffer_entry_t *buffers =
@@ -303,9 +329,9 @@ trace_standard_handle_trace_log(trace_id_t id, trace_action_t action,
 		"dc zva, %[entry_addr];"
 #endif
 		"stnp %[info], %[tag], [%[entry_addr], 0];"
-		"stnp %[fmt], %[arg0], [%[entry_addr], 16];"
-		"stnp %[arg1], %[arg2], [%[entry_addr], 32];"
-		"stnp %[arg3], %[arg4], [%[entry_addr], 48];"
+		"stnp %[arg0], %[arg1], [%[entry_addr], 16];"
+		"stnp %[arg2], %[arg3], [%[entry_addr], 32];"
+		"stnp %[arg4], %[arg5], [%[entry_addr], 48];"
 #if ((1 << CPU_L1D_LINE_BITS) <= TRACE_BUFFER_ENTRY_SIZE) &&                   \
 	((1 << CPU_L1D_LINE_BITS) <= TRACE_BUFFER_ENTRY_ALIGN)
 		"dc civac, %[entry_addr];"
@@ -313,20 +339,20 @@ trace_standard_handle_trace_log(trace_id_t id, trace_action_t action,
 		: [entry] "=m"(buffers[head])
 		: [entry_addr] "r"(&buffers[head]),
 		  [info] "r"(trace_info_raw(trace_info)),
-		  [tag] "r"(trace_tag_raw(trace_tag)), [fmt] "r"(fmt),
-		  [arg0] "r"(arg0), [arg1] "r"(arg1), [arg2] "r"(arg2),
-		  [arg3] "r"(arg3), [arg4] "r"(arg4));
+		  [tag] "r"(trace_tag_raw(trace_tag)), [arg0] "r"(arg0),
+		  [arg1] "r"(arg1), [arg2] "r"(arg2), [arg3] "r"(arg3),
+		  [arg4] "r"(arg4), [arg5] "r"(arg5));
 #else
 	prefetch_store_stream(&buffers[head]);
 
 	buffers[head].info    = trace_info;
 	buffers[head].tag     = trace_tag;
-	buffers[head].fmt     = fmt;
-	buffers[head].args[0] = arg0;
-	buffers[head].args[1] = arg1;
-	buffers[head].args[2] = arg2;
-	buffers[head].args[3] = arg3;
-	buffers[head].args[4] = arg4;
+	buffers[head].fmt     = arg0;
+	buffers[head].args[0] = arg1;
+	buffers[head].args[1] = arg2;
+	buffers[head].args[2] = arg3;
+	buffers[head].args[3] = arg4;
+	buffers[head].args[4] = arg5;
 #endif
 
 out:

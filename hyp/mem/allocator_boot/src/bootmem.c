@@ -25,9 +25,10 @@ allocator_boot_handle_boot_runtime_first_init(void)
 	assert((uintptr_t)&heap_private_end > (uintptr_t)&heap_private_start);
 
 	static_assert(
-		PLATFORM_HEAP_PRIVATE_SIZE <= PLATFORM_RW_DATA_SIZE,
+		(size_t)PLATFORM_HEAP_PRIVATE_SIZE <=
+			(size_t)PLATFORM_RW_DATA_SIZE,
 		"PLATFORM_HEAP_PRIVATE_SIZE must be <= PLATFORM_RW_DATA_SIZE");
-	static_assert(PLATFORM_RW_DATA_SIZE >= 0x200000,
+	static_assert((size_t)PLATFORM_RW_DATA_SIZE >= 0x200000U,
 		      "PLATFORM_RW_DATA_SIZE must be >= 2MB");
 
 	// We only give heap within the first 2MB RW page to the bootmem. We

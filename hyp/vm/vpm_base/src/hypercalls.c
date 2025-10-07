@@ -68,7 +68,7 @@ hypercall_vpm_group_attach_vcpu(cap_id_t vpm_group_cap, cap_id_t vcpu_cap,
 
 	vpm_group_ptr_result_t vpm_group_r = cspace_lookup_vpm_group(
 		cspace, vpm_group_cap, CAP_RIGHTS_VPM_GROUP_ATTACH_VCPU);
-	if (compiler_unexpected(vpm_group_r.e) != OK) {
+	if (compiler_unexpected(vpm_group_r.e != OK)) {
 		err = vpm_group_r.e;
 		goto out;
 	}

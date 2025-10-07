@@ -1,4 +1,5 @@
 // © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// All Rights Reserved.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -46,9 +47,9 @@ object_lists_handle_boot_cold_init(void)
 }
 
 error_t
-object_lists_handle_object_create_partition(partition_create_t create)
+object_lists_handle_object_create_partition(partition_create_t partition_create)
 {
-	partition_t *partition = create.partition;
+	partition_t *partition = partition_create.partition;
 
 	spinlock_acquire(&partition_list_lock);
 	list_insert_at_tail_release(&partition_list, &partition->partition_list_node);
@@ -94,9 +95,9 @@ object_lists_handle_object_cleanup_partition(partition_t *partition)
 #end if
 
 error_t
-object_lists_handle_object_create_${o}(${o}_create_t create)
+object_lists_handle_object_create_${o}(${o}_create_t ${o}_create)
 {
-	${o}_t *${o} = create.${o};
+	${o}_t *${o} = ${o}_create.${o};
 
 	partition_t *partition = ${o}->header.partition;
 

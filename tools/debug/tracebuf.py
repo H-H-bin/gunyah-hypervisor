@@ -55,6 +55,11 @@ TRACE_IDS = {
     131: "WAIT_QUEUE_SLEEP",
     132: "WAIT_QUEUE_RESUME",
     133: "WAIT_QUEUE_FREE",
+    134: "WAIT_QUEUE_GET_RESOURCE_ID",
+    4096: "PROFILE_EL2_ENTRY",
+    4097: "PROFILE_EL2_EXIT",
+    4098: "PROFILE_EL2_NESTED_ENTRY",
+    4099: "PROFILE_EL2_NESTED_EXIT",
 }
 
 
@@ -107,7 +112,7 @@ def main():
                                            'llvm-objcopy')
                 except KeyError:
                     print("Error environment var LLVM or QCOM_LLVM not set")
-                    pass
+                    raise
 
             subprocess.check_call([objcopy, '-j', '.text',
                                    '-j', '.rodata', '-O', 'binary',
@@ -260,6 +265,8 @@ def read_entries(args):
         print("Unexpected magic number {:#x}".format(magic))
         raise StopIteration
 
+    version = struct.unpack('<H', header[62:64])[0]
+
     cpu_mask = struct.unpack(endian + 'QQQQ', header[8:40])
 
     cpu_mask = cpu_mask[0] | (cpu_mask[1] << 64) | (cpu_mask[2] << 128) | \
@@ -285,10 +292,13 @@ def read_entries(args):
     # Check if this buffer has wrapped around. Since the older traces that
     # don't implement this flag will read it as zero, to stay backwards
     # compatible, we decode a 0 as "wrapped" and 1 as "unwrapped".
-    wrapped = True if header[44:45] == b'\x00' else False
+    if version != 0:
+        print("Unexpected version number {:#x}", version)
+    not_wrapped = struct.unpack('?', header[44:45])[0]
+
     # If wrapped around or old format, read the whole buffer, otherwise only
     # read the valid entries
-    entry_count = entries_max if wrapped else head_index
+    entry_count = head_index if not_wrapped else entries_max
 
     if entry_count == 0:
         # Empty buffer, skip over the unused bytes
@@ -296,7 +306,8 @@ def read_entries(args):
         args.input.seek(entries_max * 64, 1)
         return iter(())
     else:
-        print("  Found {:d} entries. Wrapped: {}".format(entry_count, wrapped))
+        print("  Found {:d} entries. Wrapped: {}".format(
+            entry_count, not not_wrapped))
 
     warn = True
     entries = []
@@ -327,10 +338,14 @@ def read_entries(args):
         else:
             header_string = "=== CPU {:s} TRACE ===\n".format(cpus)
 
-    if not wrapped or (head_index == entries_max):
+    if not_wrapped or (head_index == entries_max):
         first_index = 0
     else:
         first_index = head_index
+
+    if first_index >= len(entries):
+        print("  trace corrupt or incomplete")
+        first_index = 0
 
     # Add the same timestamp as the first entry
     entry_header = LogEntry(entries[first_index].ticks, 0, header_string)
@@ -342,7 +357,7 @@ def read_entries(args):
     else:
         entry_iter = itertools.chain([entry_header], entries)
 
-    if not wrapped:
+    if not_wrapped:
         # Skip over the unused bytes
         if args.input.seekable():
             args.input.seek((entries_max - head_index) * 64, 1)

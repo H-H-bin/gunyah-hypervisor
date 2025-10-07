@@ -195,10 +195,12 @@ platform_timer_lp_set_timeout_and_route(ticks_t timeout, cpu_index_t cpu_index)
 
 #if defined(MODULE_VM_ROOTVM)
 void
-platform_timer_lp_handle_rootvm_init(cspace_t *cspace, hyp_env_data_t *hyp_env)
+platform_timer_lp_handle_rootvm_init(cspace_t	    *root_cspace,
+				     hyp_env_data_t *hyp_env)
 {
-	memextent_ptr_result_t m = cspace_lookup_memextent(
-		cspace, hyp_env->device_me_capid, CAP_RIGHTS_MEMEXTENT_DERIVE);
+	memextent_ptr_result_t m =
+		cspace_lookup_memextent(root_cspace, hyp_env->device_me_capid,
+					CAP_RIGHTS_MEMEXTENT_DERIVE);
 	if (compiler_unexpected(m.e != OK)) {
 		panic("Failed to find device memextent.");
 	}

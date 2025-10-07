@@ -1,0 +1,43 @@
+// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define watchdog_attach_vcpu hypercall {
+	call_num	0x40;
+	watchdog	input type cap_id_t;
+	vcpu		input type cap_id_t;
+	res0		input uregister;
+	error		output enumeration error;
+};
+
+define watchdog_bind_virq hypercall {
+	call_num	0x41;
+	watchdog	input type cap_id_t;
+	vic		input type cap_id_t;
+	virq		input type virq_t;
+	bind_options	input bitfield watchdog_bind_option_flags;
+	error		output enumeration error;
+};
+
+define watchdog_unbind_virq hypercall {
+	call_num	0x42;
+	watchdog	input type cap_id_t;
+	unbind_options	input bitfield watchdog_bind_option_flags;
+	error		output enumeration error;
+};
+
+define watchdog_configure hypercall {
+	call_num		0x58;
+	watchdog		input type cap_id_t;
+	watchdog_options	input bitfield watchdog_option_flags;
+	res0			input uregister;
+	error			output enumeration error;
+};
+
+define watchdog_manage hypercall {
+	call_num		0x63;
+	watchdog		input type cap_id_t;
+	operation		input enumeration watchdog_manage_op;
+	res0			input uregister;
+	error			output enumeration error;
+};

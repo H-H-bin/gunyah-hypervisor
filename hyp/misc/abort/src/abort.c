@@ -50,7 +50,7 @@ abort_handle_ipi_received(void)
 }
 
 noreturn void NOINLINE COLD
-abort(const char *str, abort_reason_t reason) LOCK_IMPL
+abort_kernel(const char *str, abort_reason_t reason) LOCK_IMPL
 {
 	void *from  = __builtin_return_address(0);
 	void *frame = __builtin_frame_address(0);

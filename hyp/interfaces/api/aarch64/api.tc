@@ -1,0 +1,15 @@
+// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+extend hyp_api_flags1 bitfield {
+	delete	arch_reserved;
+	0	arm_v82_sve	bool = 0;
+#if defined(INTERFACE_VGIC)
+	// Unfortunately we can't guarantee the .tc file processing order, so
+	// if the VGIC module adds its own flags, the `arch_reserved` may not
+	// have been deleted yet.
+	1	vgic_ext_spis	bool = VGIC_HAS_EXT_SPIS;
+	2	vgic_ext_ppis	bool = VGIC_HAS_EXT_PPIS;
+#endif
+};

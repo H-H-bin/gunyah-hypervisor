@@ -1,8 +1,11 @@
+## Guest Interface Template
+##
+## © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+##
+## SPDX-License-Identifier: BSD-3-Clause
+// Gunyah Hypervisor hypercall C bindings.
+//
 // Automatically generated. Do not modify.
-//
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
-//
-// SPDX-License-Identifier: BSD-3-Clause
 #extends hypercall_api
 #implements respond
 #def prefix: $public_prefix
@@ -25,19 +28,31 @@
         const
         #end if
 #slurp
-        register uint${input.size * 8}_t#slurp
+        ## FIXME:
+        #assert $hypcall.abi.register_size == 8
+        #if $input.is_signed
+        register sregister_t#slurp
+        #else
+        register register_t#slurp
+        #end if
         in_${in_reg}_ __asm__("$in_reg") = #slurp
         #if $input.ignore
         ${hex(input.default)}U;
+        #else if $input.is_signed
+        (sregister_t)$register_expr($input);
         #else
-        (uint${input.size * 8}_t)($register_expr($input));
+        (register_t)$register_expr($input);
         #end if
         #if $input.pointer
             #set $has_pointer = True
         #end if
     #end for
     #for $out_reg, $output in $hypcall.outputs
+        #if $output.category == 'enumeration'
+        register ${output.ctype}#slurp
+        #else
         register uint${output.size * 8}_t#slurp
+        #end if
         out_${out_reg}_ __asm__("$out_reg");
         #if $output.pointer
             #set $has_pointer = True
@@ -52,7 +67,7 @@
         #set sep = ', '
     #end for
     #for $in_reg, _ in $hypcall.inputs
-	#if in_reg not in outregs
+        #if in_reg not in outregs
         ${sep}"+r"(in_${in_reg}_) #slurp
         #set sep = ', '
         #end if
@@ -60,7 +75,7 @@
         : #slurp
     #set sep = ''
     #for $in_reg, _ in $hypcall.inputs
-	#if in_reg in outregs
+        #if in_reg in outregs
         ${sep}"r"(in_${in_reg}_) #slurp
         #set sep = ', '
         #end if

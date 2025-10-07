@@ -52,9 +52,9 @@ copy_rm_env_data_to_rootvm_mem(hyp_env_data_t		hyp_env,
 	void *va = partition_phys_map(hyp_env_phys, env_data_size);
 	partition_phys_access_enable(va);
 
-	(void)memcpy(va, (void *)crt_env,
-		     (rm_env_data->data_payload_size + sizeof(*rm_env_data) +
-		      sizeof(*crt_env)));
+	(void)memscpy(va, env_data_size, (void *)crt_env,
+		      (rm_env_data->data_payload_size + sizeof(*rm_env_data) +
+		       sizeof(*crt_env)));
 	CACHE_CLEAN_RANGE((rm_env_data_hdr_t *)va,
 			  (rm_env_data->data_payload_size +
 			   sizeof(*rm_env_data) + sizeof(*crt_env)));
@@ -98,7 +98,7 @@ rootvm_init_env_data(partition_t *root_partition, uint32_t env_data_size)
 
 	rm_env_data_hdr_t *rm_env_data;
 	rt_env_data_t	  *crt_env;
-	uint32_t	   remaining_size;
+	size_t		   remaining_size;
 
 	alloc_ret = partition_alloc(root_partition, env_data_size,
 				    PGTABLE_VM_PAGE_SIZE);
@@ -140,7 +140,7 @@ rootvm_init_env_data(partition_t *root_partition, uint32_t env_data_size)
 
 	rm_env_data->signature		 = RM_ENV_DATA_SIGNATURE;
 	rm_env_data->version		 = 1;
-	rm_env_data->data_payload_offset = sizeof(*rm_env_data);
+	rm_env_data->data_payload_offset = (uint32_t)sizeof(*rm_env_data);
 	rm_env_data->data_payload_size	 = 0U;
 
 	remaining_size -= sizeof(*rm_env_data);
@@ -320,7 +320,7 @@ rootvm_init(void)
 	// Allow other modules to clean up after root VM creation.
 	trigger_rootvm_started_event(root_thread);
 	scheduler_unlock_nopreempt(root_thread);
-	(void)partition_free(root_partition, crt_env, env_data_size);
+	partition_free(root_partition, crt_env, env_data_size);
 	rm_env_data = NULL;
 
 	return;

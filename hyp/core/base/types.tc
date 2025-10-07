@@ -20,6 +20,8 @@ define error public enumeration(explicit) {
 	ADDR_OVERFLOW = 20;
 	ADDR_UNDERFLOW = 21;
 	ADDR_INVALID = 22;
+	ADDR_OVERLAP = 23;
+	ADDR_NOTFOUND = 24;
 
 	// Generic Calling Errors
 	DENIED = 30;

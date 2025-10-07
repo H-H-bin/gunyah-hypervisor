@@ -4,4 +4,5 @@
 
 extend platform_cpu_features bitfield {
 	auto		scxt_disable	bool = 1;
+	auto		trace_disable	bool = 1;
 };

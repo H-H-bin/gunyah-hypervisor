@@ -5,4 +5,4 @@
 module allocator_boot
 
 subscribe boot_runtime_first_init ()
-	priority first
+	priority 1000

@@ -8,6 +8,7 @@
 
 #include <hypregisters.h>
 
+#include <addrspace.h>
 #include <compiler.h>
 #include <partition.h>
 #include <pgtable.h>
@@ -20,58 +21,33 @@
 
 #include "useraccess.h"
 
-static void
-useraccess_clean_range(const uint8_t *va, size_t size)
-{
-	CACHE_CLEAN_RANGE(va, size);
-}
-
-static void
-useraccess_clean_invalidate_range(const uint8_t *va, size_t size)
-{
-	CACHE_CLEAN_INVALIDATE_RANGE(va, size);
-}
-
 static size_t
-useraccess_copy_from_to_translated_pa(PAR_EL1_t par, gvaddr_t guest_va,
-				      size_t page_size, size_t page_offset,
+useraccess_copy_from_to_translated_pa(addrspace_va_lookup_t lookup,
 				      bool from_guest, void *hyp_buf,
 				      size_t remaining)
 {
-	paddr_t guest_pa = PAR_EL1_F0_get_PA(&par.f0);
-	guest_pa |= (paddr_t)guest_va & (page_size - 1U);
-
-	size_t mapped_size = page_size - page_offset;
-	void  *va	   = partition_phys_map(guest_pa, mapped_size);
-
-	MAIR_ATTR_t attr = PAR_EL1_F0_get_ATTR(&par.f0);
-	bool writeback = ((index_t)attr | (index_t)MAIR_ATTR_ALLOC_HINT_MASK) ==
-			 (index_t)MAIR_ATTR_NORMAL_WB;
-#if defined(ARCH_ARM_FEAT_MTE)
-	writeback = writeback || (attr == MAIR_ATTR_TAGGED_NORMAL_WB);
-#endif
+	void *va = partition_phys_map(lookup.phys, lookup.size);
 
 	partition_phys_access_enable(va);
 
-	if (compiler_unexpected(from_guest && !writeback)) {
-		useraccess_clean_range((uint8_t *)va,
-				       util_min(remaining, mapped_size));
+	if (compiler_unexpected(from_guest && !lookup.coherent)) {
+		cache_clean_range(va, util_min(remaining, lookup.size));
 	}
 
 	size_t copied_size;
 	if (from_guest) {
-		copied_size = memscpy(hyp_buf, remaining, va, mapped_size);
+		copied_size = memscpy(hyp_buf, remaining, va, lookup.size);
 	} else {
-		copied_size = memscpy(va, mapped_size, hyp_buf, remaining);
+		copied_size = memscpy(va, lookup.size, hyp_buf, remaining);
 	}
 
-	if (compiler_unexpected(!from_guest && !writeback)) {
-		useraccess_clean_invalidate_range((uint8_t *)va, copied_size);
+	if (compiler_unexpected(!from_guest && !lookup.coherent)) {
+		cache_clean_invalidate_range(va, copied_size);
 	}
 
 	partition_phys_access_disable(va);
 
-	partition_phys_unmap(va, guest_pa, mapped_size);
+	partition_phys_unmap(va, lookup.phys, lookup.size);
 
 	return copied_size;
 }
@@ -94,64 +70,31 @@ useraccess_copy_from_to_guest_va(gvaddr_t gvaddr, void *hvaddr, size_t size,
 		goto out;
 	}
 
-	PAR_EL1_base_t saved_par =
-		register_PAR_EL1_base_read_volatile_ordered(&asm_ordering);
-
-	const size_t page_size	 = 4096U;
-	size_t	     page_offset = gvaddr & (page_size - 1U);
-
 	do {
 		// Guest stage 2 lookups are in RCU read-side critical sections
 		// so that unmap or access change operations can wait for them
 		// to complete.
 		rcu_read_start();
 
-		if (from_guest || force_access) {
-			__asm__ volatile("at S12E1R, %[guest_va];"
-					 "isb                   ;"
-					 : "+m"(asm_ordering)
-					 : [guest_va] "r"(guest_va));
-		} else {
-			__asm__ volatile("at S12E1W, %[guest_va];"
-					 "isb                   ;"
-					 : "+m"(asm_ordering)
-					 : [guest_va] "r"(guest_va));
-		}
+		addrspace_va_lookup_result_t lookup_r = addrspace_va_to_pa(
+			guest_va, !from_guest && !force_access);
 
-		PAR_EL1_t par = {
-			.base = register_PAR_EL1_base_read_volatile_ordered(
-				&asm_ordering),
-		};
-
-		if (compiler_expected(!PAR_EL1_base_get_F(&par.base))) {
+		if (compiler_expected(lookup_r.e == OK)) {
 			// No fault; copy to/from the translated PA
 			size_t copied_size =
 				useraccess_copy_from_to_translated_pa(
-					par, guest_va, page_size, page_offset,
-					from_guest, hyp_buf, remaining);
+					lookup_r.r, from_guest, hyp_buf,
+					remaining);
 			assert(copied_size > 0U);
 			guest_va += copied_size;
 			hyp_buf = (void *)((uintptr_t)hyp_buf + copied_size);
 			remaining -= copied_size;
-			page_offset = 0U;
-		} else if (!PAR_EL1_F1_get_S(&par.f1)) {
-			// Stage 1 fault (reason is not distinguished here)
-			ret = ERROR_ARGUMENT_INVALID;
 		} else {
-			// Stage 2 fault; return DENIED for permission faults,
-			// ADDR_INVALID otherwise
-			iss_da_ia_fsc_t fst = PAR_EL1_F1_get_FST(&par.f1);
-			ret = ((fst == ISS_DA_IA_FSC_PERMISSION_1) ||
-			       (fst == ISS_DA_IA_FSC_PERMISSION_2) ||
-			       (fst == ISS_DA_IA_FSC_PERMISSION_3))
-				      ? ERROR_DENIED
-				      : ERROR_ADDR_INVALID;
+			ret = lookup_r.e;
 		}
 
 		rcu_read_finish();
 	} while ((remaining != 0U) && (ret == OK));
-
-	register_PAR_EL1_base_write_ordered(saved_par, &asm_ordering);
 
 out:
 	return (size_result_t){ .e = ret, .r = size - remaining };
@@ -245,8 +188,8 @@ useraccess_copy_from_to_guest_ipa(addrspace_t *addrspace, vmaddr_t ipa,
 		if (from_guest) {
 			if (force_coherent ||
 			    (mapped_memtype != PGTABLE_VM_MEMTYPE_NORMAL_WB)) {
-				useraccess_clean_invalidate_range(
-					vm_addr,
+				cache_clean_invalidate_range(
+					(void *)vm_addr,
 					util_min(mapped_size, hyp_size));
 			}
 
@@ -258,7 +201,7 @@ useraccess_copy_from_to_guest_ipa(addrspace_t *addrspace, vmaddr_t ipa,
 
 			if (force_coherent ||
 			    (mapped_memtype != PGTABLE_VM_MEMTYPE_NORMAL_WB)) {
-				useraccess_clean_range(vm_addr, copied_size);
+				cache_clean_range((void *)vm_addr, copied_size);
 			}
 		}
 

@@ -48,4 +48,4 @@ thread_arch_switch_thread(thread_t *next_thread, ticks_t *schedtime);
 //
 // This function is called at the end of the CPU power-on sequence.
 noreturn void
-thread_arch_set_thread(thread_t *next_thread) REQUIRE_PREEMPT_DISABLED;
+thread_arch_set_thread(thread_t *thread) REQUIRE_PREEMPT_DISABLED;

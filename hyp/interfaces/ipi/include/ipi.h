@@ -113,6 +113,18 @@ ipi_clear_relaxed(ipi_reason_t ipi) REQUIRE_PREEMPT_DISABLED;
 
 // Immediately handle any relaxed IPIs.
 //
+// This function may also handle regular (non-relaxed) IPIs that are pending,
+// but this is not guaranteed. An acquire barrier is implied before any IPI that
+// is cleared and handled. No barrier is implied in the case that no pending IPI
+// is found.
+//
 // Returns true if a reschedule is needed.
 bool
 ipi_handle_relaxed(void) REQUIRE_PREEMPT_DISABLED;
+
+// Check whether any relaxed IPIs are currently pending.
+//
+// This function may also return true if regular (non-relaxed) IPIs are pending,
+// but this is not guaranteed. No barrier is implied.
+bool
+ipi_check_relaxed(void) REQUIRE_PREEMPT_DISABLED;

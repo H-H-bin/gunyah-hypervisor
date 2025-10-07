@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <hyptypes.h>
 
+#include <addrspace.h>
 #include <atomic.h>
 #include <compiler.h>
 #include <panic.h>
@@ -38,7 +39,7 @@ smccc_pv_time_features(uint64_t arg1, uint64_t *ret0)
 			break;
 		case SMCCC_STANDARD_HYP_FUNCTION_PV_TIME_ST: {
 			thread_t *current = thread_get_self();
-			if (current->addrspace->info_area.me != NULL) {
+			if (current->arm_pv_time.data != NULL) {
 				ret = 0;
 			}
 			break;
@@ -64,14 +65,8 @@ smccc_pv_time_st(uint64_t arg1, uint64_t *ret0)
 	thread_t *current = thread_get_self();
 	uint64_t  ret	  = SMCCC_UNKNOWN_FUNCTION64;
 
-	if (current->addrspace->info_area.me != NULL) {
-		index_t index = current->vgic_gicr_index;
-		assert(index < PLATFORM_MAX_CORES);
-		size_t offset = offsetof(addrspace_info_area_layout_t,
-					 pv_time_data[index]);
-		assert((offset + sizeof(pv_time_data_t)) <=
-		       current->addrspace->info_area.me->size);
-		ret = current->addrspace->info_area.ipa + offset;
+	if (current->arm_pv_time.data != NULL) {
+		ret = current->arm_pv_time.ipa;
 	}
 
 	*ret0 = ret;
@@ -96,6 +91,8 @@ arm_pv_time_handle_object_create_thread(thread_create_t thread_create)
 bool
 arm_pv_time_handle_vcpu_activate_thread(thread_t *thread)
 {
+	bool success;
+
 	assert(thread != NULL);
 
 	arm_pv_time_self_block_state_t new_state =
@@ -104,19 +101,25 @@ arm_pv_time_handle_vcpu_activate_thread(thread_t *thread)
 					       SCHEDULER_BLOCK_VCPU_OFF);
 	atomic_store_relaxed(&thread->arm_pv_time.self_block, new_state);
 
-	if ((thread->addrspace->info_area.me != NULL)) {
-		index_t index = thread->vgic_gicr_index;
-		assert(index < PLATFORM_MAX_CORES);
-		assert(thread->addrspace->info_area.hyp_va != NULL);
-		thread->arm_pv_time.data = &thread->addrspace->info_area.hyp_va
-						    ->pv_time_data[index];
+	addrspace_alloc_info_area_result_t info_area_r =
+		addrspace_alloc_info_area(thread->addrspace,
+					  sizeof(pv_time_data_t),
+					  alignof(pv_time_data_t), false);
+	if (info_area_r.e == OK) {
+		thread->arm_pv_time.data = (pv_time_data_t *)info_area_r.ptr;
+		thread->arm_pv_time.ipa	 = info_area_r.ipa;
 
 		thread->arm_pv_time.data->revision   = 0U;
 		thread->arm_pv_time.data->attributes = 0U;
 		atomic_init(&thread->arm_pv_time.data->stolen_ns, 0U);
+		success = true;
+	} else {
+		// ERROR_IDLE indicates that there is no info area, so there is
+		// no need to report PV time.
+		success = info_area_r.e == ERROR_IDLE;
 	}
 
-	return true;
+	return success;
 }
 
 void

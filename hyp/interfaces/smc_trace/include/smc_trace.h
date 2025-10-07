@@ -8,11 +8,11 @@
 // or internally in the hypervisor.
 
 #define SMC_TRACE_CURRENT(id, num)                                             \
-	static_assert(num <= SMC_TRACE_REG_MAX, "num out of range");           \
-	smc_trace_log(id,                                                      \
+	static_assert((num) <= SMC_TRACE_REG_MAX, "num out of range");         \
+	smc_trace_log((id),                                                    \
 		      (register_t(*)[SMC_TRACE_REG_MAX]) &                     \
 			      thread_get_self()->vcpu_regs_gpr.x[0],           \
-		      num)
+		      (num))
 
 void
 smc_trace_init(partition_t *partition);

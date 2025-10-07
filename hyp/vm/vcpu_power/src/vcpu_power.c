@@ -39,19 +39,24 @@ vcpu_power_handle_vcpu_poweron(thread_t *vcpu)
 		ret = OK;
 	}
 
+	if (ret != OK) {
+		// Failed to power on vcpu rollback the vote flag
+		vcpu->vcpu_power_should_vote = false;
+	}
+
 	return ret;
 }
 
 error_t
-vcpu_power_handle_vcpu_poweroff(thread_t *vcpu)
+vcpu_power_handle_vcpu_poweroff(thread_t *current)
 {
-	assert((vcpu != NULL) && vcpu->vcpu_power_should_vote);
-	vcpu->vcpu_power_should_vote = false;
+	assert((current != NULL) && current->vcpu_power_should_vote);
+	current->vcpu_power_should_vote = false;
 
-	cpu_index_t cpu	     = scheduler_get_affinity(vcpu);
+	cpu_index_t cpu	     = scheduler_get_affinity(current);
 	bool	    can_vote = cpulocal_index_valid(cpu);
 #if defined(INTERFACE_VCPU_RUN)
-	if (vcpu_run_is_enabled(vcpu)) {
+	if (vcpu_run_is_enabled(current)) {
 		can_vote = false;
 	}
 #endif
@@ -104,24 +109,24 @@ vcpu_power_handle_vcpu_run_enabled(thread_t *vcpu)
 #endif
 
 error_t
-vcpu_power_handle_scheduler_set_affinity_prepare(thread_t   *vcpu,
+vcpu_power_handle_scheduler_set_affinity_prepare(thread_t   *thread,
 						 cpu_index_t prev_cpu,
 						 cpu_index_t next_cpu)
 {
 	error_t ret = OK;
 	assert(prev_cpu != next_cpu);
 
-	if (vcpu->kind != THREAD_KIND_VCPU) {
+	if (thread->kind != THREAD_KIND_VCPU) {
 		goto out;
 	}
 
 #if defined(INTERFACE_VCPU_RUN)
-	if (vcpu_run_is_enabled(vcpu)) {
+	if (vcpu_run_is_enabled(thread)) {
 		goto out;
 	}
 #endif
 
-	if (vcpu->vcpu_power_should_vote) {
+	if (thread->vcpu_power_should_vote) {
 		if (cpulocal_index_valid(next_cpu)) {
 			ret = power_vote_cpu_on(next_cpu);
 		}

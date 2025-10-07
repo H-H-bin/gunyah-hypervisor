@@ -14,10 +14,11 @@ allocator_init(allocator_t *allocator);
 
 void_ptr_result_t
 allocator_allocate_object(allocator_t *allocator, size_t size,
-			  size_t min_alignment);
+			  size_t min_alignment, allocator_hint_t hint);
 
-error_t
-allocator_deallocate_object(allocator_t *allocator, void *object, size_t size);
+void
+allocator_deallocate_object(allocator_t *allocator, void *object, size_t size,
+			    allocator_memattr_t attr);
 
 error_t
 allocator_heap_remove_memory(allocator_t *allocator, void *obj, size_t size);

@@ -2,28 +2,16 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-// FIXME: Get this from the addrspace instead?
-define VDEVICE_MAX_GPT_BITS constant type count_t = 44;
-
 extend memextent object {
 	vdevice		pointer(atomic) structure vdevice;
 };
 
 extend vdevice structure {
 	addrspace	pointer object addrspace;
-	ipa		type vmaddr_t;
-	size		size;
+	range		structure range_tree_node(contained);
 };
 
 extend addrspace object {
-	vdevice_gpt	structure gpt;
+	vdevice_tree	structure range_tree;
 	vdevice_lock	structure spinlock;
-};
-
-extend gpt_type enumeration {
-	vdevice;
-};
-
-extend gpt_value union {
-	vdevice		pointer structure vdevice;
 };

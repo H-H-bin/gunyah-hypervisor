@@ -33,6 +33,7 @@
 #include <timer_queue.h>
 #include <trace.h>
 #include <trace_helpers.h>
+#include <util.h>
 #include <vcpu.h>
 #include <vic.h>
 #include <virq.h>
@@ -50,11 +51,8 @@
 void
 psci_pc_handle_boot_cold_init(void)
 {
-#if !defined(PSCI_SET_SUSPEND_MODE_NOT_SUPPORTED) ||                           \
-	!PSCI_SET_SUSPEND_MODE_NOT_SUPPORTED
 	error_t ret = platform_psci_set_suspend_mode(PSCI_MODE_PC);
-	assert(ret == OK);
-#endif
+	assert((ret == OK) || (ret == ERROR_UNIMPLEMENTED));
 }
 
 uint32_t
@@ -66,6 +64,26 @@ psci_cpu_suspend_features(void)
 	ret = 2U;
 
 	return ret;
+}
+
+psci_suspend_powerstate_stateid_t
+psci_vcpu_get_poweroff_state(thread_t *vcpu, cpu_index_t cpu,
+			     register_t prev_online)
+{
+	(void)vcpu;
+	(void)prev_online;
+	psci_suspend_powerstate_stateid_t stateid;
+
+	// FIXME:
+#if !defined(PSCI_AFFINITY_LEVELS_NOT_SUPPORTED) ||                            \
+	!PSCI_AFFINITY_LEVELS_NOT_SUPPORTED
+	stateid = platform_psci_deepest_cluster_level_stateid(
+		cpu, PLATFORM_MAX_HIERARCHY);
+#else
+	stateid = platform_psci_deepest_cpu_level_stateid(cpu);
+#endif
+
+	return stateid;
 }
 
 bool
@@ -98,7 +116,7 @@ error_t
 psci_pc_handle_object_activate_vpm_group(vpm_group_t *pg)
 {
 	spinlock_init(&pg->psci_lock);
-	task_queue_init(&pg->psci_virq_task, TASK_QUEUE_CLASS_VPM_GROUP_VIRQ);
+	task_queue_init(&pg->psci_virq_task);
 
 	// Default psci mode to be platfom-coordinated
 	pg->psci_mode = PSCI_MODE_PC;
@@ -309,11 +327,7 @@ psci_pc_handle_idle_yield(bool in_idle_thread)
 			PSCI_SUSPEND_POWERSTATE_TYPE_STANDBY_OR_RETENTION);
 	}
 
-	bool last_cpu = false;
-
-	if (psci_clear_vpm_active_pcpus_bit(cpu)) {
-		last_cpu = true;
-	}
+	(void)psci_clear_vpm_active_pcpus_bit(cpu);
 
 	// Fence to prevent any power_cpu_suspend event handlers conditional on
 	// last_cpu (especially the trigger of power_system_suspend) being
@@ -322,10 +336,8 @@ psci_pc_handle_idle_yield(bool in_idle_thread)
 	atomic_thread_fence(memory_order_seq_cst);
 
 	error_t suspend_result = trigger_power_cpu_suspend_event(
-		pstate,
-		psci_suspend_powerstate_get_StateType(&pstate) ==
-			PSCI_SUSPEND_POWERSTATE_TYPE_POWERDOWN,
-		last_cpu);
+		pstate, psci_suspend_powerstate_get_StateType(&pstate) ==
+				PSCI_SUSPEND_POWERSTATE_TYPE_POWERDOWN);
 	if (suspend_result == OK) {
 		bool_result_t ret;
 

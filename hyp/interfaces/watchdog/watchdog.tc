@@ -1,0 +1,33 @@
+// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+extend cap_rights_watchdog bitfield
+{
+	0	attach_vcpu bool;
+	1	bind_virq bool;
+	2	manage bool;
+};
+
+#if defined(HYPERCALLS)
+extend hyp_api_flags0 bitfield {
+	delete	watchdog;
+	8	watchdog bool = 1;
+};
+
+define watchdog_manage_op public enumeration(explicit) {
+	freeze = 0;
+	freeze_and_reset = 1;
+	unfreeze = 2;
+};
+#endif
+
+define watchdog_option_flags public bitfield<64> {
+	0	critical_bite	bool = 0;
+	others	unknown = 0;
+};
+
+define watchdog_bind_option_flags public bitfield<64> {
+	0	bite_virq	bool = 0;
+	others	unknown = 0;
+};

@@ -57,9 +57,16 @@ class Variable:
         self.name = name
         self.size = type_definition.size
         self.category = type_definition.category
-        if type_definition.category == "bitfield":
+        if self.category != "union":
+            if type_definition.is_signed and \
+               (self.category not in ["primitive", "enumeration"]):
+                raise Exception("Unhandled signed type")
+            self.is_signed = type_definition.is_signed
+        else:
+            self.is_signed = False
+        if self.category == "bitfield":
             self.type_name = type_definition.type_name
-        if type_definition.category == "union":
+        elif self.category == "union":
             try:
                 raw_type, _ = type_definition.named_member('raw')
                 assert raw_type.size == self.size

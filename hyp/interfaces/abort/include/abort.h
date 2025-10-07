@@ -3,4 +3,4 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 noreturn void
-abort(const char *str, abort_reason_t reason);
+abort_kernel(const char *str, abort_reason_t reason);

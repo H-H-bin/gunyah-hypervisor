@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Checks that the suspend state is valid
 //
+// Gets the cluster mask for the respective cpu
+register_t
+platform_cluster_mask(cpu_index_t cpu);
 // This function checks that the pcpu supports the cpu and cluster level
 // state specified. If the specified state is not valid, then it returns
 // PSCI_RET_INVALID_PARAMETERS.
@@ -40,6 +43,8 @@ platform_psci_is_cpu_active(psci_cpu_state_t cpu_state);
 bool
 platform_psci_is_cpu_poweroff(psci_cpu_state_t cpu_state);
 
+#if PLATFORM_MAX_HIERARCHY == 2
+
 // Returns true if cluster state is in active state
 bool
 platform_psci_is_cluster_active(psci_cluster_state_L3_t cluster_state);
@@ -47,6 +52,18 @@ platform_psci_is_cluster_active(psci_cluster_state_L3_t cluster_state);
 // Returns the cluster indices
 uint32_t
 platform_psci_get_cluster_index(cpu_index_t cpu);
+
+#elif PLATFORM_MAX_HIERARCHY == 1
+
+// Returns the cluster indices
+static inline uint32_t
+platform_psci_get_cluster_index(cpu_index_t cpu)
+{
+	(void)cpu;
+	return 0U;
+}
+
+#endif
 
 // Returns the start index of children in hierarchy/counts based on level and
 // cpu
@@ -59,10 +76,6 @@ platform_psci_get_index_by_level(cpu_index_t cpu, uint32_t *start_idx,
 // Checks if cluster state corresponds to a power off state
 bool
 platform_psci_is_cluster_state_poweroff(psci_suspend_powerstate_t suspend_state);
-
-// Returns true if cluster state is in active state
-bool
-platform_psci_is_cluster_active(psci_cluster_state_L3_t cluster_state);
 
 // Checks if cluster state corresponds to a retention state
 bool
@@ -87,6 +100,15 @@ platform_psci_get_system_state(psci_suspend_powerstate_t suspend_state);
 void
 platform_psci_set_system_state(psci_suspend_powerstate_t *suspend_state,
 			       psci_system_state_t	  system_state);
+
+// Returns the deepest cluster-level suspend state supported by the system
+psci_system_state_t
+platform_psci_deepest_system_state(void);
+
+// Returns that shallowest state between two system states
+psci_system_state_t
+platform_psci_shallowest_system_state(psci_system_state_t state1,
+				      psci_system_state_t state2);
 #endif
 
 // Returns the suspend level of the last cpu
@@ -101,7 +123,7 @@ platform_psci_set_last_cpu_level(psci_suspend_powerstate_t *suspend_state,
 // Returns that shallowest state between two cluster states
 psci_cluster_state_t
 platform_psci_shallowest_cluster_state(psci_cluster_state_t state1,
-				       uint16_t		    state2);
+				       psci_cluster_state_t state2);
 
 // Returns the deepest cluster-level suspend state supported by the system
 psci_cluster_state_t
@@ -109,6 +131,6 @@ platform_psci_deepest_cluster_state(void);
 
 // Returns the deepest cluster-level suspend state id supported by a cpu
 psci_suspend_powerstate_stateid_t
-platform_psci_deepest_cluster_level_stateid(cpu_index_t cpu);
+platform_psci_deepest_cluster_level_stateid(cpu_index_t cpu, uint8_t max_depth);
 
 #endif

@@ -1,9 +1,10 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// © 2019 Qualcomm Innovation Center, Inc. All rights reserved.
+// All Rights Reserved.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <util.h>
-#include <types/bitmap.h>
+#include <bitmap.h>
 
 #include "gicv3_config.h"
 
@@ -36,6 +37,8 @@ define gic_its_rdbase union {
 
 #if GICV3_HAS_VLPI
 define gic_its_vpe_id_t newtype uint16;
+
+define GICV3_VPE_ID_INVALID constant type gic_its_vpe_id_t = -1;
 #endif
 
 #endif // GICV3_HAS_ITS
@@ -812,10 +815,12 @@ define GITS_TYPER bitfield<64> {
 	36		CIL		bool;
 	37		VMOVP		bool;
 	38		MPAM		bool;
+#if GICV3_HAS_VLPI_V4_1
 	39		VSGI		bool;
 	40		VMAPP		bool;
 	42:41		SVPET		enumeration GITS_TYPER_SVPET;
 	43		nID		bool;
+#endif // GICV3_HAS_VLPI_V4_1
 	63:44		unknown=0;
 };
 
@@ -1186,6 +1191,10 @@ define gicv3_its_driver_state structure {
 	first_unused	type platform_msi_device_id_t;
 	// True if the first unused device ID has already been reserved
 	first_unused_reserved	bool;
+
+	// GICR_VPROPBASER that will be copied to GICRs that share their vPE
+	// table with this ITS
+	vpe_table	bitfield GICR_VPROPBASER;
 };
 
 // Driver state for an indirect ITS table; used to ensure that second level
@@ -1213,9 +1222,6 @@ extend thread object module gicv3_its {
 	mapped_cpu	type cpu_index_t;
 
 #if GICV3_HAS_VLPI_V4_1
-	// Doorbell LPI, allocated by the ITS driver
-	doorbell	pointer object hwirq;
-
 	// True if the GICR may not have finished reading the pending tables
 	// yet after waking this VCPU with a doorbell, so there may be a
 	// pending vSGI or vLPI that is not yet delivered.
@@ -1235,15 +1241,13 @@ extend thread object module gicv3_its {
 #endif // !GICV3_HAS_VLPI_V4_1
 };
 
-extend hwirq_action enumeration {
-	gicv3_its_doorbell;
+#if GICV3_HAS_VLPI_V4_1
+extend irq_range_type enumeration {
+	gicv3_vpe_doorbell;
 };
-
-extend hwirq object module gicv3_its {
-	// RCU-protected pointer to the VCPU woken by this doorbell
-	vcpu		pointer(atomic) object thread;
-};
+#endif // GICV3_HAS_VLPI_V4_1
 
 #endif // GICV3_HAS_VLPI
 
 #endif // GICV3_HAS_ITS
+

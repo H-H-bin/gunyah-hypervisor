@@ -52,6 +52,9 @@ platform_get_entropy(platform_prng_data256_t *data)
 	if (i == 4U) {
 		(void)memscpy(data, sizeof(*data), &prng_data,
 			      sizeof(prng_data));
+		(void)memset_s(&prng_data, sizeof(prng_data), 0,
+			       sizeof(prng_data));
+
 		ret = OK;
 
 		// Issue a reseed read, ignoring the result.

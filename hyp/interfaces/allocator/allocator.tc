@@ -9,3 +9,24 @@ extend error enumeration {
 
 define allocator structure {
 };
+
+define allocator_memtype enumeration {
+	hypervisor = 0;		// Standard hypervisor memory.
+	vm_page_table = 1;	// Guest page table memory.
+};
+
+define allocator_memattr bitfield<16> {
+	3:0	type		enumeration allocator_memtype;
+};
+
+define allocator_hint bitfield<32> {
+	// The requested memory attributes of the allocation.
+	15:0	memattr		bitfield allocator_memattr;
+
+	// If an allocation request cannot be fulfilled with the exact
+	// memory attributes of a particular hint, the allocator may
+	// fall back to another heap with stronger attributes. This
+	// flag informs the allocator to strictly adhere to the hint
+	// and return an error instead.
+	31	strict		bool;
+};

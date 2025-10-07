@@ -26,7 +26,7 @@
 
 #include "event_handlers.h"
 
-#define PHYS_MAX (1UL << GPT_PHYS_BITS)
+#define PHYS_MAX (1UL << RANGE_MAP_PHYS_BITS)
 
 static addrspace_t *as1;
 static addrspace_t *as2;
@@ -139,7 +139,11 @@ map_memextent(memextent_t *me, addrspace_t *as, vmaddr_t vbase, size_t offset,
 	memextent_mapping_attrs_set_user_access(&map_attrs, access);
 	memextent_mapping_attrs_set_kernel_access(&map_attrs, access);
 
-	return memextent_map_partial(me, as, vbase, offset, size, map_attrs);
+	addrspace_map_flags_t map_flags = addrspace_map_flags_default();
+	addrspace_map_flags_set_partial(&map_flags, true);
+
+	return memextent_map_partial(me, as, vbase, offset, size, map_attrs,
+				     map_flags);
 }
 
 static bool
@@ -304,10 +308,15 @@ tests_memextent_sparse_start(void)
 	mapped = lookup_addrspace(as2, vbase_2b, phys, memtype, access);
 	assert(mapped);
 
-	err = memextent_unmap_partial(me_1_0, as1, vbase_1, phys, 0x6000U);
+	addrspace_map_flags_t map_flags = addrspace_map_flags_default();
+	addrspace_map_flags_set_partial(&map_flags, true);
+
+	err = memextent_unmap_partial(me_1_0, as1, vbase_1, phys, 0x6000U,
+				      map_flags);
 	assert(err == OK);
 
-	err = memextent_unmap_partial(me_1_0, as2, vbase_2a, phys, size);
+	err = memextent_unmap_partial(me_1_0, as2, vbase_2a, phys, size,
+				      map_flags);
 	assert(err == OK);
 
 	memextent_unmap_all(me_1_1);

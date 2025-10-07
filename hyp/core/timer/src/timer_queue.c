@@ -131,7 +131,7 @@ timer_update_timeout(timer_queue_t *tq) REQUIRE_SPINLOCK(tq->lock)
 
 static void
 timer_enqueue_internal(timer_queue_t *tq, timer_t *timer, ticks_t timeout)
-	REQUIRE_SPINLOCK(tq->lock)
+	REQUIRE_SPINLOCK(timer->lock) REQUIRE_SPINLOCK(tq->lock)
 {
 	assert_preempt_disabled();
 	assert(tq == &CPULOCAL(timer_queue));
@@ -162,32 +162,33 @@ timer_enqueue_internal(timer_queue_t *tq, timer_t *timer, ticks_t timeout)
 }
 
 static bool
-timer_dequeue_internal(timer_queue_t *tq, timer_t *timer)
+timer_dequeue_internal(timer_queue_t *tq, timer_t *timer, bool clear_queue)
 	REQUIRE_SPINLOCK(tq->lock)
 {
 	assert_preempt_disabled();
 
 	bool new_timeout = false;
 
-	// The timer may have expired between loading the timer's queue and
-	// acquiring its lock. Ensure the timer's queue has not changed before
-	// dequeuing.
-	if (compiler_expected(atomic_load_relaxed(&timer->queue) == tq)) {
-		bool new_head = list_delete_node(&tq->list, &timer->list_node);
-		if (new_head) {
-			list_node_t *head = list_get_head(&tq->list);
-			tq->timeout =
-				timer_container_of_list_node(head)->timeout;
-			new_timeout = true;
-		} else if (list_is_empty(&tq->list)) {
-			tq->timeout = TIMER_INVALID_TIMEOUT;
-			new_timeout = true;
-		} else {
-			// The queue's timeout has not changed.
-		}
+	// If we are dequeuing a timer that was queued on another CPU, it may
+	// have expired or is being migrated and is no longer queued; it is safe
+	// to perform a redundant deletion as the timer can't be requeued
+	// without acquiring its lock again.
+	bool new_head = list_delete_node(&tq->list, &timer->list_node);
+	if (new_head) {
+		list_node_t *head = list_get_head(&tq->list);
+		tq->timeout	  = timer_container_of_list_node(head)->timeout;
+		new_timeout	  = true;
+	} else if (list_is_empty(&tq->list)) {
+		tq->timeout = TIMER_INVALID_TIMEOUT;
+		new_timeout = true;
+	} else {
+		// The queue's timeout has not changed.
+	}
 
+	if (clear_queue) {
 		// Clear the timer's queue pointer. We need release ordering to
-		// ensure this dequeue is observed by the next enqueue.
+		// ensure this dequeue is observed by the next enqueue on
+		// another CPU.
 		atomic_store_release(&timer->queue, NULL);
 	}
 
@@ -196,17 +197,19 @@ timer_dequeue_internal(timer_queue_t *tq, timer_t *timer)
 
 static void
 timer_update_internal(timer_queue_t *tq, timer_t *timer, ticks_t timeout)
-	REQUIRE_SPINLOCK(tq->lock)
+	REQUIRE_SPINLOCK(timer->lock) REQUIRE_SPINLOCK(tq->lock)
 {
 	assert_preempt_disabled();
 	assert(tq == &CPULOCAL(timer_queue));
 	assert(tq->online);
 
+#if defined(VERBOSE) && VERBOSE
 	if (compiler_unexpected(tq != atomic_load_relaxed(&timer->queue))) {
-		// There is a race with timer updates; it is the caller's
-		// responsibility to prevent this.
+		// This function should only be called for a timer listed on
+		// this CPU; it should not be possible to race with a dequeue.
 		panic("Request to update a timer that is not queued on this CPU");
 	}
+#endif
 
 	if (compiler_expected(timer->timeout != timeout)) {
 		// There is no need to check if the timeout is already in the
@@ -238,7 +241,7 @@ timer_enqueue(timer_t *timer, ticks_t timeout)
 {
 	assert(timer != NULL);
 
-	preempt_disable();
+	spinlock_acquire(&timer->lock);
 
 	timer_queue_t *tq = &CPULOCAL(timer_queue);
 
@@ -246,7 +249,7 @@ timer_enqueue(timer_t *timer, ticks_t timeout)
 	timer_enqueue_internal(tq, timer, timeout);
 	spinlock_release_nopreempt(&tq->lock);
 
-	preempt_enable();
+	spinlock_release(&timer->lock);
 }
 
 void
@@ -254,16 +257,19 @@ timer_dequeue(timer_t *timer)
 {
 	assert(timer != NULL);
 
-	timer_queue_t *tq = atomic_load_relaxed(&timer->queue);
+	spinlock_acquire(&timer->lock);
 
+	timer_queue_t *tq = atomic_load_relaxed(&timer->queue);
 	if (tq != NULL) {
-		spinlock_acquire(&tq->lock);
-		if (timer_dequeue_internal(tq, timer) &&
+		spinlock_acquire_nopreempt(&tq->lock);
+		if (timer_dequeue_internal(tq, timer, true) &&
 		    (tq == &CPULOCAL(timer_queue))) {
 			timer_update_timeout(tq);
 		}
-		spinlock_release(&tq->lock);
+		spinlock_release_nopreempt(&tq->lock);
 	}
+
+	spinlock_release(&timer->lock);
 }
 
 void
@@ -271,7 +277,7 @@ timer_update(timer_t *timer, ticks_t timeout)
 {
 	assert(timer != NULL);
 
-	preempt_disable();
+	spinlock_acquire(&timer->lock);
 
 	timer_queue_t *old_tq = atomic_load_relaxed(&timer->queue);
 	timer_queue_t *new_tq = &CPULOCAL(timer_queue);
@@ -279,7 +285,7 @@ timer_update(timer_t *timer, ticks_t timeout)
 	// If timer is queued on another CPU, it needs to be dequeued.
 	if ((old_tq != NULL) && (old_tq != new_tq)) {
 		spinlock_acquire_nopreempt(&old_tq->lock);
-		(void)timer_dequeue_internal(old_tq, timer);
+		(void)timer_dequeue_internal(old_tq, timer, true);
 		spinlock_release_nopreempt(&old_tq->lock);
 	}
 
@@ -291,7 +297,7 @@ timer_update(timer_t *timer, ticks_t timeout)
 	}
 	spinlock_release_nopreempt(&new_tq->lock);
 
-	preempt_enable();
+	spinlock_release(&timer->lock);
 }
 
 static void
@@ -307,7 +313,7 @@ timer_dequeue_expired(void) REQUIRE_PREEMPT_DISABLED
 	while (tq->timeout <= current_ticks) {
 		list_node_t *head  = list_get_head(&tq->list);
 		timer_t	    *timer = timer_container_of_list_node(head);
-		(void)timer_dequeue_internal(tq, timer);
+		(void)timer_dequeue_internal(tq, timer, true);
 		spinlock_release_nopreempt(&tq->lock);
 		(void)trigger_timer_action_event(timer->action, timer);
 		spinlock_acquire_nopreempt(&tq->lock);
@@ -340,12 +346,15 @@ timer_handle_power_cpu_suspend(void)
 	return OK;
 }
 
-// Also handles power_cpu_resume
+void
+timer_handle_power_cpu_resume(void)
+{
+	timer_dequeue_expired();
+}
+
 void
 timer_handle_power_cpu_online(void)
 {
-	timer_dequeue_expired();
-
 	// Mark this CPU timer queue as online
 	timer_queue_t *tq = &CPULOCAL(timer_queue);
 	assert_preempt_disabled();
@@ -357,12 +366,12 @@ timer_handle_power_cpu_online(void)
 // A timer_queue operation has occurred that requires synchronisation, process
 // our timer queue. Handle any expired timers as the timer might have expired
 // since it was queued on this CPU and reprogram the platform timer if required.
-bool NOINLINE
+bool
 timer_handle_ipi_received(void)
 {
 	timer_dequeue_expired();
 
-	return true;
+	return false;
 }
 
 static bool
@@ -374,16 +383,20 @@ timer_try_move_to_cpu(timer_t *timer, cpu_index_t target)
 
 	assert_preempt_disabled();
 
+	spinlock_acquire_nopreempt(&timer->lock);
 	spinlock_acquire_nopreempt(&ttq->lock);
 
 	// We can only use active CPU timer queues
 	if (ttq->online) {
 		// Update the timer queue to be on the new CPU
-		timer_queue_t *old_ttq = NULL;
+		timer_queue_t *old_ttq = &CPULOCAL(timer_queue);
 		if (!atomic_compare_exchange_strong_explicit(
-			    &timer->queue, &old_ttq, ttq, memory_order_acquire,
+			    &timer->queue, &old_ttq, ttq, memory_order_relaxed,
 			    memory_order_relaxed)) {
-			panic("Request to move timer that is already queued");
+			// The timer was already dequeued or updated by another
+			// CPU, nothing to do.
+			moved = true;
+			goto out;
 		}
 
 		// Call IPI if the queue HEAD changed so the target CPU can
@@ -393,15 +406,14 @@ timer_try_move_to_cpu(timer_t *timer, cpu_index_t target)
 					     is_timeout_a_smaller_than_b);
 		if (new_head) {
 			ttq->timeout = timer->timeout;
-			spinlock_release_nopreempt(&ttq->lock);
 			ipi_one(IPI_REASON_TIMER_QUEUE_SYNC, target);
-		} else {
-			spinlock_release_nopreempt(&ttq->lock);
 		}
 		moved = true;
-	} else {
-		spinlock_release_nopreempt(&ttq->lock);
 	}
+
+out:
+	spinlock_release_nopreempt(&ttq->lock);
+	spinlock_release_nopreempt(&timer->lock);
 
 	return moved;
 }
@@ -428,8 +440,9 @@ timer_handle_power_cpu_offline(void)
 		list_node_t *head  = list_get_head(&tq->list);
 		timer_t	    *timer = timer_container_of_list_node(head);
 
-		// Remove timer from this core.
-		(void)timer_dequeue_internal(tq, timer);
+		// Dequeue the timer while keeping the queue pointer set so we
+		// can detect any concurrent dequeues later on.
+		(void)timer_dequeue_internal(tq, timer, false);
 		spinlock_release_nopreempt(&tq->lock);
 
 		// The target core might go down while we are searching, so
@@ -440,7 +453,7 @@ timer_handle_power_cpu_offline(void)
 		bool	    found_target = false;
 		cpu_index_t target	 = start;
 		while (!found_target) {
-			if (platform_cpu_exists(target)) {
+			if (platform_cpu_functional(target)) {
 				if (timer_try_move_to_cpu(timer, target)) {
 					found_target = true;
 					start	     = target;

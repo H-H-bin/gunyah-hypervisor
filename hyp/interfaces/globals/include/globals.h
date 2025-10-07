@@ -6,7 +6,7 @@ const global_options_t *
 globals_get_options(void);
 
 void
-globals_set_options(const global_options_t set);
+globals_set_options(global_options_t set);
 
 void
-globals_clear_options(const global_options_t clear);
+globals_clear_options(global_options_t clear);

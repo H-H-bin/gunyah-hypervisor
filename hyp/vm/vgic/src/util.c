@@ -13,36 +13,56 @@
 
 #include "internal.h"
 
+static_assert(!(VGIC_HAS_EXT_PPIS && (!VGIC_HAS_EXT_SPIS)),
+	      "vgic has extended PPIs enabled without extended SPIs enabled");
+
+#if defined(VGIC_SPI_EXT_NUM)
+static_assert((VGIC_SPI_EXT_NUM <= GIC_SPI_EXT_NUM) &&
+		      ((VGIC_SPI_EXT_NUM % 32U) == 0U),
+	      "Invalid configuration for VGIC_SPI_EXT_NUM");
+#endif
+
 vgic_irq_type_t
 vgic_get_irq_type(virq_t irq)
 {
 	vgic_irq_type_t type;
 
-	if (irq < (virq_t)(GIC_SGI_BASE + GIC_SGI_NUM)) {
+	switch (irq) {
+	case util_case_range(GIC_SGI_BASE,
+			     (virq_t)(GIC_SGI_BASE + (GIC_SGI_NUM - 1U))):
 		type = VGIC_IRQ_TYPE_SGI;
-	} else if ((irq >= (virq_t)GIC_PPI_BASE) &&
-		   (irq < (virq_t)(GIC_PPI_BASE + GIC_PPI_NUM))) {
+		break;
+	case util_case_range(GIC_PPI_BASE,
+			     (virq_t)(GIC_PPI_BASE + (GIC_PPI_NUM - 1U))):
 		type = VGIC_IRQ_TYPE_PPI;
-	} else if ((irq >= (virq_t)GIC_SPI_BASE) &&
-		   (irq < (virq_t)(GIC_SPI_BASE + GIC_SPI_NUM))) {
+		break;
+	case util_case_range(GIC_SPI_BASE,
+			     (virq_t)(GIC_SPI_BASE + (GIC_SPI_NUM - 1U))):
 		type = VGIC_IRQ_TYPE_SPI;
-	}
-#if VGIC_HAS_EXT_IRQS
-	else if ((irq >= (virq_t)GIC_PPI_EXT_BASE) &&
-		 (irq < (virq_t)(GIC_PPI_EXT_BASE + GIC_PPI_EXT_NUM))) {
+		break;
+#if VGIC_HAS_EXT_PPIS
+	case util_case_range(
+		GIC_PPI_EXT_BASE,
+		(virq_t)(GIC_PPI_EXT_BASE + (GIC_PPI_EXT_NUM - 1U))):
 		type = VGIC_IRQ_TYPE_PPI_EXT;
-	} else if ((irq >= (virq_t)GIC_SPI_EXT_BASE) &&
-		   (irq < (virq_t)(GIC_SPI_EXT_BASE + GIC_SPI_EXT_NUM))) {
+		break;
+#endif
+#if VGIC_HAS_EXT_SPIS
+	case util_case_range(
+		GIC_SPI_EXT_BASE,
+		(virq_t)(GIC_SPI_EXT_BASE + (VGIC_SPI_EXT_NUM - 1U))):
 		type = VGIC_IRQ_TYPE_SPI_EXT;
-	}
+		break;
 #endif
 #if VGIC_HAS_LPI
-	else if (irq >= (virq_t)GIC_LPI_BASE) {
+	case util_case_range(GIC_LPI_BASE,
+			     (virq_t)(GIC_LPI_BASE + (VGIC_LPI_NUM - 1U))):
 		type = VGIC_IRQ_TYPE_LPI;
-	}
+		break;
 #endif
-	else {
+	default:
 		type = VGIC_IRQ_TYPE_RESERVED;
+		break;
 	}
 
 	return type;
@@ -55,11 +75,15 @@ vgic_irq_is_private(virq_t virq)
 	switch (vgic_get_irq_type(virq)) {
 	case VGIC_IRQ_TYPE_SGI:
 	case VGIC_IRQ_TYPE_PPI:
-		// If adding any classes here (e.g. PPI_EXT) you _must_ audit
-		// all callers of this function and fix up their array indexing
+#if VGIC_HAS_EXT_PPIS
+	case VGIC_IRQ_TYPE_PPI_EXT:
+#endif
 		result = true;
 		break;
 	case VGIC_IRQ_TYPE_SPI:
+#if VGIC_HAS_EXT_SPIS
+	case VGIC_IRQ_TYPE_SPI_EXT:
+#endif
 	case VGIC_IRQ_TYPE_RESERVED:
 #if VGIC_HAS_LPI && GICV3_HAS_VLPI_V4_1
 	case VGIC_IRQ_TYPE_LPI:
@@ -77,12 +101,16 @@ vgic_irq_is_spi(virq_t virq)
 	bool result;
 	switch (vgic_get_irq_type(virq)) {
 	case VGIC_IRQ_TYPE_SPI:
-		// If adding any classes here (e.g. SPI_EXT) you _must_ audit
-		// all callers of this function and fix up their array indexing
+#if VGIC_HAS_EXT_SPIS
+	case VGIC_IRQ_TYPE_SPI_EXT:
+#endif
 		result = true;
 		break;
 	case VGIC_IRQ_TYPE_SGI:
 	case VGIC_IRQ_TYPE_PPI:
+#if VGIC_HAS_EXT_PPIS
+	case VGIC_IRQ_TYPE_PPI_EXT:
+#endif
 	case VGIC_IRQ_TYPE_RESERVED:
 #if VGIC_HAS_LPI && GICV3_HAS_VLPI_V4_1
 	case VGIC_IRQ_TYPE_LPI:
@@ -100,12 +128,16 @@ vgic_irq_is_ppi(virq_t virq)
 	bool result;
 	switch (vgic_get_irq_type(virq)) {
 	case VGIC_IRQ_TYPE_PPI:
-		// If adding any classes here (e.g. PPI_EXT) you _must_ audit
-		// all callers of this function and fix up their array indexing
+#if VGIC_HAS_EXT_PPIS
+	case VGIC_IRQ_TYPE_PPI_EXT:
+#endif
 		result = true;
 		break;
 	case VGIC_IRQ_TYPE_SGI:
 	case VGIC_IRQ_TYPE_SPI:
+#if VGIC_HAS_EXT_SPIS
+	case VGIC_IRQ_TYPE_SPI_EXT:
+#endif
 	case VGIC_IRQ_TYPE_RESERVED:
 #if VGIC_HAS_LPI && GICV3_HAS_VLPI_V4_1
 	case VGIC_IRQ_TYPE_LPI:
@@ -162,57 +194,106 @@ out:
 	return ret;
 }
 
-virq_source_t *
-vgic_find_source(vic_t *vic, thread_t *vcpu, virq_t virq)
+virq_source_t *_Atomic *
+vgic_find_source_ptr(vic_t *vic, thread_t *vcpu, virq_t virq)
 {
-	virq_source_t *source;
-
-	// Load the source object pointer for a VIRQ. This must be a load
-	// acquire to ensure that this is accessed prior to reading the virq
-	// delivery state's level_src bit, because that bit being set should
-	// guarantee that this pointer is non-NULL (see vic_unbind()).
+	_Atomic(virq_source_t *) *source_ptr;
 
 	switch (vgic_get_irq_type(virq)) {
 	case VGIC_IRQ_TYPE_SPI:
 		assert(vic != NULL);
-		if ((virq - GIC_SPI_BASE) < vic->sources_count) {
-			source = atomic_load_acquire(
-				&vic->sources[virq - GIC_SPI_BASE]);
+		if (virq < (vic->sources_count + GIC_SPI_BASE)) {
+			source_ptr = &vic->sources[virq - GIC_SPI_BASE];
 		} else {
-			source = NULL;
+			source_ptr = NULL;
 		}
 		break;
 	case VGIC_IRQ_TYPE_PPI:
 		assert(vcpu != NULL);
-		source = atomic_load_acquire(
-			&vcpu->vgic_sources[virq - GIC_PPI_BASE]);
+		source_ptr = &vcpu->vgic_sources[virq - GIC_PPI_BASE];
 		break;
+#if VGIC_HAS_EXT_SPIS
+	case VGIC_IRQ_TYPE_SPI_EXT:
+		assert(vic != NULL);
+		if (virq < (vic->ext_sources_count + GIC_SPI_EXT_BASE)) {
+			source_ptr = &vic->ext_sources[virq - GIC_SPI_EXT_BASE];
+		} else {
+			source_ptr = NULL;
+		}
+		break;
+#if VGIC_HAS_EXT_PPIS
+	case VGIC_IRQ_TYPE_PPI_EXT:
+		assert(vcpu != NULL);
+		source_ptr = &vcpu->vgic_ext_sources[virq - GIC_PPI_EXT_BASE];
+		break;
+#endif
+#endif
 	case VGIC_IRQ_TYPE_SGI:
 	case VGIC_IRQ_TYPE_RESERVED:
 #if VGIC_HAS_LPI && GICV3_HAS_VLPI_V4_1
 	case VGIC_IRQ_TYPE_LPI:
 #endif
 	default:
-		source = NULL;
+		source_ptr = NULL;
 		break;
+	}
+	return source_ptr;
+}
+
+virq_source_t *
+vgic_find_source(vic_t *vic, thread_t *vcpu, virq_t virq)
+{
+	virq_source_t		 *source = NULL;
+	_Atomic(virq_source_t *) *source_ptr =
+		vgic_find_source_ptr(vic, vcpu, virq);
+	if (source_ptr != NULL) {
+		source = atomic_load_acquire(source_ptr);
 	}
 	return source;
 }
 
-_Atomic(vgic_delivery_state_t) *
+vgic_delivery_state_t _Atomic *
 vgic_find_dstate(vic_t *vic, thread_t *vcpu, virq_t virq)
 {
 	_Atomic vgic_delivery_state_t *dstate;
+
 	switch (vgic_get_irq_type(virq)) {
 	case VGIC_IRQ_TYPE_SGI:
 	case VGIC_IRQ_TYPE_PPI:
-		assert(vcpu != NULL);
+		assert_debug(vcpu != NULL);
+		assert_debug(virq < util_array_size(vcpu->vgic_private_states));
+
 		dstate = &vcpu->vgic_private_states[virq];
 		break;
 	case VGIC_IRQ_TYPE_SPI:
-		assert(vic != NULL);
+		assert_debug(vic != NULL);
+		assert_debug(virq >= GIC_SPI_BASE);
+		assert_debug((virq - GIC_SPI_BASE) <
+			     ((virq_t)util_array_size(vic->spi_states)));
+
 		dstate = &vic->spi_states[virq - GIC_SPI_BASE];
 		break;
+#if VGIC_HAS_EXT_PPIS
+	case VGIC_IRQ_TYPE_PPI_EXT:
+		assert_debug(vcpu != NULL);
+		assert_debug(virq >= GIC_PPI_EXT_BASE);
+		assert_debug((virq - GIC_PPI_EXT_BASE) <
+			     util_array_size(vcpu->vgic_ext_private_states));
+
+		dstate =
+			&vcpu->vgic_ext_private_states[virq - GIC_PPI_EXT_BASE];
+		break;
+#endif
+#if VGIC_HAS_EXT_SPIS
+	case VGIC_IRQ_TYPE_SPI_EXT:
+		assert_debug(vic != NULL);
+		assert_debug(virq >= GIC_SPI_EXT_BASE);
+		assert_debug((virq - GIC_SPI_EXT_BASE) <
+			     ((virq_t)util_array_size(vic->ext_spi_states)));
+
+		dstate = &vic->ext_spi_states[virq - GIC_SPI_EXT_BASE];
+		break;
+#endif
 	case VGIC_IRQ_TYPE_RESERVED:
 #if VGIC_HAS_LPI && GICV3_HAS_VLPI_V4_1
 	case VGIC_IRQ_TYPE_LPI:

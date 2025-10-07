@@ -5,11 +5,13 @@
 #include <assert.h>
 #include <hyptypes.h>
 
+#include <hypcontainers.h>
+
 #include <addrspace.h>
 #include <atomic.h>
-#include <gpt.h>
 #include <memdb.h>
 #include <memextent.h>
+#include <range_tree.h>
 #include <rcu.h>
 
 #include <events/vdevice.h>
@@ -45,6 +47,14 @@ vdevice_access_phys(paddr_t pa, size_t size, register_t *val, bool is_write)
 					   size, val, is_write);
 
 out:
+	// Handlers for vdevice_access might need to drop the RCU critical
+	// section in order to block the calling VCPU. Currently the events
+	// generator can't handle dropping the RCU critical section in the
+	// default case, so the handlers that do drop it are forced to
+	// re-acquire it, and we must drop it again here.
+	// FIXME:
+	rcu_read_finish();
+
 	return ret;
 }
 
@@ -58,30 +68,39 @@ vdevice_access_ipa(vmaddr_t ipa, size_t size, register_t *val, bool is_write)
 
 	rcu_read_start();
 
-	gpt_lookup_result_t lookup_ret =
-		gpt_lookup(&addrspace->vdevice_gpt, ipa, size);
+	range_tree_lookup_result_t lookup_ret =
+		range_tree_lookup(&addrspace->vdevice_tree, ipa, size);
 
 	if (lookup_ret.size != size) {
+		rcu_read_finish();
 		ret = VCPU_TRAP_RESULT_UNHANDLED;
-	} else if (lookup_ret.entry.type == GPT_TYPE_VDEVICE) {
-		vdevice_t *vdevice = lookup_ret.entry.value.vdevice;
+	} else if (lookup_ret.node != NULL) {
+		vdevice_t *vdevice =
+			vdevice_container_of_range(lookup_ret.node);
 		assert(vdevice != NULL);
-		assert((ipa >= vdevice->ipa) &&
+		assert((ipa >= vdevice->range.base) &&
 		       ((ipa + size - 1U) <=
-			(vdevice->ipa + vdevice->size - 1U)));
+			(vdevice->range.base + vdevice->range.size - 1U)));
 
 		ret = trigger_vdevice_access_event(vdevice->type, vdevice,
-						   ipa - vdevice->ipa, size,
-						   val, is_write);
+						   ipa - vdevice->range.base,
+						   size, val, is_write);
+
+		// Handlers for vdevice_access might need to drop the RCU
+		// critical section in order to block the calling VCPU.
+		// Currently the events generator can't handle dropping the RCU
+		// critical section in the default case, so the handlers that do
+		// drop it are forced to re-acquire it, and we must drop it
+		// again here.
+		// FIXME:
+		rcu_read_finish();
 	} else {
-		assert(lookup_ret.entry.type == GPT_TYPE_EMPTY);
+		rcu_read_finish();
 
 		// FIXME:
 		ret = trigger_vdevice_access_fixed_addr_event(ipa, size, val,
 							      is_write);
 	}
-
-	rcu_read_finish();
 
 	return ret;
 }

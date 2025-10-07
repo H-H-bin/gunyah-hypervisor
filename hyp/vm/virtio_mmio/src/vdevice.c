@@ -5,22 +5,29 @@
 #include <assert.h>
 #include <hyptypes.h>
 
-#include <hypconstants.h>
 #include <hypcontainers.h>
 
 #include <atomic.h>
-#include <partition.h>
+#include <compiler.h>
+#include <rcu.h>
 #include <spinlock.h>
-#include <thread.h>
+#include <trace.h>
 #include <util.h>
 #include <virq.h>
+#include <virtio.h>
 
 #include <events/virtio_mmio.h>
 
 #include <asm/nospec_checks.h>
 
 #include "event_handlers.h"
-#include "virtio_mmio.h"
+
+static virtio_t *
+virtio_from_virtio_mmio(virtio_mmio_t *virtio_mmio)
+{
+	return virtio_container_of_frontend_data(
+		virtio_frontend_container_of_mmio(virtio_mmio));
+}
 
 static bool
 virtio_mmio_access_allowed(size_t size, size_t offset)
@@ -35,10 +42,8 @@ virtio_mmio_access_allowed(size_t size, size_t offset)
 		ret = true;
 	} else if (size == sizeof(uint8_t)) {
 		// Byte accesses only allowed for config
-		ret = ((offset >= (size_t)OFS_VIRTIO_MMIO_REGS_DEVICE_CONFIG) &&
-		       (offset <=
-			((size_t)((size_t)OFS_VIRTIO_MMIO_REGS_DEVICE_CONFIG +
-				  (VIRTIO_MMIO_REG_CONFIG_BYTES - 1U)))));
+		ret = util_offset_in_range(offset, virtio_mmio_regs_t,
+					   device_config);
 	} else {
 		// Invalid access size
 		ret = false;
@@ -47,182 +52,85 @@ virtio_mmio_access_allowed(size_t size, size_t offset)
 	return ret;
 }
 
-vcpu_trap_result_t
-virtio_mmio_default_write(const virtio_mmio_t *virtio_mmio, size_t write_offset,
-			  size_t access_size, register_t val)
-{
-	vcpu_trap_result_t ret = VCPU_TRAP_RESULT_FAULT;
-	if ((write_offset >= (size_t)OFS_VIRTIO_MMIO_REGS_DEVICE_CONFIG) &&
-	    (write_offset <=
-	     (size_t)((size_t)OFS_VIRTIO_MMIO_REGS_DEVICE_CONFIG +
-		      VIRTIO_MMIO_REG_CONFIG_BYTES - 1U))) {
-		index_t n =
-			(index_t)(write_offset -
-				  (size_t)OFS_VIRTIO_MMIO_REGS_DEVICE_CONFIG);
-		// Loop through every byte
-		register_t shifted_val = val;
-		for (index_t i = 0U; i < access_size; i++) {
-			atomic_store_relaxed(
-				&virtio_mmio->regs->device_config.raw[n + i],
-				(uint8_t)shifted_val);
-			shifted_val >>= 8U;
-		}
-		ret = VCPU_TRAP_RESULT_EMULATED;
-	} else {
-		ret = VCPU_TRAP_RESULT_FAULT;
-	}
-
-	return ret;
-}
-
-static bool
+static error_t
 virtio_mmio_write_queue_sel(virtio_mmio_t *virtio_mmio, uint32_t val)
+	REQUIRE_RCU_READ
 {
-	bool	       ret = true;
-	index_result_t res = nospec_range_check(val, virtio_mmio->vqs_num);
-	if (res.e == OK) {
-		virtio_mmio->queue_sel = res.r;
+	error_t ret;
 
-		// Update corresponding banked registers with read
-		// permission
-		spinlock_acquire(&virtio_mmio->lock);
-		atomic_store_relaxed(
-			&virtio_mmio->regs->queue_num_max,
-			virtio_mmio->banked_queue_regs[res.r].num_max);
-		atomic_store_relaxed(
-			&virtio_mmio->regs->queue_ready,
-			virtio_mmio->banked_queue_regs[res.r].ready);
-		spinlock_release(&virtio_mmio->lock);
-	} else {
-		ret = false;
-	}
+	spinlock_acquire(&virtio_mmio->banking_lock);
+	virtio_status_lock_nopreempt(virtio_from_virtio_mmio(virtio_mmio));
+	virtio_mmio->queue_sel = val;
 
+	// Get the queue info and maximum size. Note that both of these
+	// functions do Spectre-safe bounds checks, so we don't need one here.
+	virtio_queue_info_result_t queue_info_r =
+		virtio_get_queue_info(virtio_from_virtio_mmio(virtio_mmio),
+				      virtio_mmio->queue_sel, false);
+	count_result_t queue_size_max_r = virtio_get_queue_size_max(
+		virtio_from_virtio_mmio(virtio_mmio), virtio_mmio->queue_sel);
+
+	// Update corresponding banked registers with read permission. Note that
+	// an out-of-range value is not an error; it simply returns a zero max
+	// size to indicate that the queue does not exist.
+	atomic_store_relaxed(&virtio_mmio->regs->queue_num_max,
+			     (queue_size_max_r.e == OK) ? queue_size_max_r.r
+							: 0U);
+	atomic_store_relaxed(
+		&virtio_mmio->regs->queue_ready,
+		((queue_info_r.e == OK) && queue_info_r.r.ready) ? 1U : 0U);
+	ret = OK;
+
+	virtio_status_unlock_nopreempt(virtio_from_virtio_mmio(virtio_mmio));
+	spinlock_release(&virtio_mmio->banking_lock);
 	return ret;
 }
 
-static bool
-virtio_mmio_write_status_reg(virtio_mmio_t *virtio_mmio, uint32_t val)
+static error_t
+virtio_mmio_write_dev_feat_sel(virtio_mmio_t *virtio_mmio, uint32_t val)
+	REQUIRE_RCU_READ
 {
-	bool			    ret = true;
-	virtio_mmio_notify_reason_t reason;
+	error_t ret;
 
-	if (val != 0U) {
-		bool assert_virq = false;
-
-		spinlock_acquire(&virtio_mmio->lock);
-
-		virtio_mmio_status_reg_t old_val =
-			atomic_load_relaxed(&virtio_mmio->regs->status);
-		virtio_mmio_status_reg_t new_val =
-			virtio_mmio_status_reg_cast(val);
-		atomic_store_relaxed(&virtio_mmio->regs->status, new_val);
-
-		reason = atomic_load_relaxed(&virtio_mmio->reason);
-
-		if (!virtio_mmio_status_reg_get_driver_ok(&old_val) &&
-		    virtio_mmio_status_reg_get_driver_ok(&new_val)) {
-			virtio_mmio_notify_reason_set_driver_ok(&reason, true);
-			assert_virq = true;
-
-		} else if (!virtio_mmio_status_reg_get_failed(&old_val) &&
-			   virtio_mmio_status_reg_get_failed(&new_val)) {
-			virtio_mmio_notify_reason_set_failed(&reason, true);
-			assert_virq = true;
-		} else {
-			// Nothing to do
-		}
-
-		atomic_store_relaxed(&virtio_mmio->reason, reason);
-
-		spinlock_release(&virtio_mmio->lock);
-
-		if (assert_virq) {
-			atomic_thread_fence(memory_order_release);
-			(void)virq_assert(&virtio_mmio->frontend_source, false);
-		}
-	} else if (virtio_mmio_status_reg_raw(atomic_load_relaxed(
-			   &virtio_mmio->regs->status)) == 0U) {
-		// We do not request a reset the first time the frontend
-		// tries to write a zero to the status register
-	} else {
-		// Assert backend's IRQ to let the
-		// backend know that a device reset has been requested.
-		spinlock_acquire(&virtio_mmio->lock);
-		virtio_mmio_status_reg_t status =
-			atomic_load_relaxed(&virtio_mmio->regs->status);
-		virtio_mmio_status_reg_set_device_needs_reset(&status, true);
-		atomic_store_relaxed(&virtio_mmio->regs->status, status);
-
-		reason = atomic_load_relaxed(&virtio_mmio->reason);
-		virtio_mmio_notify_reason_set_reset_rqst(&reason, true);
-		atomic_store_relaxed(&virtio_mmio->reason, reason);
-		spinlock_release(&virtio_mmio->lock);
-
-		// Clear all bits QueueReady for all queues in the
-		// device.
-		for (index_t i = 0; i < virtio_mmio->vqs_num; i++) {
-			virtio_mmio->banked_queue_regs[i].ready = 0U;
-		}
-		atomic_store_relaxed(&virtio_mmio->regs->queue_ready, 0U);
-
-		atomic_thread_fence(memory_order_release);
-		ret = virq_assert(&virtio_mmio->frontend_source, false).r;
+	index_result_t feature_sel_r =
+		nospec_range_check(val, VIRTIO_FEAT_WORDS);
+	if (feature_sel_r.e != OK) {
+		ret = feature_sel_r.e;
+		goto out;
 	}
 
+	uint32_result_t features_r = virtio_get_dev_features(
+		virtio_from_virtio_mmio(virtio_mmio), feature_sel_r.r);
+
+	// Update corresponding banked register
+	spinlock_acquire(&virtio_mmio->banking_lock);
+	virtio_mmio->dev_feat_sel = feature_sel_r.r;
+	atomic_store_relaxed(&virtio_mmio->regs->dev_feat, features_r.r);
+	spinlock_release(&virtio_mmio->banking_lock);
+	ret = OK;
+
+out:
 	return ret;
 }
 
-static bool
-virtio_mmio_write_dev_feat_sel(const virtio_mmio_t *virtio_mmio, uint32_t val)
-{
-	bool	       ret = true;
-	index_result_t res = nospec_range_check(val, VIRTIO_MMIO_DEV_FEAT_NUM);
-	if (res.e == OK) {
-		// Update corresponding banked register
-		atomic_store_relaxed(&virtio_mmio->regs->dev_feat,
-				     virtio_mmio->banked_dev_feat[res.r]);
-	} else {
-		ret = false;
-	}
-
-	return ret;
-}
-
-static bool
+static error_t
 virtio_mmio_write_drv_feat_sel(virtio_mmio_t *virtio_mmio, uint32_t val)
+	REQUIRE_RCU_READ
 {
-	bool	       ret = true;
-	index_result_t res = nospec_range_check(val, VIRTIO_MMIO_DRV_FEAT_NUM);
-	if (res.e == OK) {
-		virtio_mmio->drv_feat_sel = res.r;
-	} else {
-		ret = false;
+	error_t ret;
+
+	index_result_t feature_sel_r =
+		nospec_range_check(val, VIRTIO_FEAT_WORDS);
+	if (feature_sel_r.e != OK) {
+		ret = feature_sel_r.e;
+		goto out;
 	}
 
+	virtio_mmio->drv_feat_sel = feature_sel_r.r;
+	ret			  = OK;
+
+out:
 	return ret;
-}
-
-static void
-virtio_mmio_write_queue_notify(virtio_mmio_t *virtio_mmio, uint32_t val)
-{
-	virtio_mmio_notify_reason_t reason;
-
-	spinlock_acquire(&virtio_mmio->lock);
-
-	// Update bitmap of virtual queues to be notified
-	(void)atomic_fetch_or_explicit(&virtio_mmio->vqs_bitmap, util_bit(val),
-				       memory_order_relaxed);
-
-	reason = atomic_load_relaxed(&virtio_mmio->reason);
-	virtio_mmio_notify_reason_set_new_buffer(&reason, true);
-	atomic_store_relaxed(&virtio_mmio->reason, reason);
-
-	spinlock_release(&virtio_mmio->lock);
-
-	// Assert backend's IRQ to notify the backend that there are new
-	// buffers to process
-	atomic_thread_fence(memory_order_release);
-	(void)virq_assert(&virtio_mmio->frontend_source, false);
 }
 
 static void
@@ -230,106 +138,216 @@ virtio_mmio_write_interrupt_ack(virtio_mmio_t *virtio_mmio, uint32_t val)
 {
 #if defined(PLATFORM_NO_DEVICE_ATTR_ATOMIC_UPDATE) &&                          \
 	PLATFORM_NO_DEVICE_ATTR_ATOMIC_UPDATE
-	spinlock_acquire(&virtio_mmio->lock);
+	spinlock_acquire(&virtio_mmio->interrupt_lock);
 	uint32_t interrupt_status =
 		atomic_load_relaxed(&virtio_mmio->regs->interrupt_status);
 	interrupt_status &= ~val;
 	atomic_store_relaxed(&virtio_mmio->regs->interrupt_status,
 			     interrupt_status);
-	spinlock_release(&virtio_mmio->lock);
+	spinlock_release(&virtio_mmio->interrupt_lock);
 #else
 	(void)atomic_fetch_and_explicit(&virtio_mmio->regs->interrupt_status,
 					~val, memory_order_relaxed);
 #endif
 }
 
-static bool
-virtio_mmio_vdevice_write(virtio_mmio_t *virtio_mmio, size_t offset,
-			  uint32_t val, size_t access_size)
+static error_t
+virtio_mmio_write_status(virtio_mmio_t *virtio_mmio, uint32_t val)
+	RELEASE_RCU_READ
 {
-	bool ret = true;
+	virtio_status_t new_status = virtio_status_cast((uint8_t)val);
+	virtio_t       *virtio	   = virtio_from_virtio_mmio(virtio_mmio);
+
+	if (virtio_status_is_empty(new_status)) {
+		// Reset requested; clear the queue_ready field. The underlying
+		// flags will be cleared by virtio_write_status().
+		atomic_store_relaxed(&virtio_mmio->regs->queue_ready, 0U);
+		// Also clear the interrupt status.
+#if defined(PLATFORM_NO_DEVICE_ATTR_ATOMIC_UPDATE) &&                          \
+	PLATFORM_NO_DEVICE_ATTR_ATOMIC_UPDATE
+		spinlock_acquire(&virtio_mmio->interrupt_lock);
+		atomic_store_relaxed(&virtio_mmio->regs->interrupt_status, 0U);
+		spinlock_release(&virtio_mmio->interrupt_lock);
+#else
+		atomic_store_relaxed(&virtio_mmio->regs->interrupt_status, 0U);
+#endif
+		(void)virq_clear(&virtio_mmio->virq_source);
+	}
+
+	error_t err = virtio_write_status(virtio, new_status);
+
+	if (err == OK) {
+		// Read back the updated status. Note that this might block.
+		atomic_store_relaxed(&virtio_mmio->regs->status,
+				     virtio_read_status(virtio));
+	} else {
+		rcu_read_finish();
+	}
+
+	return err;
+}
+
+static error_t
+virtio_mmio_write_queue(virtio_mmio_t *virtio_mmio, size_t offset, uint32_t val)
+	REQUIRE_RCU_READ
+{
+	error_t ret;
+
+	spinlock_acquire(&virtio_mmio->banking_lock);
+	virtio_status_lock_nopreempt(virtio_from_virtio_mmio(virtio_mmio));
+	virtio_queue_info_ptr_result_t queue_info_r = virtio_get_queue_info_ptr(
+		virtio_from_virtio_mmio(virtio_mmio), virtio_mmio->queue_sel);
+	if (queue_info_r.e != OK) {
+		ret = queue_info_r.e;
+		goto out_locked;
+	}
+	virtio_queue_info_t *queue_info = queue_info_r.r;
 
 	switch (offset) {
-	case OFS_VIRTIO_MMIO_REGS_DEV_FEAT_SEL:
-		ret = virtio_mmio_write_dev_feat_sel(virtio_mmio, val);
+	case offsetof(virtio_mmio_regs_t, queue_num): {
+		count_result_t max_r = virtio_get_queue_size_max(
+			virtio_from_virtio_mmio(virtio_mmio),
+			virtio_mmio->queue_sel);
+		if (max_r.e != OK) {
+			ret = max_r.e;
+			break;
+		}
+		queue_info->size = util_min(val, max_r.r);
+		ret		 = OK;
+		break;
+	}
+
+	case offsetof(virtio_mmio_regs_t, queue_ready):
+		queue_info->ready = (val != 0U);
+		atomic_store_relaxed(&virtio_mmio->regs->queue_ready,
+				     queue_info->ready ? 1U : 0U);
+		ret = OK;
 		break;
 
-	case OFS_VIRTIO_MMIO_REGS_DRV_FEAT:
-		virtio_mmio->banked_drv_feat[virtio_mmio->drv_feat_sel] = val;
+	case offsetof(virtio_mmio_regs_t, queue_desc_low):
+		queue_info->desc &= ~util_mask(32);
+		queue_info->desc |= (paddr_t)val;
+		ret = OK;
 		break;
 
-	case OFS_VIRTIO_MMIO_REGS_DRV_FEAT_SEL:
-		ret = virtio_mmio_write_drv_feat_sel(virtio_mmio, val);
+	case offsetof(virtio_mmio_regs_t, queue_desc_high):
+		queue_info->desc &= util_mask(32);
+		queue_info->desc |= (paddr_t)val << 32;
+		ret = OK;
 		break;
 
-	case OFS_VIRTIO_MMIO_REGS_QUEUE_SEL:
-		ret = virtio_mmio_write_queue_sel(virtio_mmio, val);
+	case offsetof(virtio_mmio_regs_t, queue_drv_low):
+		queue_info->drv &= ~util_mask(32);
+		queue_info->drv |= (paddr_t)val;
+		ret = OK;
 		break;
 
-	case OFS_VIRTIO_MMIO_REGS_QUEUE_NUM:
-		virtio_mmio->banked_queue_regs[virtio_mmio->queue_sel].num =
-			val;
+	case offsetof(virtio_mmio_regs_t, queue_drv_high):
+		queue_info->drv &= util_mask(32);
+		queue_info->drv |= (paddr_t)val << 32;
+		ret = OK;
 		break;
 
-	case OFS_VIRTIO_MMIO_REGS_QUEUE_READY:
-		atomic_store_relaxed(&virtio_mmio->regs->queue_ready, val);
-
-		virtio_mmio->banked_queue_regs[virtio_mmio->queue_sel].ready =
-			val;
+	case offsetof(virtio_mmio_regs_t, queue_dev_low):
+		queue_info->dev &= ~util_mask(32);
+		queue_info->dev |= (paddr_t)val;
+		ret = OK;
 		break;
 
-	case OFS_VIRTIO_MMIO_REGS_QUEUE_NOTIFY:
-		virtio_mmio_write_queue_notify(virtio_mmio, val);
-		break;
-
-	case OFS_VIRTIO_MMIO_REGS_INTERRUPT_ACK:
-		virtio_mmio_write_interrupt_ack(virtio_mmio, val);
-		break;
-
-	case OFS_VIRTIO_MMIO_REGS_STATUS:
-		// We should not allow the frontend to write 0 to the device
-		// status since a 0 status means that the device reset is
-		// complete
-		ret = virtio_mmio_write_status_reg(virtio_mmio, val);
-		break;
-
-	case OFS_VIRTIO_MMIO_REGS_QUEUE_DESC_LOW:
-		virtio_mmio->banked_queue_regs[virtio_mmio->queue_sel].desc_low =
-			val;
-		break;
-
-	case OFS_VIRTIO_MMIO_REGS_QUEUE_DESC_HIGH:
-		virtio_mmio->banked_queue_regs[virtio_mmio->queue_sel]
-			.desc_high = val;
-		break;
-
-	case OFS_VIRTIO_MMIO_REGS_QUEUE_DRV_LOW:
-		virtio_mmio->banked_queue_regs[virtio_mmio->queue_sel].drv_low =
-			val;
-		break;
-
-	case OFS_VIRTIO_MMIO_REGS_QUEUE_DRV_HIGH:
-		virtio_mmio->banked_queue_regs[virtio_mmio->queue_sel].drv_high =
-			val;
-		break;
-
-	case OFS_VIRTIO_MMIO_REGS_QUEUE_DEV_LOW:
-		virtio_mmio->banked_queue_regs[virtio_mmio->queue_sel].dev_low =
-			val;
-		break;
-
-	case OFS_VIRTIO_MMIO_REGS_QUEUE_DEV_HIGH:
-		virtio_mmio->banked_queue_regs[virtio_mmio->queue_sel].dev_high =
-			val;
+	case offsetof(virtio_mmio_regs_t, queue_dev_high):
+		queue_info->dev &= util_mask(32);
+		queue_info->dev |= (paddr_t)val << 32;
+		ret = OK;
 		break;
 
 	default:
-		ret = (trigger_virtio_mmio_device_config_write_event(
-			       virtio_mmio->device_type,
-			       (const virtio_mmio_t *)virtio_mmio, offset, val,
-			       access_size) == VCPU_TRAP_RESULT_EMULATED);
+		ret = ERROR_ARGUMENT_INVALID;
 		break;
 	}
+
+out_locked:
+	virtio_status_unlock_nopreempt(virtio_from_virtio_mmio(virtio_mmio));
+	spinlock_release(&virtio_mmio->banking_lock);
+
+	return ret;
+}
+
+static error_t
+virtio_mmio_vdevice_write(virtio_mmio_t *virtio_mmio, size_t offset,
+			  uint32_t val, size_t access_size) REQUIRE_RCU_READ
+{
+	error_t ret;
+
+	switch (offset) {
+	case offsetof(virtio_mmio_regs_t, dev_feat_sel):
+		ret = virtio_mmio_write_dev_feat_sel(virtio_mmio, val);
+		break;
+
+	case offsetof(virtio_mmio_regs_t, drv_feat):
+		ret = virtio_set_drv_features(
+			virtio_from_virtio_mmio(virtio_mmio),
+			virtio_mmio->drv_feat_sel, val);
+		break;
+
+	case offsetof(virtio_mmio_regs_t, drv_feat_sel):
+		ret = virtio_mmio_write_drv_feat_sel(virtio_mmio, val);
+		break;
+
+	case offsetof(virtio_mmio_regs_t, queue_sel):
+		ret = virtio_mmio_write_queue_sel(virtio_mmio, val);
+		break;
+
+	case offsetof(virtio_mmio_regs_t, queue_notify):
+		ret = virtio_queue_notify(virtio_from_virtio_mmio(virtio_mmio),
+					  val);
+		break;
+
+	case offsetof(virtio_mmio_regs_t, interrupt_ack):
+		virtio_mmio_write_interrupt_ack(virtio_mmio, val);
+		ret = OK;
+		break;
+
+	case offsetof(virtio_mmio_regs_t, status):
+		ret = virtio_mmio_write_status(virtio_mmio, val);
+		// The status write might have blocked, and has therefore
+		// dropped the RCU critical section. Re-acquire it.
+		// FIXME:
+		rcu_read_start();
+		break;
+
+	case offsetof(virtio_mmio_regs_t, queue_num):
+	case offsetof(virtio_mmio_regs_t, queue_ready):
+	case offsetof(virtio_mmio_regs_t, queue_desc_low):
+	case offsetof(virtio_mmio_regs_t, queue_desc_high):
+	case offsetof(virtio_mmio_regs_t, queue_drv_low):
+	case offsetof(virtio_mmio_regs_t, queue_drv_high):
+	case offsetof(virtio_mmio_regs_t, queue_dev_low):
+	case offsetof(virtio_mmio_regs_t, queue_dev_high):
+		ret = virtio_mmio_write_queue(virtio_mmio, offset, val);
+		break;
+
+	default:
+		if (offset >= offsetof(virtio_mmio_regs_t, device_config)) {
+			ret = virtio_device_config_write(
+				virtio_from_virtio_mmio(virtio_mmio),
+				offset - offsetof(virtio_mmio_regs_t,
+						  device_config),
+				access_size, val);
+			// The config write might have blocked, and has
+			// therefore dropped the RCU critical section.
+			// Re-acquire it.
+			// FIXME:
+			rcu_read_start();
+		} else {
+			ret = ERROR_UNIMPLEMENTED;
+		}
+		break;
+	}
+
+	TRACE(ERROR, INFO,
+	      "virtio_mmio_vdevice_write: offset {:#x} size {:#x}"
+	      " val {:#x} -> {:d}",
+	      offset, access_size, val, (register_t)ret);
 
 	return ret;
 }
@@ -337,7 +355,7 @@ virtio_mmio_vdevice_write(virtio_mmio_t *virtio_mmio, size_t offset,
 vcpu_trap_result_t
 virtio_mmio_handle_vdevice_access(vdevice_t *vdevice, size_t offset,
 				  size_t access_size, register_t *value,
-				  bool is_write)
+				  bool is_write) REQUIRE_RCU_READ
 {
 	vcpu_trap_result_t ret;
 
@@ -349,20 +367,15 @@ virtio_mmio_handle_vdevice_access(vdevice_t *vdevice, size_t offset,
 
 	assert((vdevice != NULL) &&
 	       (vdevice->type == VDEVICE_TYPE_VIRTIO_MMIO));
-	virtio_mmio_t *virtio_mmio =
-		virtio_mmio_container_of_frontend_device(vdevice);
-	if (virtio_mmio == NULL) {
-		ret = VCPU_TRAP_RESULT_UNHANDLED;
-		goto out;
-	}
+	virtio_mmio_t *virtio_mmio = virtio_mmio_container_of_vdevice(vdevice);
 
 	if (!virtio_mmio_access_allowed(access_size, offset)) {
 		ret = VCPU_TRAP_RESULT_FAULT;
 		goto out;
 	}
 
-	ret = virtio_mmio_vdevice_write(virtio_mmio, offset, (uint32_t)*value,
-					access_size)
+	ret = (virtio_mmio_vdevice_write(virtio_mmio, offset, (uint32_t)*value,
+					 access_size) == OK)
 		      ? VCPU_TRAP_RESULT_EMULATED
 		      : VCPU_TRAP_RESULT_FAULT;
 

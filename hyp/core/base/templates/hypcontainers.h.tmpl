@@ -13,9 +13,9 @@
 #if $type.is_contained
 static inline ${outer_type} *
 ${d.type_name}_container_of_${name}(${type.pointer.gen_declaration('ptr')}) {
-	_Static_assert(offsetof(${outer_type}, ${name}) == $offset,
+	_Static_assert(offsetof(${outer_type}, ${name}) == ${offset}U,
 		"Generated offset for ${name} in ${outer_type} is incorrect");
-	return ((${outer_type} *)((uintptr_t)(ptr) - $offset));
+	return ((${outer_type} *)((uintptr_t)(ptr) - ${offset}U));
 }
 #end if
 #end for

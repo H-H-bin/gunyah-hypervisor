@@ -53,11 +53,11 @@ sysreg_write_cpu(ESR_EL2_ISS_MSR_MRS_t iss)
 		crn  = ESR_EL2_ISS_MSR_MRS_get_CRn(&iss);
 		crm  = ESR_EL2_ISS_MSR_MRS_get_CRm(&iss);
 
-		if ((opc0 == 3) && (opc1 == 0) && (crn == 15) && (crm >= 3) &&
-		    (crm <= 4)) {
+		if ((opc0 == 3U) && (opc1 == 0U) && (crn == 15U) &&
+		    (crm >= 3U) && (crm <= 4U)) {
 			// CLUSTER* registers, all WI.
-		} else if ((opc0 == 3) && ((opc1 == 0) || (opc1 == 6)) &&
-			   (crn == 15) && (crm >= 5) && (crm <= 6)) {
+		} else if ((opc0 == 3U) && ((opc1 == 0U) || (opc1 == 6U)) &&
+			   (crn == 15U) && (crm >= 5U) && (crm <= 6U)) {
 			// CLUSTERPM* registers, all WI.
 		} else {
 			ret = VCPU_TRAP_RESULT_UNHANDLED;

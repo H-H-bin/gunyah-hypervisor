@@ -1,0 +1,27 @@
+// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+extend cap_rights_virtio_backend bitfield {
+	0	bind_virq		bool;
+	// bit 1 used by virtio_mmio for bind_mmio_frontend_virq
+	2	assert_virq		bool;
+	3	config			bool;
+};
+
+define virtio_backend_notify_reason public bitfield<64> {
+	0	new_buffer	bool = 0;
+	1	reset_request	bool = 0;
+	// bit 2 was formerly interrupt_ack; removed as it was not useful
+	2	res0_2		bool(const) = 0;
+	3	driver_ok	bool = 0;
+	4	failed		bool = 0;
+	others	unknown = 0;
+};
+
+define virtio_backend_option_flags public bitfield<64> {
+	0		sync_reset		bool = 0;
+	5:1		unknown = 0;
+	6		valid_device_type	bool = 0;
+	63:7		unknown = 0;
+};

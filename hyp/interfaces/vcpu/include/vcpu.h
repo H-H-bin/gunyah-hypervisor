@@ -140,7 +140,7 @@ vcpu_pending_wakeup(void) REQUIRE_PREEMPT_DISABLED;
 // This must be called with preemption disabled. If it returns false, preemption
 // must remain disabled until vpcu_block_finish() returns.
 bool
-vcpu_block_start(void) REQUIRE_PREEMPT_DISABLED;
+vcpu_block_start(void) REQUIRE_PREEMPT_DISABLED EXCLUDE_RCU_READ;
 
 // Clean up after blocking hypervisor execution on behalf of the current VCPU.
 //
@@ -148,7 +148,7 @@ vcpu_block_start(void) REQUIRE_PREEMPT_DISABLED;
 // returns false, prior to re-enabling preemption. It must not be called after
 // a call to vcpu_block_start() returns true.
 void
-vcpu_block_finish(void) REQUIRE_PREEMPT_DISABLED;
+vcpu_block_finish(void) REQUIRE_PREEMPT_DISABLED EXCLUDE_RCU_READ;
 
 // Return the VCPU's general purpose registers
 register_t
@@ -163,4 +163,5 @@ vcpu_bind_virq(thread_t *vcpu, vic_t *vic, virq_t virq,
 	       vcpu_virq_type_t virq_type);
 
 error_t
-vcpu_unbind_virq(thread_t *vcpu, vcpu_virq_type_t virq_type);
+vcpu_unbind_virq(thread_t *vcpu, vcpu_virq_type_t virq_type)
+	EXCLUDE_PREEMPT_DISABLED;

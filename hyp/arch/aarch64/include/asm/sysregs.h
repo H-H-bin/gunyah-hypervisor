@@ -21,14 +21,14 @@
 
 #define sysreg64_write(reg, val)                                               \
 	do {                                                                   \
-		register_t reg##_write_val = (register_t)val;                  \
+		register_t reg##_write_val = (register_t)(val);                \
 		/* Write 64-bit system register */                             \
 		__asm__ volatile("msr " #reg ", %0" : : "r"(reg##_write_val)); \
 	} while (0)
 
 #define sysreg64_write_ordered(reg, val, ordering_var)                         \
 	do {                                                                   \
-		register_t reg##_write_val = (register_t)val;                  \
+		register_t reg##_write_val = (register_t)(val);                \
 		/* Write 64-bit system register with ordering */               \
 		__asm__ volatile("msr " #reg ", %1"                            \
 				 : "+m"(ordering_var)                          \

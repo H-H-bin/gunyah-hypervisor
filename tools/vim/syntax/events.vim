@@ -1,6 +1,6 @@
 " Vim syntax file
 " Language:	Gunyah Event Files
-" Maintainer:	Carl van Schaik <quic_cvanscha@quicinc.com>
+" Maintainer:	Carl van Schaik <cvanscha@qti.qualcomm.com>
 " Extensions:   *.ev
 "
 " © 2021 Qualcomm Innovation Center, Inc. All rights reserved.

@@ -12,6 +12,8 @@ define partition_mapped_range structure {
 	virt		uintptr;
 	phys		type paddr_t;
 	size		size;
+	// FIXME:
+	attr		bitfield allocator_memattr;
 };
 
 extend partition object {

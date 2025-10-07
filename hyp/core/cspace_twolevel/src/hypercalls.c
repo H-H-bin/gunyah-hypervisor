@@ -76,19 +76,19 @@ out:
 }
 
 error_t
-hypercall_cspace_revoke_cap_from(cap_id_t src_cspace, cap_id_t src_cap)
+hypercall_cspace_revoke_cap_from(cap_id_t src_cspace_cap, cap_id_t src_cap)
 {
-	(void)src_cspace;
+	(void)src_cspace_cap;
 	(void)src_cap;
 	return ERROR_UNIMPLEMENTED;
 }
 
 error_t
-hypercall_cspace_revoke_caps_from(cap_id_t src_cspace, cap_id_t master_cap)
+hypercall_cspace_revoke_caps_from(cap_id_t src_cspace_cap, cap_id_t master_cap)
 {
 	error_t		    ret;
 	cspace_ptr_result_t c;
-	c = cspace_lookup_cspace(cspace_get_self(), src_cspace,
+	c = cspace_lookup_cspace(cspace_get_self(), src_cspace_cap,
 				 CAP_RIGHTS_CSPACE_CAP_REVOKE);
 	if (compiler_unexpected(c.e != OK)) {
 		ret = c.e;

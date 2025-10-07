@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <types/bitmap.h>
+#include <bitmap.h>
 #include <util.h>
 
 define MEMDB_BITS_PER_LEVEL constant type index_t = 8;

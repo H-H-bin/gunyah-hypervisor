@@ -25,11 +25,19 @@ object_ptr_result_t
 cspace_lookup_object_any(cspace_t *cspace, cap_id_t cap_id,
 			 cap_rights_generic_t rights, object_type_t *type);
 
-// Create the master cap for an object. The cspace will adopt the reference
-// count of the object that was set when initialized after allocation.
+// Create the master cap for an object, with all possible rights. The cspace
+// will adopt the reference count of the object that was set when initialized
+// after allocation.
 cap_id_result_t
 cspace_create_master_cap(cspace_t *cspace, object_ptr_t object,
 			 object_type_t type);
+
+// Create the master cap for an object, with limited rights. This is intended
+// for use with certain special objects created and used internally by the
+// hypervisor to communicate with the root VM.
+cap_id_result_t
+cspace_create_restricted_master_cap(cspace_t *cspace, object_ptr_t object,
+				    object_type_t type, cap_rights_t rights);
 
 cap_id_result_t
 cspace_copy_cap(cspace_t *target_cspace, cspace_t *parent_cspace,

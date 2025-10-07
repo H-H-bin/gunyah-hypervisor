@@ -4,16 +4,15 @@
 
 #include <assert.h>
 #include <hyptypes.h>
-#include <stdatomic.h>
 #include <string.h>
 
 #include <hypconstants.h>
 
+#include <atomic.h>
 #include <compiler.h>
 #include <cpulocal.h>
 #include <panic.h>
 #include <partition.h>
-#include <preempt.h>
 #include <smc_trace.h>
 #include <thread.h>
 #include <util.h>
@@ -68,20 +67,21 @@ smc_trace_log(smc_trace_id_t id, register_t (*registers)[SMC_TRACE_REG_MAX],
 #endif
 
 	index_t cur_idx = atomic_fetch_add_explicit(&hyp_smc_trace->next_idx, 1,
-						    memory_order_consume);
-	if (cur_idx >= HYP_SMC_LOG_NUM) {
-		index_t next_idx = cur_idx + 1U;
+						    memory_order_relaxed);
+	// If we reach the end, wrap the next_idx
+	if (compiler_unexpected(cur_idx >= HYP_SMC_LOG_NUM)) {
+		index_t cur_head = cur_idx + 1U;
+		do {
+			(void)atomic_compare_exchange_ll_sc_weak(
+				&hyp_smc_trace->next_idx, &cur_head,
+				cur_head - HYP_SMC_LOG_NUM);
+		} while (cur_head >= HYP_SMC_LOG_NUM);
+
 		cur_idx -= HYP_SMC_LOG_NUM;
-		(void)atomic_compare_exchange_strong_explicit(
-			&hyp_smc_trace->next_idx, &next_idx, cur_idx + 1U,
-			memory_order_relaxed, memory_order_relaxed);
+		assert(cur_idx < HYP_SMC_LOG_NUM);
 	}
-	assert(cur_idx < HYP_SMC_LOG_NUM);
 
 	smc_trace_entry_t *entry = &hyp_smc_trace->entries[cur_idx];
-
-	// Reduce likelihood of half-written trace entries being dumped.
-	preempt_disable();
 
 	prefetch_store_stream(entry);
 
@@ -100,8 +100,6 @@ smc_trace_log(smc_trace_id_t id, register_t (*registers)[SMC_TRACE_REG_MAX],
 	for (count_t i = num_registers; i < SMC_TRACE_REG_MAX; i++) {
 		entry->x[i] = 0U;
 	}
-
-	preempt_enable();
 
 out:
 	return;

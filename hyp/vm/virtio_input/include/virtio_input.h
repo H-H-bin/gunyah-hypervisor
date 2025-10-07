@@ -3,8 +3,12 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 error_t
-set_data_sel_ev_bits(const virtio_mmio_t *virtio_mmio, uint32_t subsel,
-		     uint32_t size, vmaddr_t data);
+virtio_input_set_data_sel_ev_bits(count_t		  ev_bits_count,
+				  virtio_input_ev_bits_t *ev_bits,
+				  uint32_t subsel, uint32_t size,
+				  vmaddr_t data);
 error_t
-set_data_sel_abs_info(const virtio_mmio_t *virtio_mmio, uint32_t subsel,
-		      uint32_t size, vmaddr_t data);
+virtio_input_set_data_sel_abs_info(count_t		   absinfo_count,
+				   virtio_input_absinfo_t *absinfo,
+				   uint32_t subsel, uint32_t size,
+				   vmaddr_t data);

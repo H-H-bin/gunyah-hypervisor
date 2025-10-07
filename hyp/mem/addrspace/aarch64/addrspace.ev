@@ -12,10 +12,25 @@ subscribe vcpu_run_check
 	require_scheduler_lock(vcpu)
 
 subscribe vcpu_run_resume[VCPU_RUN_STATE_ADDRSPACE_VMMIO_READ]
-	handler addrspace_handle_vcpu_run_resume_read(vcpu, resume_data_0)
+	handler addrspace_handle_vcpu_run_resume_vmmio_read(
+		vcpu, resume_data_0, resume_data_1, resume_data_2)
 	require_scheduler_lock(vcpu)
 
 subscribe vcpu_run_resume[VCPU_RUN_STATE_ADDRSPACE_VMMIO_WRITE]
-	handler addrspace_handle_vcpu_run_resume_write(vcpu)
+	handler addrspace_handle_vcpu_run_resume_vmmio_write(
+		vcpu, resume_data_0, resume_data_1, resume_data_2)
+	require_scheduler_lock(vcpu)
+
+subscribe vcpu_trap_pf_abort_guest
+	handler addrspace_handle_vcpu_trap_pf_abort_guest_paging(esr, ipa, far)
+	priority -1000
+
+subscribe vcpu_trap_data_abort_guest
+	handler addrspace_handle_vcpu_trap_data_abort_guest_paging(esr, ipa, far)
+	priority -1000
+
+subscribe vcpu_run_resume[VCPU_RUN_STATE_ADDRSPACE_PAGE_FAULT]
+	handler addrspace_handle_vcpu_run_resume_page_fault(
+		vcpu, resume_data_0, resume_data_1, resume_data_2)
 	require_scheduler_lock(vcpu)
 #endif

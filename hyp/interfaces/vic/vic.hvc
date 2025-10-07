@@ -2,19 +2,19 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-define hwirq_bind_virq hypercall {
+define vic_bind_virq hypercall {
 	call_num 0x26;
-	hwirq	input type cap_id_t;
+	irq_obj	input type cap_id_t;
 	vic	input type cap_id_t;
 	virq	input type virq_t;
-	res0	input uregister;
+	index	input type index_t;
 	error	output enumeration error;
 };
 
-define hwirq_unbind_virq hypercall {
+define vic_unbind_virq hypercall {
 	call_num 0x27;
-	hwirq	input type cap_id_t;
-	res0	input uregister;
+	irq_obj	input type cap_id_t;
+	index	input type index_t;
 	error	output enumeration error;
 };
 

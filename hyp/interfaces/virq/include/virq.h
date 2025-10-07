@@ -29,6 +29,13 @@
 // If the source has not claimed a VIRQ, or the target VIC or VCPU has been
 // destroyed, this function returns ERROR_VIRQ_NOT_BOUND.
 //
+// If the IRQ is level-triggered and the source has a virq_check_pending
+// handler, this function guarantees that any memory accesses before this call
+// are ordered before memory accesses in any invocation of the handler that
+// successfully clears the interrupt. Note that this does not prevent data
+// races; variables accessed in the handler must be atomic or locked. This
+// function MUST NOT be called while holding any lock acquired in the handler.
+//
 // On success, this function returns a boolean value which is true if the IRQ
 // was delivered with edge triggering enabled.
 bool_result_t

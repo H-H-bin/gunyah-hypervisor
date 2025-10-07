@@ -12,6 +12,7 @@
 #include <platform_cpu.h>
 #include <preempt.h>
 #include <scheduler.h>
+#include <thread.h>
 #include <util.h>
 #include <vcpu.h>
 #include <vic.h>
@@ -20,14 +21,13 @@
 #include <events/vcpu.h>
 
 #include "event_handlers.h"
-#include "vcpu.h"
 
 void
-vcpu_handle_object_get_defaults_thread(thread_create_t *create)
+vcpu_handle_object_get_defaults_thread(thread_create_t *thread_create)
 {
 	uint32_t stack_size;
 
-	assert(create != NULL);
+	assert(thread_create != NULL);
 
 	// This may be 0, which will fall back to the global default
 	stack_size = platform_cpu_stack_size();
@@ -40,14 +40,14 @@ vcpu_handle_object_get_defaults_thread(thread_create_t *create)
 	       util_is_baligned(stack_size, PGTABLE_HYP_PAGE_SIZE));
 	assert(stack_size <= THREAD_STACK_MAX_SIZE);
 
-	create->stack_size = stack_size;
-	create->kind	   = THREAD_KIND_VCPU;
+	thread_create->stack_size = stack_size;
+	thread_create->kind	  = THREAD_KIND_VCPU;
 }
 
 error_t
-vcpu_handle_object_create_thread(thread_create_t create)
+vcpu_handle_object_create_thread(thread_create_t thread_create)
 {
-	thread_t *thread = create.thread;
+	thread_t *thread = thread_create.thread;
 	assert(thread != NULL);
 	error_t ret;
 
@@ -55,8 +55,8 @@ vcpu_handle_object_create_thread(thread_create_t create)
 		scheduler_block_init(thread, SCHEDULER_BLOCK_VCPU_OFF);
 	}
 
-	if (create.scheduler_priority_valid &&
-	    (create.scheduler_priority > VCPU_MAX_PRIORITY)) {
+	if (thread_create.scheduler_priority_valid &&
+	    (thread_create.scheduler_priority > VCPU_MAX_PRIORITY)) {
 		ret = ERROR_DENIED;
 	} else {
 		ret = OK;

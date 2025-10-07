@@ -132,12 +132,12 @@ vetm_handle_vdevice_access_fixed_addr(vmaddr_t ipa, size_t access_size,
 
 	if ((ipa >= PLATFORM_ETM_BASE) &&
 	    (ipa <
-	     PLATFORM_ETM_BASE + PLATFORM_ETM_STRIDE * PLATFORM_MAX_CORES)) {
+	     PLATFORM_ETM_BASE + (PLATFORM_ETM_STRIDE * PLATFORM_MAX_CORES))) {
 		size_t	    base_offset = (size_t)(ipa - PLATFORM_ETM_BASE);
 		cpu_index_t access_pcpu =
 			(cpu_index_t)(base_offset / PLATFORM_ETM_STRIDE);
 		size_t offset =
-			ipa - PLATFORM_ETM_BASE - pcpu * PLATFORM_ETM_STRIDE;
+			ipa - PLATFORM_ETM_BASE - (pcpu * PLATFORM_ETM_STRIDE);
 
 		if ((pcpu == access_pcpu) &&
 		    vetm_access_allowed(access_size, offset)) {

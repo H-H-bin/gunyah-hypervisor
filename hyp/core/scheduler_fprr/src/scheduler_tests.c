@@ -130,6 +130,8 @@ tests_scheduler_start(void)
 	thread_ptr_result_t ret;
 	uint8_t		    old;
 
+	preempt_disable();
+
 	// Test 1: priorities
 	// priority > default: switch on schedule
 	ret = create_thread(SCHEDULER_MAX_PRIORITY, cpulocal_get_index(),
@@ -267,6 +269,8 @@ tests_scheduler_start(void)
 	destroy_thread(ret.r);
 	CPULOCAL(test_passed_count)++;
 #endif
+
+	preempt_enable();
 
 	return false;
 }

@@ -3,20 +3,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 error_t
-virtio_mmio_configure(virtio_mmio_t *virtio_mmio, memextent_t *memextent,
-		      count_t vqs_num, virtio_option_flags_t flags,
-		      virtio_device_type_t device_type);
-
-error_t
-virtio_mmio_backend_bind_virq(virtio_mmio_t *virtio_mmio, vic_t *vic,
-			      virq_t virq);
-
-void
-virtio_mmio_backend_unbind_virq(virtio_mmio_t *virtio_mmio);
-
-error_t
 virtio_mmio_frontend_bind_virq(virtio_mmio_t *virtio_mmio, vic_t *vic,
 			       virq_t virq);
 
 void
-virtio_mmio_frontend_unbind_virq(virtio_mmio_t *virtio_mmio);
+virtio_mmio_frontend_unbind_virq(virtio_mmio_t *virtio_mmio)
+	EXCLUDE_PREEMPT_DISABLED;

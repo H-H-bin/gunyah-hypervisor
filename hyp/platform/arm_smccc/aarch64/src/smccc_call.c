@@ -5,6 +5,9 @@
 #include <assert.h>
 #include <hyptypes.h>
 
+#include <hypconstants.h>
+
+#include <idle.h>
 #include <preempt.h>
 #include <smccc.h>
 
@@ -30,7 +33,7 @@ smccc_1_1_do_call(smccc_function_id_t fn_id, uint64_t (*args)[6],
 
 	trace_regs[0] = smccc_function_id_raw(fn_id);
 	(void)memscpy(&trace_regs[1],
-		      sizeof(trace_regs) - sizeof(trace_regs[0]), *args,
+		      sizeof(trace_regs) - sizeof(trace_regs[0]), args,
 		      sizeof(*args));
 	trace_regs[7] = client_id;
 
@@ -90,30 +93,39 @@ smccc_1_1_call(smccc_function_id_t fn_id, uint64_t (*args)[6],
 	assert(args != NULL);
 	assert(ret != NULL);
 
-#if defined(INTERFACE_VCPU)
-	bool is_vcpu = (client_id != CLIENT_ID_HYP);
 	bool is_fast = smccc_function_id_get_is_fast(&fn_id);
 
-	if (is_vcpu && !is_fast) {
+	if (!is_fast) {
 		preempt_disable();
-		assert(thread_get_self()->kind == THREAD_KIND_VCPU);
-		bool pending_wakeup = vcpu_block_start();
-		if (pending_wakeup) {
-			// Assert a local IPI. This notifies secure world of the
-			// wakeup, while still allowing for the SMC to make some
-			// progress.
-			platform_ipi_one(cpulocal_get_index());
+
+#if defined(INTERFACE_VCPU)
+		bool is_vcpu = (client_id != CLIENT_ID_HYP);
+		bool pending_wakeup;
+		if (is_vcpu) {
+			assert(thread_get_self()->kind == THREAD_KIND_VCPU);
+			pending_wakeup = vcpu_block_start();
+			if (pending_wakeup) {
+				// Assert a local IPI. This notifies secure
+				// world of the wakeup, while still allowing for
+				// the SMC to make some progress.
+				platform_ipi_one(cpulocal_get_index());
+			}
+		} else {
+			pending_wakeup = false;
 		}
+#endif
 
+		idle_block_start();
 		smccc_1_1_do_call(fn_id, args, ret, session_ret, client_id);
+		idle_block_finish();
 
-		if (!pending_wakeup) {
+#if defined(INTERFACE_VCPU)
+		if (is_vcpu && !pending_wakeup) {
 			vcpu_block_finish();
 		}
-		preempt_enable();
-	} else
 #endif
-	{
+		preempt_enable();
+	} else {
 		// Note: it is important that preemption is not disabled across
 		// the SMC instruction in the fast call path, because it is used
 		// via thread_freeze() to make PSCI calls that do not return.

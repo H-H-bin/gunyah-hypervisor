@@ -11,6 +11,18 @@ from elftools.elf.elffile import ELFFile
 from elftools.elf.constants import SH_FLAGS, P_FLAGS
 from elftools import construct
 
+PAGE_SIZE = 4096
+
+
+def is_pow2_non_zero(val):
+    return (val > 0) and ((val & (val - 1)) == 0)
+
+
+def align_up(addr, size):
+    assert is_pow2_non_zero(size)
+
+    return (addr + (size - 1)) & (0xffffffffffffffff ^ (size - 1))
+
 
 class NewSegment():
     def __init__(self, base, p_align=16):
@@ -25,6 +37,8 @@ class NewSegment():
         hdr.p_memsz = 0
         hdr.p_align = p_align
         self.header = hdr
+
+        assert (p_align == 0) or is_pow2_non_zero(p_align)
         # print(self.header)
 
     def add_data(self, data):
@@ -46,106 +60,46 @@ class NewELF():
         self.segments = []
         self.sections = []
 
+        paddr_last = 0
         for i in range(0, base.num_segments()):
             seg = base.get_segment(i)
             seg._data = seg.data()
             self.segments.append(seg)
-            # print("   ", self.segments[i].header)
+            hdr = seg.header
+            # print("   ", hdr)
+            if hdr.p_filesz and (paddr_last > hdr.p_paddr):
+                raise RuntimeError("Input elf segments not sorted by p_paddr")
+            paddr_last = hdr.p_paddr
+            assert (not hdr.p_align) or is_pow2_non_zero(hdr.p_align)
+
+            if hdr.p_align > PAGE_SIZE:
+                # This can happen if the linker thinks the p_offset mod p_vaddr
+                # and segment size heuristics would better support a larger
+                # alignment.
+                # Reduce the alignment to PAGE_SIZE
+                hdr.p_align = PAGE_SIZE
+                print("reduce segment index {:d} alignment to {:#x}"
+                      .format(i, PAGE_SIZE))
 
         for i in range(0, base.num_sections()):
             sec = base.get_section(i)
             sec._data = sec.data()
             self.sections.append(sec)
-            # print("   ", self.sections[i].header)
+            hdr = sec.header
+            # print("   ", hdr)
+            assert (not hdr.sh_addralign) or is_pow2_non_zero(hdr.sh_addralign)
+
+            if hdr.sh_addralign > PAGE_SIZE:
+                # This can happen if the linker thinks the p_offset mod p_vaddr
+                # and section size heuristics would better support a larger
+                # alignment.
+                # Reduce the alignment to PAGE_SIZE
+                hdr.sh_addralign = PAGE_SIZE
+                print("reduce section index {:d} alignment to {:#x}"
+                      .format(i, PAGE_SIZE))
 
     def strip(self):
         print("strip() unimplemented")
-
-    def merge_segments(self, elf):
-        print("merging...")
-
-        p_last = 0
-        # Find the end of the last segment
-        for seg in self.segments:
-            last = seg.header.p_offset + seg.header.p_filesz
-            if last > p_last:
-                p_last = last
-
-        p_adj = p_last
-
-        # Append new segments
-        for i in range(0, elf.num_segments()):
-            seg = elf.get_segment(i)
-            seg._data = seg.data()
-
-            p_last = (p_last + (seg.header.p_align - 1)) & \
-                     (0xffffffffffffffff ^ (seg.header.p_align - 1))
-            # print(hex(p_last))
-            seg.header.p_offset = p_last
-            # print(seg.header)
-            self.segments.append(seg)
-            self.header.e_phnum += 1
-
-            p_last = p_last + seg.header.p_filesz
-
-        p_off = p_last - p_adj
-        # print(">>", hex(p_adj), hex(p_last), hex(p_off))
-
-        # Adjust file offsets for affected sections
-        for sec in self.sections:
-            if sec.header.sh_offset >= p_adj:
-                # print(sec.header)
-                align = sec.header.sh_addralign
-                if align > 1:
-                    p_off = (p_off + (align - 1)) & \
-                            (0xffffffffffffffff ^ (align - 1))
-                # print("SA", hex(sec.header.sh_offset), hex(p_off),
-                #       hex(sec.header.sh_offset + p_off))
-                sec.header.sh_offset += p_off
-
-        if self.header.e_shoff >= p_adj:
-            self.header.e_shoff += p_off
-
-    def append_segment(self, newseg):
-        print("appending...")
-
-        p_last = 0
-        # Find the end of the last segment
-        for seg in self.segments:
-            last = seg.header.p_offset + seg.header.p_filesz
-            if last > p_last:
-                p_last = last
-
-        p_adj = p_last
-
-        # Append new segment
-        p_last = (p_last + (newseg.header.p_align - 1)) & \
-                 (0xffffffffffffffff ^ (newseg.header.p_align - 1))
-        # print(hex(p_last))
-        newseg.header.p_offset = p_last
-        # print(newseg.header)
-        self.segments.append(newseg)
-        self.header.e_phnum += 1
-
-        p_last = p_last + newseg.header.p_filesz
-
-        p_off = p_last - p_adj
-        # print(">>", hex(p_adj), hex(p_last), hex(p_off))
-
-        # Adjust file offsets for affected sections
-        for sec in self.sections:
-            if sec.header.sh_offset >= p_adj:
-                # print(sec.header)
-                align = sec.header.sh_addralign
-                if align > 1:
-                    p_off = (p_off + (align - 1)) & \
-                            (0xffffffffffffffff ^ (align - 1))
-                # print("SA", hex(sec.header.sh_offset), hex(p_off),
-                #       hex(sec.header.sh_offset + p_off))
-                sec.header.sh_offset += p_off
-
-        if self.header.e_shoff >= p_adj:
-            self.header.e_shoff += p_off
 
     # Insert a segment into a pre-sorted ELF
     def insert_segment(self, newseg, phys):
@@ -156,58 +110,75 @@ class NewELF():
         newseg.header.p_paddr = phys
         newseg.header.p_vaddr = phys - phys_offset
 
-        p_adj = 0
         idx = 0
+        insert = False
+        offset_last = 0
         # Find the position to insert segment
         for seg in self.segments:
             if seg.header.p_paddr > newseg.header.p_paddr:
+                insert = True
                 break
             idx += 1
-            # print(seg, hex(seg.header.p_paddr))
-            last = seg.header.p_offset + seg.header.p_filesz
-            assert (last >= p_adj)
-            p_adj = last
+            seg_last = seg.header.p_offset + seg.header.p_filesz
+            if offset_last < seg_last:
+                offset_last = seg_last
 
-        p_prev = p_adj
+        offset_adj = 0
 
-        # Append new segment
-        p_adj = (p_adj + (newseg.header.p_align - 1)) & \
-                (0xffffffffffffffff ^ (newseg.header.p_align - 1))
-        # print(hex(p_adj))
-        newseg.header.p_offset = p_adj
-        # print(newseg.header)
+        assert newseg.header.p_align == PAGE_SIZE
+        if insert and (seg.header.p_align != PAGE_SIZE):
+            # Its possible a TLS or similar segment with start addr matching a
+            # following PT_LOAD segment is encountered. Currently this isn't
+            # supported.
+            raise RuntimeError("unsupported ELF segment alignment")
+
+        # Align p_offset for new segment
+        if insert:
+            # insert before 'seg'
+            p_offset = seg.header.p_offset
+        else:
+            # append after 'seg'
+            p_offset = align_up(seg_last, PAGE_SIZE)
+        p_offset_insert = p_offset
+
+        p_offset = align_up(p_offset, PAGE_SIZE)
+        # print('p_offset', hex(p_offset))
+        newseg.header.p_offset = p_offset
+        p_offset += newseg.header.p_filesz
+        # print('p_filesz', hex(newseg.header.p_filesz))
+        p_offset = align_up(p_offset, PAGE_SIZE)
+
+        offset_adj = p_offset - p_offset_insert
+        # print('offset_adj', hex(offset_adj))
+
+        # Update file offsets of moved segments and sections
+        for seg in self.segments:
+            seg_last = seg.header.p_offset + seg.header.p_filesz
+            if seg_last >= p_offset_insert:
+                seg.header.p_offset += offset_adj
+
+        for sec in self.sections:
+            if sec.header.sh_flags & SH_FLAGS.SHF_ALLOC:
+                offset_base = p_offset_insert
+                adjust = offset_adj
+            else:
+                offset_base = offset_last
+                align = align_up(offset_base, PAGE_SIZE)
+                if insert:
+                    adjust = offset_adj
+                else:
+                    adjust = offset_adj + (align - offset_base)
+
+            if sec.header.sh_offset >= offset_base:
+                # print(sec.header)
+                sec.header.sh_offset += adjust
+
+        if self.header.e_shoff >= p_offset_insert:
+            self.header.e_shoff += p_offset_insert
+
+        # Insert the new segment at requested index
         self.segments.insert(idx, newseg)
         self.header.e_phnum += 1
-
-        p_adj = p_adj + newseg.header.p_filesz
-
-        p_off = p_adj - p_prev
-        # print(">>", hex(p_adj), hex(p_prev), hex(p_off))
-
-        # Update file offsets of remaining segments
-        for seg in self.segments[idx+1:]:
-            last = seg.header.p_offset + seg.header.p_filesz
-            assert (last >= p_prev)
-            p_next = seg.header.p_offset + p_off
-            p_adj = (p_next + (seg.header.p_align - 1)) & \
-                    (0xffffffffffffffff ^ (seg.header.p_align - 1))
-            seg.header.p_offset = p_adj
-            p_off += p_adj - p_next
-
-        # Adjust file offsets for affected sections
-        for sec in self.sections:
-            if sec.header.sh_offset >= p_prev:
-                # print(sec.header)
-                align = sec.header.sh_addralign
-                if align > 1:
-                    p_off = (p_off + (align - 1)) & \
-                            (0xffffffffffffffff ^ (align - 1))
-                # print("SA", hex(sec.header.sh_offset), hex(p_off),
-                #       hex(sec.header.sh_offset + p_off))
-                sec.header.sh_offset += p_off
-
-        if self.header.e_shoff >= p_prev:
-            self.header.e_shoff += p_off
 
     # Align LOAD segment's p_filesz
     def segment_filesz_align(self, align):
@@ -287,6 +258,8 @@ class NewELF():
 
         # Write out the ELF segment data
         for seg in self.segments:
+            if seg.header.p_type in ['PT_DYNAMIC', 'PT_TLS']:
+                continue
             f.seek(seg.header.p_offset)
             f.write(seg._data)
 
@@ -299,7 +272,7 @@ class NewELF():
         # Write out the ELF non-segment based sections
         for sec in self.sections:
             # Copy extra sections, mostly strings and debug
-            if sec.header.sh_flags & SH_FLAGS.SHF_ALLOC == 0:
+            if (sec.header.sh_flags & SH_FLAGS.SHF_ALLOC) == 0:
                 # print("SH", sec.header)
                 f.seek(sec.header.sh_offset)
                 f.write(sec._data)
@@ -373,7 +346,7 @@ def package_files(base, app, runtime, output, p_filesz_align=None,
     hdr.items += 1
 
     # note, we align segment to 4K for signing tools
-    segment = NewSegment(base_elf, 4096)
+    segment = NewSegment(base_elf, PAGE_SIZE)
 
     segment.add_data(pkg_hdr.build(hdr))
     segment.add_data(run_data)
@@ -425,6 +398,9 @@ def main():
         if (p_filesz_align == 0) or \
            ((p_filesz_align & (p_filesz_align - 1)) != 0):
             raise ValueError("segment-size-align must be a power of 2!")
+        if p_filesz_align > PAGE_SIZE:
+            raise ValueError(
+                "segment-size-align must be <= {:d}".format(PAGE_SIZE))
 
     package_files(options.input[0], options.app, options.runtime,
                   options.output, p_filesz_align, options.merge_phys_segments)

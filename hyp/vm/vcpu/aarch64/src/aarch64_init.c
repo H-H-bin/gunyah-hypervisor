@@ -18,7 +18,6 @@
 #include <vcpu.h>
 #include <virq.h>
 
-#include <events/thread.h>
 #include <events/vcpu.h>
 
 #include <asm/barrier.h>
@@ -166,15 +165,16 @@ arch_vcpu_el2_registers_init(vcpu_el2_registers_t *el2_regs)
 #endif
 	HCR_EL2_set_TGE(&el2_regs->hcr_el2, false);
 
-#if defined(ARCH_ARM_FEAT_LOR)
-	// FIXME: we could temporarily set TLOR to false if we encounter Linux
-	// using these registers
-	HCR_EL2_set_TLOR(&el2_regs->hcr_el2, true);
-#endif
-
 #if defined(ARCH_ARM_FEAT_PAuth)
+#if !defined(__ARM_FEATURE_PAC_DEFAULT) || (__ARM_FEATURE_PAC_DEFAULT == 0)
+#error No PAC enabled in compiler
+#endif
 	HCR_EL2_set_APK(&el2_regs->hcr_el2, true);
 	HCR_EL2_set_API(&el2_regs->hcr_el2, true);
+#else
+#if defined(__ARM_FEATURE_PAC_DEFAULT) && (__ARM_FEATURE_PAC_DEFAULT != 0)
+#error No ARCH_ARM_FEAT_PAuth defined with pac enabled
+#endif
 #endif
 
 #if defined(ARCH_ARM_FEAT_NV)
@@ -303,7 +303,7 @@ static noreturn void
 vcpu_thread_start(bool warm_reset) EXCLUDE_PREEMPT_DISABLED
 {
 	trigger_vcpu_started_event(warm_reset);
-	trigger_thread_exit_to_user_event(THREAD_ENTRY_REASON_NONE);
+	thread_exit_to_user(THREAD_ENTRY_REASON_NONE);
 	thread_reset_stack(vcpu_exception_return, 0U);
 }
 
@@ -397,14 +397,14 @@ vcpu_poweron(thread_t *vcpu, vmaddr_result_t entry_point,
 }
 
 error_t
-vcpu_poweroff(bool last_cpu, bool force)
+vcpu_poweroff(bool last_vcpu, bool force)
 {
 	thread_t *current = thread_get_self();
 	assert(current->kind == THREAD_KIND_VCPU);
 
 	scheduler_lock(current);
 
-	error_t ret = trigger_vcpu_poweroff_event(current, last_cpu, force);
+	error_t ret = trigger_vcpu_poweroff_event(current, last_vcpu, force);
 	if (ret == OK) {
 		scheduler_block(current, SCHEDULER_BLOCK_VCPU_OFF);
 		scheduler_unlock_nopreempt(current);

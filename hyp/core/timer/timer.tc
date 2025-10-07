@@ -14,6 +14,7 @@ extend ipi_reason enumeration {
 extend timer structure {
 	timeout		type ticks_t;
 	action		enumeration timer_action;
+	lock		structure spinlock;
 	queue		pointer(atomic) structure timer_queue;
 	list_node	structure list_node(contained);
 };

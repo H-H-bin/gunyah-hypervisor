@@ -1,8 +1,19 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// © 2019 Qualcomm Innovation Center, Inc. All rights reserved.
+// All Rights Reserved.
 //
 // SPDX-License-Identifier; BSD-3-Clause
 
 #include <reg/registers_arm.inc>
+
+// <REGISTER_NAME> (<gen options>)
+// gen options: (optional - defaults 'rw')
+//  r - plain read accessor
+//  R - volatile read accessor
+//  w - plain write accessor
+//  W - memory-barrier write accessor
+//  o - non-ordered
+//  O - ordered
+//  m - memory-barrier read accessor
 
 ACTLR_EL1
 ACTLR_EL2
@@ -96,8 +107,8 @@ VHE(ESR_EL1)
 ESR_EL2 Or
 VHE(FAR_EL1)
 FAR_EL2 Or
-FPCR
-FPSR
+FPCR +fp
+FPSR +fp
 FPEXC32_EL2
 HACR_EL2
 HCR_EL2
@@ -269,7 +280,7 @@ TPIDR_EL1
 TPIDR_EL2
 TPIDRRO_EL0
 #if defined(ARCH_ARM_FEAT_TRF)
-VHE(TRFCR_EL1) Orw
+VHE(TRFCR_EL1) oOrw
 #endif
 VHE(TTBR0_EL1)
 TTBR0_EL2 rwW
@@ -451,11 +462,13 @@ TRFCR_EL2 Orw
 
 #if defined(MODULE_PLATFORM_ETE)
 TRCLAR <uint32> Orw
-TRCIDR0 r
-TRCIDR2 r
-TRCIDR3 r
-TRCIDR4 r
-TRCIDR5 r
+// Barriered reads as these may not be accessible, and we need to prevent the
+// compiler issuing these reads speculatively.
+TRCIDR0 m
+TRCIDR2 m
+TRCIDR3 m
+TRCIDR4 m
+TRCIDR5 m
 TRCSTATR Orw
 TRCPRGCTLR <uint64> Orw
 TRCCONFIGR <uint64> Orw

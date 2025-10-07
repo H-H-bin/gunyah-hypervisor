@@ -8,6 +8,7 @@
 
 #include <compiler.h>
 #include <platform_prng.h>
+#include <prng.h>
 #include <thread.h>
 #include <util.h>
 
@@ -27,6 +28,11 @@ arm_trng_fi_read(vcpu_gpr_t *regs, uint64_t bits, bool smc64)
 	regs->x[2] = 0x0U;
 	regs->x[3] = 0x0U;
 
+	if (prng_check_rate_limit() != OK) {
+		regs->x[0] = (uint64_t)ARM_TRNG_RET_NO_ENTROPY;
+		goto out;
+	}
+
 	if ((bits == 0U) || (bits > (smc64 ? 192U : 96U))) {
 		regs->x[0] = (uint64_t)ARM_TRNG_RET_INVALID_PARAMETERS;
 	} else {
@@ -34,14 +40,13 @@ arm_trng_fi_read(vcpu_gpr_t *regs, uint64_t bits, bool smc64)
 		count_t	 remain		= (count_t)bits;
 		int32_t	 i		= (int32_t)util_array_size(data) - 1;
 
-		assert(bits <= 192);
+		assert(bits <= 192U);
 
 		// Read N-bits of entropy
 		while (remain != 0U) {
 			assert(i >= 0);
 
-			error_t err = platform_get_random32(&data[i]);
-			if (err != OK) {
+			if (platform_get_random32(&data[i]) != OK) {
 				break;
 			}
 			if (remain < 32U) {

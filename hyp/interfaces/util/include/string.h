@@ -26,19 +26,20 @@ _Static_assert(__STDC_HOSTED__ == 0,
 	       "This file deviates from MISRA rule 21.2 in hosted mode");
 #endif
 
-// Define size_t and NULL
-#include <stddef.h>
-
-#define memscpy(s1, s1_size, s2, s2_size)                                      \
-	((void)memcpy(s1, s2,                                                  \
-		      ((s1_size) < (s2_size)) ? (s1_size) : (s2_size)),        \
-	 ((s1_size) < (s2_size)) ? (s1_size) : (s2_size))
+extern size_t
+memscpy(void *s1, size_t s1_size, const void *s2, size_t s2_size);
 
 extern void *
 memcpy(void *restrict s1, const void *restrict s2, size_t n);
 
+#if defined(HYP_STANDALONE_TEST)
 extern void *
 memmove(void *s1, const void *s2, size_t n);
+#endif
+
+// Secure memmove, requires valid src and dst buffers, and dst_sz >= n
+size_t
+memsmove(void *dst, size_t dst_sz, const void *src, size_t n);
 
 extern void *
 memset(void *s, int c, size_t n);
@@ -50,8 +51,14 @@ typedef size_t rsize_t;
 extern errno_t
 memset_s(void *s, rsize_t smax, int c, rsize_t n);
 
-extern size_t
-strlen(const char *str);
+// Returns the string length, without counting the trailing '\0' or maxlen if
+// once maxlen characters have been searched. This function will not read
+// memory beyond (str+maxlen-1).
+extern rsize_t
+util_strnlen(const char *str, rsize_t maxlen);
 
+// Returns a pointer to the first character 'c' found in string str. If the
+// string terminating \0 character is reached or 'c' is not found within the
+// first maxlen bytes, NULL is returned.
 extern char *
-strchr(const char *str, int c);
+util_strnchr(const char *str, int32_t c, rsize_t maxlen);

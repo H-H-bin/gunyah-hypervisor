@@ -29,7 +29,7 @@ void
 thread_standard_handle_boot_runtime_first_init(void)
 {
 	void_ptr_result_t ret;
-	thread_t	 *idle_thread;
+	thread_t	 *boot_thread;
 
 	// Allocate boot CPU idle thread and TLS out of bootmem.
 	ret = bootmem_allocate(thread_size, thread_align);
@@ -40,24 +40,24 @@ thread_standard_handle_boot_runtime_first_init(void)
 	// For now, we just zero-initialise the thread and TLS data and init the
 	// reference count. The real setup will be done in the idle module after
 	// partitions and allocators are working.
-	idle_thread = (thread_t *)ret.r;
+	boot_thread = (thread_t *)ret.r;
 
-	assert(thread_size >= sizeof(*idle_thread));
-	errno_t err_mem = memset_s(idle_thread, thread_size, 0, thread_size);
+	assert(thread_size >= sizeof(*boot_thread));
+	errno_t err_mem = memset_s(boot_thread, thread_size, 0, thread_size);
 	if (err_mem != 0) {
 		panic("Error in memset_s operation!");
 	}
-	refcount_init(&idle_thread->header.refcount);
+	refcount_init(&boot_thread->header.refcount);
 
 	// This must be the last operation in boot_runtime_first_init.
-	thread_switch_boot_thread(idle_thread);
+	thread_switch_boot_thread(boot_thread);
 }
 
 void
-thread_standard_handle_boot_runtime_warm_init(thread_t *idle_thread)
+thread_standard_handle_boot_runtime_warm_init(thread_t *boot_thread)
 {
 	// This must be the last operation in boot_runtime_warm_init.
-	thread_switch_boot_thread(idle_thread);
+	thread_switch_boot_thread(boot_thread);
 }
 
 noreturn void

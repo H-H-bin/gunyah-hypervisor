@@ -345,6 +345,7 @@ memmove_tests(void)
 			memmove_test(size, overlap);
 		}
 	}
+	printf("\nPASS\n");
 }
 
 int

@@ -6,8 +6,8 @@
 #include <hyptypes.h>
 
 #include <atomic.h>
-#include <gpt.h>
 #include <object.h>
+#include <range_tree.h>
 #include <spinlock.h>
 #include <util.h>
 #include <vdevice.h>
@@ -25,7 +25,7 @@ vdevice_attach_phys(vdevice_t *vdevice, memextent_t *memextent)
 	return atomic_compare_exchange_strong_explicit(&memextent->vdevice,
 						       &null_vdevice, vdevice,
 						       memory_order_release,
-						       memory_order_release)
+						       memory_order_relaxed)
 		       ? OK
 		       : ERROR_BUSY;
 }
@@ -38,28 +38,16 @@ vdevice_detach_phys(vdevice_t *vdevice, memextent_t *memextent)
 	assert(old_vdevice == vdevice);
 }
 
-bool
-vdevice_handle_gpt_values_equal(gpt_type_t type, gpt_value_t x, gpt_value_t y)
-{
-	assert(type == GPT_TYPE_VDEVICE);
-
-	return x.vdevice == y.vdevice;
-}
-
 error_t
-vdevice_handle_object_create_addrspace(addrspace_create_t params)
+vdevice_handle_object_create_addrspace(addrspace_create_t addrspace_create)
 {
-	addrspace_t *addrspace = params.addrspace;
+	addrspace_t *addrspace = addrspace_create.addrspace;
 	assert(addrspace != NULL);
 
 	spinlock_init(&addrspace->vdevice_lock);
 
-	gpt_config_t config = gpt_config_default();
-	gpt_config_set_max_bits(&config, VDEVICE_MAX_GPT_BITS);
-	gpt_config_set_rcu_read(&config, true);
-
-	return gpt_init(&addrspace->vdevice_gpt, addrspace->header.partition,
-			config, util_bit((index_t)GPT_TYPE_VDEVICE));
+	return range_tree_init(&addrspace->vdevice_tree,
+			       addrspace->header.partition);
 }
 
 void
@@ -67,7 +55,9 @@ vdevice_handle_object_cleanup_addrspace(addrspace_t *addrspace)
 {
 	assert(addrspace != NULL);
 
-	gpt_destroy(&addrspace->vdevice_gpt);
+	// Note that attached vdevices hold references to the addrspace, so we
+	// know that there are none by this point.
+	range_tree_destroy(&addrspace->vdevice_tree, RANGE_TREE_NODE_TYPE_NONE);
 }
 
 error_t
@@ -85,22 +75,16 @@ vdevice_attach_vmaddr(vdevice_t *vdevice, addrspace_t *addrspace, vmaddr_t ipa,
 		goto out;
 	}
 
-	gpt_entry_t entry = {
-		.type  = GPT_TYPE_VDEVICE,
-		.value = { .vdevice = vdevice },
-	};
-
 	spinlock_acquire(&addrspace->vdevice_lock);
 
-	err = gpt_insert(&addrspace->vdevice_gpt, ipa, size, entry, true);
-
-	spinlock_release(&addrspace->vdevice_lock);
+	err = range_tree_insert(&addrspace->vdevice_tree, &vdevice->range, ipa,
+				size);
 
 	if (err == OK) {
 		vdevice->addrspace = object_get_addrspace_additional(addrspace);
-		vdevice->ipa	   = ipa;
-		vdevice->size	   = size;
 	}
+
+	spinlock_release(&addrspace->vdevice_lock);
 
 out:
 	return err;
@@ -115,20 +99,15 @@ vdevice_detach_vmaddr(vdevice_t *vdevice)
 	addrspace_t *addrspace = vdevice->addrspace;
 	assert(addrspace != NULL);
 
-	gpt_entry_t entry = {
-		.type  = GPT_TYPE_VDEVICE,
-		.value = { .vdevice = vdevice },
-	};
-
 	spinlock_acquire(&addrspace->vdevice_lock);
 
-	error_t err = gpt_remove(&addrspace->vdevice_gpt, vdevice->ipa,
-				 vdevice->size, entry);
+	error_t err =
+		range_tree_remove(&addrspace->vdevice_tree, &vdevice->range);
 	assert(err == OK);
 
-	spinlock_release(&addrspace->vdevice_lock);
-
 	vdevice->addrspace = NULL;
+
+	spinlock_release(&addrspace->vdevice_lock);
 
 	object_put_addrspace(addrspace);
 }

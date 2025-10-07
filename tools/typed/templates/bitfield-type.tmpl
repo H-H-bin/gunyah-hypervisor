@@ -56,16 +56,13 @@ val_$i#slurp
 #if i
 , #slurp
 #end if
-val_$i#slurp
+(val_$i)#slurp
 #end for
 } }
 
 #if $unit_cnt == 1
 ${unit_type}
 ${type_name}_raw(${type_name}_t bit_field);
-
-_Atomic ${unit_type} *
-${type_name}_atomic_ptr_raw(_Atomic ${type_name}_t *ptr);
 
 #end if
 void

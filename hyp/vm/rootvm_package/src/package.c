@@ -12,6 +12,7 @@
 #endif
 #include <string.h>
 
+#include <bitmap.h>
 #include <compiler.h>
 #include <cpulocal.h>
 #include <cspace.h>
@@ -24,16 +25,24 @@
 #include <partition.h>
 #include <partition_alloc.h>
 #include <pgtable.h>
+#include <platform_cpu.h>
 #include <prng.h>
+#include <qcbor.h>
 #include <spinlock.h>
 #include <trace.h>
 #include <util.h>
 #include <vcpu.h>
 
+#include <asm/cache.h>
+
 #include "event_handlers.h"
 
 // The physical address symbol pointing to the package image
 extern const char image_pkg_start;
+
+#if !defined(PLATFORM_ROOTVM_ELF_SIZE)
+#define PLATFORM_ROOTVM_ELF_SIZE 0x00080000U
+#endif
 
 static memextent_t *
 create_memextent(partition_t *root_partition, cspace_t *root_cspace,
@@ -152,7 +161,8 @@ rootvm_package_load_elf(void *elf, size_t elf_max_size, addrspace_t *addrspace,
 
 		// Map the ELF segment
 		if (memextent_map(me_ret.r, addrspace, ipa_base + offset,
-				  map_attrs) != OK) {
+				  map_attrs,
+				  addrspace_map_flags_default()) != OK) {
 			panic("Error mapping to root VM address space");
 		}
 
@@ -177,7 +187,7 @@ static void
 update_cores_info(qcbor_enc_ctxt_t *qcbor_enc_ctxt) REQUIRE_PREEMPT_DISABLED
 {
 	cpu_index_t boot_core;
-	uint64_t    usable_cores;
+	cpuid_set_t functional_cores;
 
 	assert(qcbor_enc_ctxt != NULL);
 
@@ -186,96 +196,52 @@ update_cores_info(qcbor_enc_ctxt_t *qcbor_enc_ctxt) REQUIRE_PREEMPT_DISABLED
 
 	QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt, "boot_core", boot_core);
 
-	usable_cores = PLATFORM_USABLE_CORES;
-	assert((usable_cores & util_bit(boot_core)) != 0);
-	QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt, "usable_cores",
-				   usable_cores);
+	functional_cores = platform_get_functional_cpus();
+	assert(bitmap_isset(functional_cores.bitmap, boot_core));
 
-	index_t max_idx = (index_t)((sizeof(usable_cores) * 8U) - 1U) -
-			  compiler_clz(usable_cores);
-	// can be a static assertion
-	assert(max_idx < PLATFORM_MAX_CORES);
+	static_assert(sizeof(functional_cores.bitmap[0]) == sizeof(uint64_t),
+		      "only 64-bit platforms supported");
+	// The first 0..63 functional_cores are stored here
+	QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt, "usable_cores",
+				   functional_cores.bitmap[0]);
+
+	// Cores numbered 64+ are stored in an extension bitmap
+	QCBOREncode_OpenArrayInMap(qcbor_enc_ctxt, "usable_cores_ext");
+	for (index_t i = 1U; i < BITMAP_NUM_WORDS(PLATFORM_MAX_CORES); i++) {
+		register_t bits = functional_cores.bitmap[i];
+		if ((i == (BITMAP_NUM_WORDS(PLATFORM_MAX_CORES) - 1U)) &&
+		    ((PLATFORM_MAX_CORES % BITMAP_WORD_BITS) != 0U)) {
+			assert((bits >>
+				(PLATFORM_MAX_CORES % BITMAP_WORD_BITS)) == 0U);
+		}
+
+		QCBOREncode_AddUInt64(qcbor_enc_ctxt, bits);
+	}
+	QCBOREncode_CloseArray(qcbor_enc_ctxt);
+
+	QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt, "max_cores",
+				   PLATFORM_MAX_CORES);
 }
 
-void
-rootvm_package_handle_rootvm_init(partition_t *root_partition,
-				  thread_t *root_thread, cspace_t *root_cspace,
-				  hyp_env_data_t   *hyp_env,
-				  qcbor_enc_ctxt_t *qcbor_enc_ctxt)
+typedef struct {
+	vmaddr_t runtime_ipa;
+	vmaddr_t app_ipa;
+	size_t	 offset;
+} image_process_info_t;
+
+static image_process_info_t
+rootvm_package_process_image(hyp_env_data_t	     *hyp_env,
+			     rootvm_package_header_t *pkg_hdr,
+			     virt_range_result_t      map_range_r,
+			     addrspace_t *addrspace, memextent_t *me,
+			     size_t map_size, vmaddr_t ipa)
 {
-	error_t ret;
-
-	assert(qcbor_enc_ctxt != NULL);
-
-	assert(root_partition != NULL);
-	assert(root_thread != NULL);
-	assert(root_cspace != NULL);
-	assert(root_thread->addrspace != NULL);
-
-	addrspace_t *addrspace = root_thread->addrspace;
-
-	// FIXME: we could read headers and map incrementally as needed using
-	// segment rights. A single 512KiB mapping is sufficient for now!
-	size_t		    map_size	= 0x00080000;
-	virt_range_result_t map_range_r = hyp_aspace_allocate(map_size);
-	assert(map_range_r.e == OK);
-
-	pgtable_hyp_start();
-	ret = pgtable_hyp_map(root_partition, map_range_r.r.base, map_size,
-			      (paddr_t)&image_pkg_start,
-			      PGTABLE_HYP_MEMTYPE_WRITEBACK, PGTABLE_ACCESS_R,
-			      VMSA_SHAREABILITY_INNER_SHAREABLE);
-	assert(ret == OK);
-	pgtable_hyp_commit();
-
-	rootvm_package_header_t *pkg_hdr =
-		(rootvm_package_header_t *)map_range_r.r.base;
-
-	if (pkg_hdr->ident != ROOTVM_PACKAGE_IDENT) {
-		panic("RootVM package header not found!");
-	}
-	if (pkg_hdr->items >= (uint32_t)ROOTVM_PACKAGE_ITEMS_MAX) {
-		panic("Invalid pkg_hdr");
-	}
-
 	paddr_t load_base = PLATFORM_ROOTVM_LMA_BASE;
 	paddr_t load_next = load_base;
 
-	// Create memory extent for the RM with randomized base
-	uint64_t random;
-#if !defined(DISABLE_ROOTVM_ASLR)
-	uint64_result_t res = prng_get64();
-	assert(res.e == OK);
-	random = res.r;
-#else
-	random = 0x10000000U;
-#endif
-
-#if 0
-	// FIXME:
-	// Root VM address space could be smaller
-	// Currently limit usable address space to 1GiB
-	vmaddr_t addr_limit = (vmaddr_t)util_bit(30);
-
-	vmaddr_t ipa = (vmaddr_t)rand % (addr_limit - PLATFORM_ROOTVM_LMA_SIZE -
-					 PGTABLE_VM_PAGE_SIZE);
-	ipa += PGTABLE_VM_PAGE_SIZE; // avoid use of the zero page
-	ipa = util_balign_down(ipa, PGTABLE_VM_PAGE_SIZE);
-#else
-	(void)random;
-	vmaddr_t ipa = PLATFORM_ROOTVM_LMA_BASE;
-#endif
-
-	// Map the root_thread memory as RW by default. Elf segments will be
-	// remapped with the required rights.
-	cap_id_t     me_cap;
-	memextent_t *me		 = create_memextent(root_partition, root_cspace,
-						    PLATFORM_ROOTVM_LMA_BASE,
-						    PLATFORM_ROOTVM_LMA_SIZE, &me_cap,
-						    PGTABLE_ACCESS_RWX);
-	vmaddr_t     runtime_ipa = 0U;
-	vmaddr_t     app_ipa	 = 0U;
-	size_t	     offset	 = 0U;
+	vmaddr_t runtime_ipa = 0U;
+	vmaddr_t app_ipa     = 0U;
+	size_t	 offset	     = 0U;
 
 	index_t i;
 	for (i = 0U; i < (index_t)pkg_hdr->items; i++) {
@@ -325,6 +291,94 @@ rootvm_package_handle_rootvm_init(partition_t *root_partition,
 		offset = load_next - PLATFORM_ROOTVM_LMA_BASE;
 	}
 
+	return (image_process_info_t){
+		.app_ipa     = app_ipa,
+		.offset	     = offset,
+		.runtime_ipa = runtime_ipa,
+	};
+}
+
+void
+rootvm_package_handle_rootvm_init(partition_t *root_partition,
+				  thread_t *root_thread, cspace_t *root_cspace,
+				  hyp_env_data_t   *hyp_env,
+				  qcbor_enc_ctxt_t *qcbor_enc_ctxt)
+{
+	error_t ret;
+
+	assert(qcbor_enc_ctxt != NULL);
+
+	assert(root_partition != NULL);
+	assert(root_thread != NULL);
+	assert(root_cspace != NULL);
+	assert(root_thread->addrspace != NULL);
+
+	addrspace_t *addrspace = root_thread->addrspace;
+
+	// FIXME: we could read headers and map incrementally as needed using
+	// segment rights. A single 512KiB mapping is sufficient for now!
+	size_t map_size = PLATFORM_ROOTVM_ELF_SIZE;
+
+	virt_range_result_t map_range_r = hyp_aspace_allocate(map_size);
+	assert(map_range_r.e == OK);
+
+	pgtable_hyp_start();
+	ret = pgtable_hyp_map(root_partition, map_range_r.r.base, map_size,
+			      (paddr_t)&image_pkg_start,
+			      PGTABLE_HYP_MEMTYPE_WRITEBACK, PGTABLE_ACCESS_R,
+			      VMSA_SHAREABILITY_INNER_SHAREABLE);
+	assert(ret == OK);
+	pgtable_hyp_commit();
+
+	rootvm_package_header_t *pkg_hdr =
+		(rootvm_package_header_t *)map_range_r.r.base;
+
+	if (pkg_hdr->ident != ROOTVM_PACKAGE_IDENT) {
+		panic("RootVM package header not found!");
+	}
+	if (pkg_hdr->items >= (uint32_t)ROOTVM_PACKAGE_ITEMS_MAX) {
+		panic("Invalid pkg_hdr");
+	}
+
+	// Create memory extent for the RM with randomized base
+	uint64_t random;
+#if !defined(DISABLE_ROOTVM_ASLR)
+	uint64_result_t res = prng_get64();
+	assert(res.e == OK);
+	random = res.r;
+#else
+	random = 0x10000000U;
+#endif
+
+#if 0
+	// FIXME:
+	// Root VM address space could be smaller
+	// Currently limit usable address space to 1GiB
+	vmaddr_t addr_limit = (vmaddr_t)util_bit(30);
+
+	vmaddr_t ipa = (vmaddr_t)rand % (addr_limit - PLATFORM_ROOTVM_LMA_SIZE -
+					 PGTABLE_VM_PAGE_SIZE);
+	ipa += PGTABLE_VM_PAGE_SIZE; // avoid use of the zero page
+	ipa = util_balign_down(ipa, PGTABLE_VM_PAGE_SIZE);
+#else
+	(void)random;
+	vmaddr_t ipa = PLATFORM_ROOTVM_LMA_BASE;
+#endif
+
+	// Map the root_thread memory as RW by default. Elf segments will be
+	// remapped with the required rights.
+	cap_id_t     me_cap;
+	memextent_t *me = create_memextent(root_partition, root_cspace,
+					   PLATFORM_ROOTVM_LMA_BASE,
+					   PLATFORM_ROOTVM_LMA_SIZE, &me_cap,
+					   PGTABLE_ACCESS_RWX);
+
+	image_process_info_t info = rootvm_package_process_image(
+		hyp_env, pkg_hdr, map_range_r, addrspace, me, map_size, ipa);
+	vmaddr_t runtime_ipa = info.runtime_ipa;
+	vmaddr_t app_ipa     = info.app_ipa;
+	size_t	 offset	     = info.offset;
+
 	memextent_mapping_attrs_t map_attrs = memextent_mapping_attrs_default();
 	memextent_mapping_attrs_set_user_access(&map_attrs, PGTABLE_ACCESS_RW);
 	memextent_mapping_attrs_set_kernel_access(&map_attrs,
@@ -333,7 +387,8 @@ rootvm_package_handle_rootvm_init(partition_t *root_partition,
 					    PGTABLE_VM_MEMTYPE_NORMAL_WB);
 
 	// Map all the remaining root VM memory as RW
-	if (memextent_map(me, addrspace, ipa, map_attrs) != OK) {
+	if (memextent_map(me, addrspace, ipa, map_attrs,
+			  addrspace_map_flags_default()) != OK) {
 		panic("Error mapping to root VM address space");
 	}
 
@@ -379,6 +434,6 @@ rootvm_package_handle_rootvm_init(partition_t *root_partition,
 	hyp_aspace_deallocate(root_partition, map_range_r.r);
 
 	// New code has been loaded, so we need to invalidate any physical
-	// I-cache entries possibly prefetched
-	__asm__ volatile("dsb ish; ic ialluis" ::: "memory");
+	// I-cache entries possibly prefetched.
+	cache_invalidate_inst_all();
 }

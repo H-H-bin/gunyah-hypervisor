@@ -1,0 +1,41 @@
+// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+module virtio_backend
+
+subscribe object_activate_virtio_backend
+	unwinder(virtio_backend)
+
+subscribe object_deactivate_virtio_backend
+
+subscribe object_cleanup_virtio_backend(virtio_backend)
+
+subscribe virtio_queue_notify[VIRTIO_BACKEND_TYPE_HYPERCALL](virtio, vq)
+
+subscribe virtio_reset_requested[VIRTIO_BACKEND_TYPE_HYPERCALL](virtio)
+	require_spinlock(virtio->status_lock)
+
+subscribe virtio_features_ok_check[VIRTIO_BACKEND_TYPE_HYPERCALL](virtio)
+
+subscribe virtio_driver_ok[VIRTIO_BACKEND_TYPE_HYPERCALL](virtio)
+
+subscribe virtio_failed[VIRTIO_BACKEND_TYPE_HYPERCALL](virtio)
+
+subscribe virtio_device_config_write[VIRTIO_BACKEND_TYPE_HYPERCALL](
+		virtio, offset, access_size, value)
+
+subscribe virtio_device_config_read[VIRTIO_BACKEND_TYPE_HYPERCALL](
+		virtio, offset, access_size)
+
+subscribe virq_check_pending[VIRQ_TRIGGER_VIRTIO_BACKEND]
+	handler virtio_backend_handle_virq_check_pending(source)
+
+subscribe virtio_backend_device_config_write[VIRTIO_DEVICE_TYPE_INVALID]
+	constant ERROR_UNIMPLEMENTED
+
+subscribe virtio_backend_device_config_activate[VIRTIO_DEVICE_TYPE_INVALID]
+	constant OK
+
+subscribe virtio_backend_device_config_cleanup[VIRTIO_DEVICE_TYPE_INVALID]
+	constant OK

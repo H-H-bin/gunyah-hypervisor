@@ -1,0 +1,69 @@
+// © 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+#if defined(INTERFACE_VCPU)
+
+define sbsa_wdog_iid bitfield<32>
+{
+	6:0	jep106		uint8(const) = 0x70;	// Qualcomm
+	7	unknown = 0;
+	11:8	jep106_cont	uint8(const) = 0x0;	// Qualcomm
+	15:12	revision	uint8(const) = 0x0;
+	19:16	version		uint8(const) = 0x1;
+	31:20	product_id	uint16(const) = 0x710;	// 'G', 0 (IMPL-DEFINED)
+};
+
+define sbsa_wdog_control bitfield<32>
+{
+	0	enable		bool;
+	1	ws0_status	uint8;
+	2	ws1_status	uint8;
+	others	unknown = 0;
+};
+
+define sbsa_wdog_offset bitfield<64>
+{
+	31:0	offset_lo	uint32;
+	47:32	offset_hi	uint16;
+	others	unknown = 0;
+};
+
+define sbsa_wdog_compare bitfield<64>
+{
+	31:0	compare_lo	uint32;
+	63:32	compare_hi	uint32;
+};
+
+define sbsa_watchdog_refresh_frame structure(aligned(PGTABLE_HYP_PAGE_SIZE))
+{
+	refresh @0x000		uint32;
+	id @0xfcc		bitfield	sbsa_wdog_iid;
+};
+
+define sbsa_watchdog_control_frame structure(aligned(PGTABLE_HYP_PAGE_SIZE))
+{
+	wcs @0x000		bitfield	sbsa_wdog_control;
+	wor_lo @0x008		uint32;
+	wor_hi @0x00c		uint32;
+	wcv_lo @0x010		uint32;
+	wcv_hi @0x014		uint32;
+	id @0xfcc		bitfield	sbsa_wdog_iid;
+};
+
+extend watchdog object {
+	vdevice				structure vdevice(contained);
+	// To keep track of OFFSET register in case COMPARE is written directly
+	offset_reg_ms			type watchdog_milliseconds_t;
+	compare_overridden		bool;
+};
+
+extend vdevice_type enumeration {
+	watchdog;
+};
+
+// ARM SBSA watchdog has two frames, put them 64KB apart
+define SBSA_WATCHDOG_FRAME_STRIDE	constant = 0x10000;
+define SBSA_WATCHDOG_SIZE		constant = SBSA_WATCHDOG_FRAME_STRIDE * 2;
+
+#endif

@@ -22,16 +22,7 @@
 // call asm_event_wait().
 #if !defined(asm_event_load_before_wait)
 #define asm_event_load_before_wait(p)                                          \
-	atomic_load_explicit(p, memory_order_acquire)
-#endif
-
-// As above, but for a named bitfield type.
-//
-// This is needed to hide pointer casts that would otherwise be unsafe on
-// platforms where asm_event_load_before_wait() needs type-specific inline asm,
-// such as ARMv8.
-#if !defined(asm_event_load_bf_before_wait)
-#define asm_event_load_bf_before_wait(name, p) asm_event_load_before_wait(p)
+	atomic_load_explicit((p), memory_order_acquire)
 #endif
 
 // Poll after checking the result of asm_event_load_before_wait().
@@ -57,7 +48,7 @@
 #if !defined(asm_event_wait)
 #define ASM_EVENT_WAIT_IS_NOOP 1
 #define asm_event_wait(p)      ((void)0)
-#else
+#elif !defined(ASM_EVENT_WAIT_IS_NOOP)
 #define ASM_EVENT_WAIT_IS_NOOP 0
 #endif
 

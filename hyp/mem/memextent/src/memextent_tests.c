@@ -21,8 +21,10 @@
 #include <partition_alloc.h>
 #include <partition_init.h>
 #include <pgtable.h>
+#include <preempt.h>
 #include <spinlock.h>
 #include <trace.h>
+#include <util.h>
 
 #include <events/object.h>
 
@@ -226,17 +228,20 @@ tests_memextent_test1(paddr_t phys_base)
 	memextent_mapping_attrs_set_memtype(&map_attrs,
 					    PGTABLE_VM_MEMTYPE_DEVICE_NGNRNE);
 
-	err = memextent_map(me, as, vm_base, map_attrs);
+	err = memextent_map(me, as, vm_base, map_attrs,
+			    addrspace_map_flags_default());
 	if (err != OK) {
 		panic("Failed mapping of mem extent");
 	}
 
-	err = memextent_map(me, as2, vm_base, map_attrs);
+	err = memextent_map(me, as2, vm_base, map_attrs,
+			    addrspace_map_flags_default());
 	if (err != OK) {
 		panic("Failed mapping of mem extent to address space 2");
 	}
 
-	err = memextent_map(me2, as, vm_base2, map_attrs);
+	err = memextent_map(me2, as, vm_base2, map_attrs,
+			    addrspace_map_flags_default());
 	if (err != OK) {
 		panic("Failed mapping of mem extent 2");
 	}
@@ -278,7 +283,8 @@ tests_memextent_test1(paddr_t phys_base)
 	memextent_t *me_d2 = me_ret.r;
 
 	// Unmap extent from as and map it to as2
-	err = memextent_unmap(me_d2, as, vm_base3);
+	err = memextent_unmap(me_d2, as, vm_base3,
+			      addrspace_map_flags_default());
 	if (err != OK) {
 		panic("Failed memextent unmapping");
 	}
@@ -289,7 +295,8 @@ tests_memextent_test1(paddr_t phys_base)
 	pgtable_vm_dump(&as->vm_pgtable);
 #endif
 
-	err = memextent_map(me_d2, as2, vm_base3, map_attrs);
+	err = memextent_map(me_d2, as2, vm_base3, map_attrs,
+			    addrspace_map_flags_default());
 	if (err != OK) {
 		panic("Failed mapping of mem extent derived 2");
 	}
@@ -325,7 +332,8 @@ tests_memextent_test1(paddr_t phys_base)
 	memextent_access_attrs_set_kernel_access(&access_attrs,
 						 PGTABLE_ACCESS_R);
 
-	err = memextent_update_access(me_dd2, as2, vm_base3, access_attrs);
+	err = memextent_update_access(me_dd2, as2, vm_base3, access_attrs,
+				      addrspace_map_flags_default());
 	if (err != OK) {
 		panic("Failed memextent update access");
 	}
@@ -339,7 +347,7 @@ tests_memextent_test1(paddr_t phys_base)
 	// Unmap extent 2 from as and map it to as2. This implies that only two
 	// ranges of the extent will change the mapping since the rest of the
 	// ranges are owned by the children
-	err = memextent_unmap(me2, as, vm_base2);
+	err = memextent_unmap(me2, as, vm_base2, addrspace_map_flags_default());
 	if (err != OK) {
 		panic("Failed memextent unmapping");
 	}
@@ -350,7 +358,8 @@ tests_memextent_test1(paddr_t phys_base)
 	pgtable_vm_dump(&as->vm_pgtable);
 #endif
 
-	err = memextent_map(me2, as2, vm_base2, map_attrs);
+	err = memextent_map(me2, as2, vm_base2, map_attrs,
+			    addrspace_map_flags_default());
 	if (err != OK) {
 #if !defined(NDEBUG)
 		// Check mappings in pagetables
@@ -456,7 +465,8 @@ tests_memextent_test2(paddr_t phys_base)
 	memextent_mapping_attrs_set_memtype(&map_attrs,
 					    PGTABLE_VM_MEMTYPE_DEVICE_NGNRNE);
 
-	err = memextent_map(me, as, vm_base, map_attrs);
+	err = memextent_map(me, as, vm_base, map_attrs,
+			    addrspace_map_flags_default());
 	if (err != OK) {
 		panic("Failed mapping of mem extent");
 	}
@@ -484,7 +494,8 @@ tests_memextent_test2(paddr_t phys_base)
 
 	// Map mem extent 2 to as at vm_base2. This will first unmap the derived
 	// extent from as before mapping the same virtual address to extent 2
-	err = memextent_map(me2, as, vm_base2, map_attrs);
+	err = memextent_map(me2, as, vm_base2, map_attrs,
+			    addrspace_map_flags_default());
 	if (err != OK) {
 		panic("Failed mapping of mem extent 2");
 	}
@@ -536,6 +547,8 @@ tests_memextent(void)
 	bool wait_all_cores_end	  = true;
 	bool wait_all_cores_start = true;
 
+	preempt_disable();
+
 	spinlock_acquire_nopreempt(&test_memextent_spinlock);
 	tests_memextent_count++;
 	spinlock_release_nopreempt(&test_memextent_spinlock);
@@ -581,6 +594,8 @@ wait:
 
 		spinlock_release_nopreempt(&test_memextent_spinlock);
 	}
+
+	preempt_enable();
 
 	return false;
 }

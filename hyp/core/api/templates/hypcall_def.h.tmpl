@@ -8,23 +8,30 @@
 
 #def prefix: $internal_prefix
 
+// Hypercall numbers
+#set hypcall_base = $hypcall_dict[0].abi.hypcall_base
+#for hypcall_num in sorted($hypcall_dict.keys())
+#set $hypcall = $hypcall_dict[$hypcall_num]
+// ${hex(hypcall_base + hypcall_num)} : $hypcall.name
+#end for
+
 \#if !defined(__ASSEMBLER__)
 #for hypcall_num in sorted($hypcall_dict.keys())
     #set $hypcall = $hypcall_dict[$hypcall_num]
 
     ${result_struct_definition($hypcall)}
-    ${type_signature($hypcall)};
+    ${type_signature($hypcall, cap_suffix='cap')} EXCLUDE_PREEMPT_DISABLED;
 #end for
 
 #for hypcall in sorted($vendor_hypcall_list, key=lambda x: x.name)
 
     ${result_struct_definition($hypcall)}
-    ${type_signature($hypcall)};
+    ${type_signature($hypcall, cap_suffix='cap')} EXCLUDE_PREEMPT_DISABLED;
 #end for
 
 \#else
 #if len($hypcall_dict)
-\#define HYPERCALL_BASE ${hex($hypcall_dict[0].abi.hypcall_base)}U
+\#define HYPERCALL_BASE ${hex($hypcall_base)}U
 \#define HYPERCALL_NUM ${$max($hypcall_dict.keys()) + 1}U
 #end if
 \#endif

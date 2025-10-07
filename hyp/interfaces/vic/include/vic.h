@@ -127,4 +127,5 @@ vic_unbind(virq_source_t *source);
 // This function may call the scheduler, and therefore must not be called from
 // an RCU read-side critical section or a spinlock.
 void
-vic_unbind_sync(virq_source_t *source);
+vic_unbind_sync(virq_source_t *source)
+	EXCLUDE_RCU_READ EXCLUDE_PREEMPT_DISABLED;

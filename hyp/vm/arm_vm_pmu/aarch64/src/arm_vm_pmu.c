@@ -14,6 +14,7 @@
 #include <irq.h>
 #include <panic.h>
 #include <preempt.h>
+#include <thread.h>
 #include <vcpu.h>
 #include <virq.h>
 

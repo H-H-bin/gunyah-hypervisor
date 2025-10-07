@@ -31,7 +31,7 @@
 #define STAGE_END	      9U
 
 // Token for components in one format descriptor
-typedef struct token {
+typedef struct token_s {
 	// Indicate the token type
 	count_t stage;
 } token_t;
@@ -53,7 +53,7 @@ typedef enum sign_e {
 	SIGN_POS_LEADING
 } sign_t;
 
-typedef enum var_type {
+typedef enum var_type_e {
 	// Default
 	VAR_TYPE_NONE = 0,
 	// b, binary
@@ -79,7 +79,7 @@ typedef enum var_type {
 	// FIXME: support F, G, n, %
 } var_type_t;
 
-typedef struct fmt_info {
+typedef struct fmt_info_s {
 	// Default is none type, if it's none, nothing make sense in this
 	// structure, so memset 0 is good enough to initialise it
 	var_type_t type;
@@ -99,7 +99,7 @@ typedef struct fmt_info {
 	const char *precise_start;
 } fmt_info_t;
 
-typedef enum ret_token {
+typedef enum ret_token_e {
 	// Move to next char
 	RET_TOKEN_NEXT_CHAR,
 	// Check the same char in next stage
@@ -132,7 +132,7 @@ strnidx(const char *buf, size_t size, char c)
 static inline bool
 in_range(const char c, const char min, const char max)
 {
-	return c >= min && c <= max;
+	return (c >= min) && (c <= max);
 }
 
 static inline uint64_t
@@ -289,7 +289,7 @@ itoa(char *buf, size_t *size, uint64_t val, uint8_t base, fmt_info_t *info,
 	size_t	   remaining = *size;
 	error_t	   ret	     = OK;
 
-	assert(base <= 16);
+	assert(base <= 16U);
 
 	if (remaining == 0U) {
 		ret = ERROR_STRING_TRUNCATED;
@@ -437,7 +437,7 @@ sitoa(char *buf, size_t *size, int64_t val, uint8_t base, fmt_info_t *info)
 }
 
 static inline error_t
-stringtoa(char *buf, size_t *size, char *val_str, fmt_info_t *info)
+stringtoa(char *buf, size_t *size, const char *val_str, const fmt_info_t *info)
 {
 	error_t ret	  = OK;
 	size_t	remaining = *size;
@@ -448,7 +448,7 @@ stringtoa(char *buf, size_t *size, char *val_str, fmt_info_t *info)
 	}
 
 	char  *pos = buf, padding_char = ' ';
-	size_t slen	   = strlen(val_str);
+	size_t slen	   = util_strnlen(val_str, 32U);
 	size_t padding_cnt = 0U, p = 0U;
 	size_t padding_left_cnt = 0U, padding_right_cnt = 0U;
 
@@ -487,12 +487,10 @@ stringtoa(char *buf, size_t *size, char *val_str, fmt_info_t *info)
 		goto out;
 	}
 
-	p = util_min(slen, remaining);
-	if (p > 0U) {
-		(void)memcpy(pos, val_str, p);
-		remaining -= p;
-		pos += p;
-	}
+	p = memscpy(pos, remaining, val_str, slen);
+	remaining -= p;
+	pos += p;
+
 	if ((remaining + p) < slen) {
 		ret = ERROR_STRING_TRUNCATED;
 		goto out;
@@ -884,10 +882,7 @@ snprint(char *str, size_t size, const char *format, register_t arg0,
 		}
 
 		// Copy literal characters to output buffer
-		p = util_min(literal_len, remaining);
-		if (p > 0U) {
-			(void)memcpy(buf, fmt, p);
-		}
+		p = memscpy(buf, remaining, fmt, literal_len);
 
 		fmt += consumed_len;
 		buf += p;

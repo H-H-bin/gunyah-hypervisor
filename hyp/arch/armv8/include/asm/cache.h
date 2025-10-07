@@ -3,12 +3,16 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #define CACHE_BARRIER_OBJECT_LOAD(x, order)                                    \
+	/* Assembly block that read barriers the address */                    \
 	__asm__ volatile("" : "=r"(order) : "m"(*(x)))
 #define CACHE_BARRIER_OBJECT_STORE(x, order)                                   \
+	/* Assembly block that read-write barriers the address */              \
 	__asm__ volatile("" : "+r"(order), "+m"(*(x)))
 #define CACHE_BARRIER_MEMORY_LOAD(x, order)                                    \
+	/* Assembly block that barriers all memory loads wrt 'order' */        \
 	__asm__ volatile("" : "=r"(order) : : "memory")
 #define CACHE_BARRIER_MEMORY_STORE(x, order)                                   \
+	/* Assembly block that barriers all memory read-write wrt 'order' */   \
 	__asm__ volatile("" : "+r"(order) : : "memory")
 
 #define CACHE_DO_OP(x, size, op, CACHE_BARRIER)                                \
@@ -20,19 +24,21 @@
 		uintptr_t  end_ = (uintptr_t)(x) + (size);                     \
 		register_t ordering;                                           \
                                                                                \
-		assert(!util_add_overflows((uintptr_t)x, (size)-1U));          \
+		assert(!util_add_overflows((uintptr_t)(x), (size)-1U));        \
                                                                                \
-		CACHE_BARRIER##_LOAD(x, ordering);                             \
+		CACHE_BARRIER##_LOAD((x), ordering);                           \
                                                                                \
 		do {                                                           \
+			/* Execute the data-cache operation */                 \
 			__asm__ volatile("DC " #op ", %1"                      \
 					 : "+r"(ordering)                      \
 					 : "r"(line_base_));                   \
 			line_base_ = line_base_ + line_size_;                  \
 		} while (line_base_ < end_);                                   \
                                                                                \
+		/* Ensure completion of all cache operations */                \
 		__asm__ volatile("dsb ish" : "+r"(ordering));                  \
-		CACHE_BARRIER##_STORE(x, ordering);                            \
+		CACHE_BARRIER##_STORE((x), ordering);                          \
 	} while (0)
 
 #define CACHE_OP_RANGE(x, size, op)                                            \
@@ -51,13 +57,13 @@
 #define CACHE_OP_FIXED_RANGE(x, size, op)                                      \
 	do {                                                                   \
 		struct {                                                       \
-			char p[size];                                          \
-		} *x_ = (void *)x;                                             \
+			char p[(size)];                                        \
+		} *x_ = (void *)(x);                                           \
 		CACHE_OP_OBJECT(*x_, op);                                      \
 	} while (0)
 
 #define CACHE_DEFINE_ARRAY_OP(type, elements, name, op)                        \
-	static inline void cache_##name(type(*x)[elements])                    \
+	static inline void cache_##name(type(*x)[(elements)])                  \
 	{                                                                      \
 		CACHE_OP_OBJECT(*x, op);                                       \
 	}
@@ -89,3 +95,9 @@
 
 void
 cache_clean_range(const void *data, size_t size);
+
+void
+cache_clean_invalidate_range(const void *data, size_t size);
+
+void
+cache_invalidate_inst_all(void);

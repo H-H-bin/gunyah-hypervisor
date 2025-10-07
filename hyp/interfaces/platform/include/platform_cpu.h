@@ -9,6 +9,18 @@
 bool
 platform_cpu_exists(cpu_index_t cpu);
 
+// Get the number of existing CPUs
+count_t
+platform_get_existing_cpus_count(void);
+
+// Check whether a cpu exits and is functional.
+bool
+platform_cpu_functional(cpu_index_t cpu);
+
+// Get functional CPU list
+cpuid_set_t
+platform_get_functional_cpus(void);
+
 // Power on the specified CPU.
 error_t
 platform_cpu_on(cpu_index_t cpu);
@@ -75,7 +87,7 @@ platform_cpu_map_mpidr_valid(const platform_mpidr_mapping_t *mapping,
 			     MPIDR_EL1_t		     mpidr);
 
 MPIDR_EL1_t
-platform_cpu_index_to_mpidr(index_t index);
+platform_cpu_index_to_mpidr(cpu_index_t index);
 
 index_t
 platform_cpu_mpidr_to_index(MPIDR_EL1_t mpidr);

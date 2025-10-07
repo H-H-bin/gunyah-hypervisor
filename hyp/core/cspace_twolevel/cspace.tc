@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <types/bitmap.h>
+#include <bitmap.h>
 
 extend object_type enumeration {
 	ANY;

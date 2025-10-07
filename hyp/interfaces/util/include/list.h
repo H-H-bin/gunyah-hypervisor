@@ -8,9 +8,6 @@
 // All the following functions require the list to be locked if it may be
 // accessed by other threads, unless noted otherwise.
 
-#include <atomic.h>
-#include <util.h>
-
 void
 list_init(list_t *list);
 
@@ -65,34 +62,36 @@ list_delete_node(list_t *list, list_node_t *node);
 	     (node) = atomic_load_relaxed(&(node)->next))
 
 #define list__foreach_container(container, list, cname, nname, n)              \
-	list_node_t *n = atomic_load_relaxed(&list->head.next);                \
-	container      = (n != &list->head) ? cname##_container_of_##nname(n)  \
-					    : NULL;                            \
-	for (; container != NULL;                                              \
-	     n	       = atomic_load_relaxed(&n->next),                        \
-	     container = (n != &list->head) ? cname##_container_of_##nname(n)  \
-					    : NULL)
+	list_node_t *n = atomic_load_relaxed(&(list)->head.next);              \
+	container = ((n) != &(list)->head) ? cname##_container_of_##nname(n)   \
+					   : NULL;                             \
+	for (; (container) != NULL;                                            \
+	     n	       = atomic_load_relaxed(&(n)->next),                      \
+	     container = ((n) != &(list)->head)                                \
+				 ? cname##_container_of_##nname(n)             \
+				 : NULL)
 
 // Simple container iterator. The list must be locked if other threads might
 // modify it, and the iterator must not delete nodes.
 #define list_foreach_container(container, list, cname, nname)                  \
-	list__foreach_container((container), (list), cname, nname,             \
+	list__foreach_container(container, list, cname, nname,                 \
 				util_cpp_unique_ident(node))
 
 #define list__foreach_container_safe(container, list, cname, nname, n, load)   \
-	list_node_t *n = load(&list->head.next);                               \
-	container      = (n != &list->head) ? cname##_container_of_##nname(n)  \
-					    : NULL;                            \
-	n	       = load(&n->next);                                       \
-	for (; container != NULL;                                              \
-	     container = (n != &list->head) ? cname##_container_of_##nname(n)  \
-					    : NULL,                            \
-	     n	       = load(&n->next))
+	list_node_t *n = load(&(list)->head.next);                             \
+	container = ((n) != &(list)->head) ? cname##_container_of_##nname(n)   \
+					   : NULL;                             \
+	n	  = load(&(n)->next);                                          \
+	for (; (container) != NULL;                                            \
+	     container = ((n) != &(list)->head)                                \
+				 ? cname##_container_of_##nname(n)             \
+				 : NULL,                                       \
+	     n	       = load(&(n)->next))
 
 // Deletion-safe container iterator. The list must be locked if other threads
 // might modify it. The iterator may delete the current node.
 #define list_foreach_container_maydelete(container, list, cname, nname)        \
-	list__foreach_container_safe((container), (list), cname, nname,        \
+	list__foreach_container_safe(container, list, cname, nname,            \
 				     util_cpp_unique_ident(next),              \
 				     atomic_load_relaxed)
 
@@ -102,6 +101,6 @@ list_delete_node(list_t *list, list_node_t *node);
 // deletes a node must allow an RCU grace period to elapse before either freeing
 // the memory or adding it to a list again.
 #define list_foreach_container_consume(container, list, cname, nname)          \
-	list__foreach_container_safe((container), (list), cname, nname,        \
+	list__foreach_container_safe(container, list, cname, nname,            \
 				     util_cpp_unique_ident(next),              \
 				     atomic_load_consume)

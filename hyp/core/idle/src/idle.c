@@ -17,6 +17,7 @@
 #include <panic.h>
 #include <partition.h>
 #include <partition_alloc.h>
+#include <platform_cpu.h>
 #include <preempt.h>
 #include <scheduler.h>
 #include <thread.h>
@@ -113,7 +114,10 @@ idle_thread_init(void)
 
 	const cpu_index_t cpu = cpulocal_get_index();
 
-	for (cpu_index_t i = 0; cpulocal_index_valid(i); i++) {
+	for (cpu_index_t i = 0U; i < PLATFORM_MAX_CORES; i++) {
+		if (!platform_cpu_exists(i)) {
+			continue;
+		}
 		thread_t *thread_idle;
 
 		if (cpu == i) {
@@ -143,12 +147,12 @@ idle_thread_init(void)
 
 extern void *aarch64_boot_stack;
 
-static cpu_index_t boot_cpu = CPU_INDEX_INVALID;
+static cpu_index_t idle_boot_cpu = CPU_INDEX_INVALID;
 
 void
 idle_handle_boot_cold_init(cpu_index_t boot_cpu_index)
 {
-	boot_cpu = boot_cpu_index;
+	idle_boot_cpu = boot_cpu_index;
 }
 
 void
@@ -180,9 +184,9 @@ idle_loop(uintptr_t unused_params)
 
 	const cpu_index_t this_cpu = cpulocal_get_index();
 
-	if (compiler_unexpected(this_cpu == boot_cpu)) {
+	if (compiler_unexpected(this_cpu == idle_boot_cpu)) {
 		// We need to do this only once
-		boot_cpu = CPU_INDEX_INVALID;
+		idle_boot_cpu = CPU_INDEX_INVALID;
 		trigger_idle_start_event();
 	}
 
@@ -263,6 +267,20 @@ idle_yield(void)
 	}
 
 	return must_schedule;
+}
+
+// Prepare to block execution on the calling CPU.
+void
+idle_block_start(void) LOCK_IMPL
+{
+	trigger_idle_block_start_event();
+}
+
+// Clean up after resuming execution after blocking on the calling CPU.
+void
+idle_block_finish(void) LOCK_IMPL
+{
+	trigger_idle_block_finish_event();
 }
 
 idle_state_t

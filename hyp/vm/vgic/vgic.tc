@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <types/bitmap.h>
+#include <bitmap.h>
 
 // The hardware has to support at least 5 priority bits, but might not support
 // more. We constrain the implementation to 5 anyway.
@@ -12,8 +12,35 @@ define VGIC_PRIORITIES constant type count_t = 1 << VGIC_PRIO_BITS;
 // Low bits to shift out of priority values.
 define VGIC_PRIO_SHIFT constant type count_t = 8 - VGIC_PRIO_BITS;
 
-// Chunks to split the IRQ search bitmap into for the SPIs and PPIs (<1020)
-define VGIC_LOW_RANGES constant type count_t = 64;
+// Size of chunks to split IRQs. Must be power of two, greater than 4 and less
+// than or equal to 32 (for ext virqs)
+define VGIC_SEARCH_RANGE_SIZE constant type count_t = 16;
+
+// The IRQ search bitmap is split into a number of dis-contiguous ranges since
+// the numbering is sparse.
+// The split ranges in order are: Normal PPIs and SPIs, extended PPIs, and extended SPIs.
+// Below are the range defines as well as useful constants for searching each.
+define VGIC_SEARCH_NORMAL_RANGES constant type count_t = GIC_RES_BASE / VGIC_SEARCH_RANGE_SIZE;
+#if VGIC_HAS_EXT_SPIS
+#if defined(PLATFORM_VGIC_SPI_EXT_LIMIT)
+define VGIC_SPI_EXT_NUM constant type count_t = PLATFORM_VGIC_SPI_EXT_LIMIT;
+#else
+define VGIC_SPI_EXT_NUM constant type count_t = GIC_SPI_EXT_NUM;
+#endif
+define VGIC_SEARCH_SPI_EXT_BASE	constant type count_t = VGIC_SEARCH_NORMAL_RANGES;
+define VGIC_SEARCH_SPI_EXT_END	constant type count_t =
+	VGIC_SEARCH_SPI_EXT_BASE + (GIC_SPI_EXT_NUM / VGIC_SEARCH_RANGE_SIZE);
+#if VGIC_HAS_EXT_PPIS
+define VGIC_SEARCH_PPI_EXT_BASE constant type count_t = VGIC_SEARCH_SPI_EXT_END;
+define VGIC_SEARCH_PPI_EXT_END	constant type count_t =
+	VGIC_SEARCH_PPI_EXT_BASE + (GIC_PPI_EXT_NUM / VGIC_SEARCH_RANGE_SIZE);
+define VGIC_SEARCH_RANGES constant type count_t = VGIC_SEARCH_PPI_EXT_END;
+#else
+define VGIC_SEARCH_RANGES constant type count_t = VGIC_SEARCH_SPI_EXT_END;
+#endif // VGIC_HAS_EXT_PPIS
+#else
+define VGIC_SEARCH_RANGES constant type count_t = VGIC_SEARCH_NORMAL_RANGES;
+#endif // VGIC_HAS_EXT_SPIS
 
 // Upper bound for virtual IRQ IDs. Note that this can be further constrained
 // by both the hardware (ICH_VTR_EL2.IDbits) and the VM configuration.
@@ -23,7 +50,7 @@ define VGIC_LOW_RANGES constant type count_t = 64;
 define VGIC_LPI_BITS constant type count_t = 16;
 #endif
 define VGIC_IDBITS constant type count_t =
-	VGIC_HAS_LPI ? VGIC_LPI_BITS : VGIC_HAS_EXT_IRQS ? 13 : 10;
+	VGIC_HAS_LPI ? VGIC_LPI_BITS : (VGIC_HAS_EXT_SPIS ? 13 : 10);
 
 #if VGIC_HAS_LPI
 define VGIC_LPI_NUM constant type count_t = (1 << VGIC_IDBITS) - GIC_LPI_BASE;
@@ -84,13 +111,16 @@ define vgic_delivery_state bitfield<32>(set_ops) {
 	// This must only be set if the listed bit is set.
 	1		need_sync	bool;
 
-	// The source of a forwarded SPI has been removed while the VIRQ is
-	// listed. The LR must be read back and converted to a SW VIRQ, and
-	// the HW SPI must be deactivated if it is still active.
+	// A listed forwarded SPI needs its HW active bit cleared, because the
+	// source was unbound or the pending state was cleared in software.
 	//
-	// Note that this is only used as a trigger. Clearing it does not
-	// imply synchronisation: the IRQ may not have been deactivated yet
-	// when it clears.
+	// We must ensure that the source is deactivated exactly once; to do
+	// this the LR must be read back and the HW IRQ deactivated if the LR
+	// is still in active state. If the LR remains is pending state after
+	// this, it must be converted to a SW IRQ.
+	//
+	// Note that this is only used as a trigger, not for synchronisation.
+	// The HW IRQ may not have been deactivated yet when it clears.
 	//
 	// This must only be set if the listed bit is set.
 	2		hw_detached	bool;
@@ -280,6 +310,15 @@ extend vic object {
 	spi_states		array(GIC_SPI_NUM)
 		bitfield vgic_delivery_state(atomic);
 
+#if VGIC_HAS_EXT_SPIS
+	// Sources for extended SPIs
+	ext_sources		pointer pointer(atomic) structure virq_source;
+	ext_sources_count	type count_t;
+	// States for extended SPIs
+	ext_spi_states	array(VGIC_SPI_EXT_NUM)
+		bitfield vgic_delivery_state(atomic);
+#endif
+
 #if VGIC_HAS_1N
 	// Round-robin counter for virtual SPI delivery decisions.
 	rr_start_point		type count_t(atomic);
@@ -351,7 +390,16 @@ extend vic object {
 	// of whether that IRQ was claimed by the VCPU. The search lock must
 	// be held, to prevent the transient clearing of a bit hiding an IRQ
 	// from a concurrent search.
-	search_ranges_low	BITMAP(VGIC_LOW_RANGES, atomic);
+	//
+	// It is organized in the following manner, each section is contiguous
+	// with the next in the cache:
+	// IRQ Type		| INTIDs	| Bits (16 INTIDs / bit)
+	// ---------------------------------------------------------------
+	// SGIs, SPIs, PPIs	| 0-1019	| 0:63
+	// Special Intids	| 1020-1023	| 63
+	// Ext SPIs		| 4096-5119	| 64:127
+	// Ext PPIs		| 1056-1119	| 128:131
+	search_ranges		BITMAP(VGIC_SEARCH_RANGES, atomic);
 
 	// Mapping between GICR indices and 4-level affinity values for
 	// MPIDR, GICR_TYPER etc. If not configured explicitly, this defaults
@@ -428,6 +476,15 @@ extend thread object module vgic {
 	// atomically.
 	private_states		array(GIC_SGI_NUM + GIC_PPI_NUM)
 		bitfield vgic_delivery_state(atomic);
+
+#if VGIC_HAS_EXT_PPIS
+	// Sources for extended PPIs
+	ext_sources		array(GIC_PPI_EXT_NUM) pointer(atomic)
+			structure virq_source;
+	// States for extended PPIs
+	ext_private_states	array(GIC_PPI_EXT_NUM)
+		bitfield vgic_delivery_state(atomic);
+#endif
 
 	// The GICR's rd_base register state.
 	gicr_rd_statusr		bitfield GICR_STATUSR(atomic);
@@ -542,8 +599,17 @@ extend thread object module vgic {
 	// Reads of this bitmap when searching must be acquire-ordered before
 	// reads of the delivery states. Writes of this bitmap when flagging
 	// must be release-ordered after writes of the delivery states.
-	search_ranges_low	array(VGIC_PRIORITIES)
-		BITMAP(VGIC_LOW_RANGES, atomic);
+	//
+	// It is organized in the following manner, each section is contiguous
+	// with the next in the cache:
+	// IRQ Type		| INTIDs	| Bits (16 INTIDs / bit)
+	// ---------------------------------------------------------------
+	// SGIs, SPIs, PPIs	| 0-1019	| 0:63
+	// Special Intids	| 1020-1023	| 63
+	// Ext SPIs		| 4096-5119	| 64:127
+	// Ext PPIs		| 1056-1119	| 128:131
+	search_ranges	array(VGIC_PRIORITIES)
+		BITMAP(VGIC_SEARCH_RANGES, atomic);
 
 #if VGIC_HAS_LPI && !GICV3_HAS_VLPI
 	// Extended search ranges for software-implemented LPIs.
@@ -659,8 +725,10 @@ define vgic_irq_type enumeration {
 	sgi;
 	ppi;
 	spi;
-#if VGIC_HAS_EXT_IRQS
+#if VGIC_HAS_EXT_PPIS
 	ppi_ext;
+#endif
+#if VGIC_HAS_EXT_SPIS
 	spi_ext;
 #endif
 #if VGIC_HAS_LPI

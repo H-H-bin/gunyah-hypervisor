@@ -73,9 +73,9 @@ hypercall_object_reset(cap_id_t cap)
 }
 
 error_t
-hypercall_object_reset_from(cap_id_t cspace, cap_id_t cap)
+hypercall_object_reset_from(cap_id_t cspace_cap, cap_id_t cap)
 {
-	(void)cspace;
+	(void)cspace_cap;
 	(void)cap;
 	return ERROR_UNIMPLEMENTED;
 }

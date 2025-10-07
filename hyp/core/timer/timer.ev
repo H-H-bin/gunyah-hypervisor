@@ -17,16 +17,16 @@ subscribe platform_timer_expiry
 	require_preempt_disabled
 
 subscribe power_cpu_suspend()
-	unwinder timer_handle_power_cpu_online()
+	unwinder timer_handle_power_cpu_resume()
 	// Run early since it may reject suspends
 	priority 100
 	require_preempt_disabled
 
-subscribe power_cpu_online()
+subscribe power_cpu_resume()
 	require_preempt_disabled
 
-subscribe power_cpu_resume
-	handler timer_handle_power_cpu_online()
+subscribe power_cpu_online()
+	require_preempt_disabled
 
 subscribe power_cpu_offline()
 	require_preempt_disabled

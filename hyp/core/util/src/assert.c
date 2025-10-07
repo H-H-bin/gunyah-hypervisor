@@ -28,13 +28,14 @@ assert_failed(const char *file, int line, const char *func, const char *err)
 	// Stop all cores and disable preemption
 	trigger_scheduler_stop_event();
 
-	size_t len = strlen(file);
+	size_t len = util_strnlen(file, 256U);
 	if (len < 64U) {
 		file_short = file;
 	} else {
-		file_short = file + len - 64;
+		file_short = file + (len - 64U);
 
-		char *file_strchr = strchr(file_short, (int)'/');
+		const char *file_strchr =
+			util_strnchr(file_short, (int32_t)'/', len - 64U);
 		if (file_strchr != NULL) {
 			file_short = file_strchr + 1;
 		}

@@ -69,9 +69,23 @@ SECTIONS
 	image_pkg_start = . - image_virt_start + image_phys_start;
 #endif
 
+#if !defined(PLATFORM_ROOTVM_ELF_SIZE)
+#define PLATFORM_ROOTVM_ELF_SIZE 0x80000
+#endif
+
+	/* Reserve space for the package ELF file */
+	. = . + PLATFORM_ROOTVM_ELF_SIZE;
+
 	/* align RW sections to the next 2MB page */
 	. = ALIGN(0x200000);
+
 	data_base = .;
+
+	/* Place boot stack below the RW data, so overflow will fault */
+	.bss.stack (NOLOAD) : {
+		*(.bss.aarch64_boot_stack)
+	} : NONE
+
 	.data : {
 		*(SORT_BY_ALIGNMENT(.data .data.*))
 	} : data

@@ -18,4 +18,12 @@ selector_event irq_received
 	// deactivated; false if the interrupt has been forwarded to a guest
 	// or queued for deferred handling.
 	return: bool = false
+
+selector_event irq_dispatch
+	selector range_type: irq_range_type_t
+	param irq: irq_t
+	param range: irq_range_t *
+	param offset: size_t
+	return: bool = false
+
 #endif

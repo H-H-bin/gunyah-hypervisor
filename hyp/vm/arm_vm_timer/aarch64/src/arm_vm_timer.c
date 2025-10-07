@@ -8,6 +8,7 @@
 #include <hypconstants.h>
 #include <hypregisters.h>
 
+#include <atomic.h>
 #include <compiler.h>
 #include <cpulocal.h>
 #include <irq.h>
@@ -17,6 +18,7 @@
 #include <partition_alloc.h>
 #include <preempt.h>
 #include <scheduler.h>
+#include <thread.h>
 #include <trace.h>
 
 #include <asm/barrier.h>
@@ -33,7 +35,8 @@
 #define ARM_VM_TIMER_TYPE_NUM (ENUM_ARM_VM_TIMER_TYPE_MAX_VALUE + 1)
 
 static hwirq_t *arm_vm_timer_hwirq[ARM_VM_TIMER_TYPE_NUM];
-CPULOCAL_DECLARE_STATIC(bool, arm_vm_timer_irq_active)[ARM_VM_TIMER_TYPE_NUM];
+CPULOCAL_DECLARE_STATIC(_Atomic bool, arm_vm_timer_irq_active)
+[ARM_VM_TIMER_TYPE_NUM];
 
 void
 arm_vm_timer_init(arm_vm_timer_type_t tt)
@@ -167,7 +170,8 @@ arm_vm_timer_arch_timer_hw_irq_activated(arm_vm_timer_type_t tt)
 {
 	if ((tt == ARM_VM_TIMER_TYPE_PHYSICAL) ||
 	    (tt == ARM_VM_TIMER_TYPE_VIRTUAL)) {
-		CPULOCAL(arm_vm_timer_irq_active)[tt] = true;
+		atomic_store_relaxed(&CPULOCAL(arm_vm_timer_irq_active)[tt],
+				     true);
 	} else {
 		panic("Invalid timer");
 	}
@@ -178,8 +182,10 @@ arm_vm_timer_arch_timer_hw_irq_deactivate(arm_vm_timer_type_t tt)
 {
 	if ((tt == ARM_VM_TIMER_TYPE_PHYSICAL) ||
 	    (tt == ARM_VM_TIMER_TYPE_VIRTUAL)) {
-		if (CPULOCAL(arm_vm_timer_irq_active)[tt]) {
-			CPULOCAL(arm_vm_timer_irq_active)[tt] = false;
+		_Atomic bool *irq_active =
+			&CPULOCAL(arm_vm_timer_irq_active)[tt];
+		if (atomic_load_relaxed(irq_active)) {
+			atomic_store_relaxed(irq_active, false);
 			irq_deactivate(arm_vm_timer_hwirq[tt]);
 		}
 	} else {
@@ -192,7 +198,7 @@ arm_vm_timer_handle_boot_cpu_cold_init(void)
 {
 	for (int tt = ENUM_ARM_VM_TIMER_TYPE_MIN_VALUE;
 	     tt < ARM_VM_TIMER_TYPE_NUM; tt++) {
-		CPULOCAL(arm_vm_timer_irq_active)[tt] = false;
+		atomic_init(&CPULOCAL(arm_vm_timer_irq_active)[tt], false);
 	}
 }
 
@@ -301,10 +307,10 @@ arm_vm_timer_handle_boot_cpu_warm_init(void)
 		CNTPCT_EL0_raw(register_CNTPCT_EL0_read_volatile_ordered(
 			&asm_ordering)),
 		CNT_CTL_raw(register_CNTV_CTL_EL0_read_ordered(&asm_ordering)),
-		(register_t)CPULOCAL(
-			arm_vm_timer_irq_active)[ARM_VM_TIMER_TYPE_VIRTUAL],
-		(register_t)CPULOCAL(
-			arm_vm_timer_irq_active)[ARM_VM_TIMER_TYPE_PHYSICAL]);
+		(register_t)atomic_load_relaxed(&CPULOCAL(
+			arm_vm_timer_irq_active)[ARM_VM_TIMER_TYPE_VIRTUAL]),
+		(register_t)atomic_load_relaxed(&CPULOCAL(
+			arm_vm_timer_irq_active)[ARM_VM_TIMER_TYPE_PHYSICAL]));
 #endif
 
 	register_CNTVOFF_EL2_write(CNTVOFF_EL2_cast(0U));

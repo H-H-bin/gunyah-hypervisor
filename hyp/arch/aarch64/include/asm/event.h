@@ -7,7 +7,7 @@
 // polling with WFE. The default store-release updates are sufficient on their
 // own. See the generic event header for detailed requirements.
 
-#define asm_event_wait(p) __asm__ volatile("wfe" ::"m"(*p))
+#define asm_event_wait(p) __asm__ volatile("wfe" ::"m"(*(p)))
 
 // clang-format off
 #define asm_event_load_before_wait(p) _Generic(				       \
@@ -18,9 +18,6 @@
 	_Atomic uint8_t *: asm_event_load8_before_wait,		       \
 	_Atomic bool *: asm_event_loadbool_before_wait)(p)
 // clang-format on
-
-#define asm_event_load_bf_before_wait(name, p)                                 \
-	name##_cast(asm_event_load_before_wait(name##_atomic_ptr_raw(p)))
 
 #include <asm-generic/event.h>
 

@@ -14,6 +14,7 @@
 #include <platform_psci.h>
 #include <preempt.h>
 #include <psci.h>
+#include <qcbor.h>
 #include <thread.h>
 #include <util.h>
 
@@ -39,7 +40,38 @@ platform_cpu_exists(cpu_index_t cpu)
 {
 	assert(cpu < PLATFORM_MAX_CORES);
 
-	return compiler_expected((util_bit(cpu) & PLATFORM_USABLE_CORES) != 0U);
+	return compiler_expected((util_bit(cpu) & PLATFORM_EXISTING_CORES) !=
+				 0U);
+}
+
+count_t
+platform_get_existing_cpus_count(void)
+{
+	return compiler_popcount(PLATFORM_EXISTING_CORES);
+}
+
+bool
+platform_cpu_functional(cpu_index_t cpu)
+{
+	bool ret = false;
+
+	if (compiler_expected(cpu < PLATFORM_MAX_CORES)) {
+		ret = platform_cpu_exists(cpu);
+	}
+
+	return ret;
+}
+
+cpuid_set_t
+platform_get_functional_cpus(void)
+{
+	static_assert((sizeof(cpuid_set_t) == sizeof(uint64_t)),
+		      "unsupported core count config");
+
+	cpuid_set_t ret = { 0 };
+	ret.bitmap[0]	= PLATFORM_EXISTING_CORES;
+
+	return ret;
 }
 
 error_t
@@ -128,7 +160,9 @@ platform_cpu_suspend(psci_suspend_powerstate_t power_state)
 error_t
 platform_psci_set_suspend_mode(psci_mode_t mode)
 {
-	return psci_smc_psci_set_suspend_mode(mode);
+	(void)mode;
+	// QEMU implements PSCI 0.2 which does not have this call
+	return ERROR_UNIMPLEMENTED;
 }
 
 #if defined(PLATFORM_PSCI_DEFAULT_SUSPEND)

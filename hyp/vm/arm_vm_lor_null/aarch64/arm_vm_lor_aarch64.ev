@@ -1,0 +1,13 @@
+// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+module arm_vm_lor_null
+
+#if defined(ARCH_ARM_FEAT_LOR)
+subscribe vcpu_activate_thread(thread)
+
+subscribe vcpu_trap_sysreg_read
+
+subscribe vcpu_trap_sysreg_write
+#endif

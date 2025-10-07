@@ -14,7 +14,9 @@
 // delivery without raising a hardware interrupt, nor for multiplexing when
 // there are more possible IPI reasons than physical IPI lines.
 
-#include <hypconstants.h>
+#if !defined(ENUM_IPI_REASON_MAX_VALUE)
+#error Include <hypconstants.h> before <platform_ipi.h>
+#endif
 
 #if PLATFORM_IPI_LINES > ENUM_IPI_REASON_MAX_VALUE
 void

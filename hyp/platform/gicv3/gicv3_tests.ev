@@ -1,0 +1,16 @@
+// © 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+module gicv3
+
+#if defined(UNIT_TESTS) && GICV3_EXT_IRQS
+
+subscribe tests_init
+
+subscribe tests_start
+
+subscribe irq_received[HWIRQ_ACTION_GICV3_EXT_SPI_TEST_ACTION]
+	handler gicv3_handle_irq_received_ext_spi_test_action(hwirq)
+
+#endif

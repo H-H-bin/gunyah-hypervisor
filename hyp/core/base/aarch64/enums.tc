@@ -77,10 +77,12 @@ extend esr_ec enumeration {
 #endif
 
 extend iss_da_ia_fsc enumeration {
-	TRANSLATION_0		= 0x04;
+	TRANSLATION_L0		= 0x04;
+	ACCESS_FLAG_L0		= 0x08;
+	PERMISSION_L0		= 0x0c;
 	SYNC_TAG_CHECK		= 0x11;
-	SYNC_EXTERN_WALK_0	= 0x14;
-	SYNC_PARITY_ECC_WALK_0	= 0x1c;
+	SYNC_EXTERN_WALK_L0	= 0x14;
+	SYNC_PARITY_ECC_WALK_L0	= 0x1c;
 	ALIGNMENT		= 0x21;
 	IMP_DEF_LOCKDOWN	= 0x34;
 	IMP_DEF_ATOMIC		= 0x35;

@@ -153,9 +153,10 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #error "Cannot define both USEFULBUF_CONFIG_BIG_ENDIAN and USEFULBUF_CONFIG_LITTLE_ENDIAN"
 #endif
 
-#include <stddef.h> /* for size_t */
-#include <stdint.h> /* for uint8_t, uint16_t.... */
-#include <string.h> /* for strlen, memcpy, memmove, memset */
+#include <stdbool.h> /* for bool */
+#include <stddef.h>  /* for size_t */
+#include <stdint.h>  /* for uint8_t, uint16_t.... */
+#include <string.h>  /* for strlen, memcpy, memmove, memset */
 
 #ifdef USEFULBUF_CONFIG_HTON
 #include <arpa/inet.h> /* for htons, htonl, htonll, ntohs... */
@@ -325,7 +326,7 @@ typedef struct q_useful_buf {
  *
  * @return 1 if it is @ref NULLUsefulBuf, 0 if not.
  */
-static inline int
+static inline bool
 UsefulBuf_IsNULL(UsefulBuf UB);
 
 /**
@@ -335,7 +336,7 @@ UsefulBuf_IsNULL(UsefulBuf UB);
  *
  * @return 1 if it is @c NULLUsefulBufC, 0 if not.
  */
-static inline int
+static inline bool
 UsefulBuf_IsNULLC(UsefulBufC UB);
 
 /**
@@ -355,7 +356,7 @@ UsefulBuf_IsNULLC(UsefulBufC UB);
  * distinction then @c ptr should not be @c NULL when the @ref
  * UsefulBuf is considered empty, but not @c NULL.
  */
-static inline int
+static inline bool
 UsefulBuf_IsEmpty(UsefulBuf UB);
 
 /**
@@ -365,7 +366,7 @@ UsefulBuf_IsEmpty(UsefulBuf UB);
  *
  * @return 1 if it is empty, 0 if not.
  */
-static inline int
+static inline bool
 UsefulBuf_IsEmptyC(UsefulBufC UB);
 
 /**
@@ -375,7 +376,7 @@ UsefulBuf_IsEmptyC(UsefulBufC UB);
  *
  * @return 1 if it is either @ref NULLUsefulBuf or empty, 0 if not.
  */
-static inline int
+static inline bool
 UsefulBuf_IsNULLOrEmpty(UsefulBuf UB);
 
 /**
@@ -385,7 +386,7 @@ UsefulBuf_IsNULLOrEmpty(UsefulBuf UB);
  *
  * @return 1 if it is either @ref NULLUsefulBufC or empty, 0 if not.
  */
-static inline int
+static inline bool
 UsefulBuf_IsNULLOrEmptyC(UsefulBufC UB);
 
 /**
@@ -417,6 +418,11 @@ UsefulBuf_Const(const UsefulBuf UB);
  */
 static inline UsefulBuf
 UsefulBuf_Unconst(const UsefulBufC UBC);
+
+/**
+ * Maximum supported string length, including \0 terminator.
+ */
+#define UsefulBuf_StringLenMax 512U
 
 /**
  * Convert a literal string to a @ref UsefulBufC.
@@ -488,7 +494,7 @@ UsefulBuf_Unconst(const UsefulBufC UBC);
  *
  * The terminating \0 (NULL) is NOT included in the length.
  */
-static inline UsefulBufC
+extern UsefulBufC
 UsefulBuf_FromSZ(const char *szString);
 
 /**
@@ -538,14 +544,14 @@ UsefulBuf_Copy(UsefulBuf Dest, const UsefulBufC Src);
 /**
  * @brief Set all bytes in a @ref UsefulBuf to a value, for example to 0.
  *
- * @param[in] pDest  The destination buffer to copy into.
+ * @param[in] Dest  The destination buffer to copy into.
  * @param[in] value  The value to set the bytes to.
  *
- * Note that like @c memset(), the pointer in @c pDest is not checked
+ * Note that like @c memset(), the pointer in @c Dest is not checked
  * and this will crash if @c NULL or invalid.
  */
 static inline UsefulBufC
-UsefulBuf_Set(UsefulBuf pDest, uint8_t value);
+UsefulBuf_Set(UsefulBuf Dest, uint8_t value);
 
 /**
  * @brief Copy a pointer into a @ref UsefulBuf.
@@ -558,7 +564,7 @@ UsefulBuf_Set(UsefulBuf pDest, uint8_t value);
  *         on failure.
  *
  * This fails and returns @ref NULLUsefulBufC if @c uLen is greater
- * than @c pDest->len.
+ * than @c Dest->len.
  *
  * Note that like @c memcpy(), the pointers are not checked and this
  * will crash, rather than return 1 if they are @c NULL or invalid.
@@ -925,7 +931,7 @@ UsefulOutBuf_GetEndPosition(UsefulOutBuf *pUOutBuf);
  *
  * @return 1 if output position is at start, 0 if not.
  */
-static inline int
+static inline bool
 UsefulOutBuf_AtStart(UsefulOutBuf *pUOutBuf);
 
 /**
@@ -987,7 +993,7 @@ UsefulOutBuf_InsertData(UsefulOutBuf *pUOutBuf, const void *pBytes, size_t uLen,
  * @param[in] szString  NULL-terminated string to insert.
  * @param[in] uPos      Index in output buffer at which to insert.
  */
-static inline void
+extern void
 UsefulOutBuf_InsertString(UsefulOutBuf *pUOutBuf, const char *szString,
 			  size_t uPos);
 
@@ -1116,7 +1122,7 @@ UsefulOutBuf_AppendData(UsefulOutBuf *pUOutBuf, const void *pBytes,
  * @param[in] pUOutBuf  Pointer to the @ref UsefulOutBuf.
  * @param[in] szString  NULL-terminated string to append.
  */
-static inline void
+extern void
 UsefulOutBuf_AppendString(UsefulOutBuf *pUOutBuf, const char *szString);
 
 /**
@@ -1251,7 +1257,7 @@ UsefulOutBuf_RoomLeft(UsefulOutBuf *pUOutBuf);
  * UsefulOutBuf_InsertUsefulBuf() it is usually not necessary to use
  * this.
  */
-static inline int
+static inline bool
 UsefulOutBuf_WillItFit(UsefulOutBuf *pUOutBuf, size_t uLen);
 
 /**
@@ -1264,7 +1270,7 @@ UsefulOutBuf_WillItFit(UsefulOutBuf *pUOutBuf, size_t uLen);
  * Giving a @c NULL output buffer to UsefulOutBuf_Init() is used when
  * just calculating the length of the encoded data.
  */
-static inline int
+static inline bool
 UsefulOutBuf_IsBufferNULL(UsefulOutBuf *pUOutBuf);
 
 /**
@@ -1397,7 +1403,7 @@ typedef struct useful_input_buf {
 
 } UsefulInputBuf;
 
-#define UIB_MAGIC (0xB00F)
+#define UIB_MAGIC (0xB00FU)
 
 #ifdef ENABLE_DECODE_ROUTINES
 
@@ -1459,7 +1465,7 @@ UsefulInputBuf_BytesUnconsumed(UsefulInputBuf *pUInBuf);
  *
  * @return 1 if @c uLen bytes are available after the cursor, and 0 if not.
  */
-static int
+static bool
 UsefulInputBuf_BytesAvailable(UsefulInputBuf *pUInBuf, size_t uLen);
 
 /**
@@ -1685,37 +1691,37 @@ UsefulInputBuf_SetBufferLength(UsefulInputBuf *pUInBuf, size_t uNewLen);
 /*----------------------------------------------------------
  Inline implementations.
  */
-static inline int
+static inline bool
 UsefulBuf_IsNULL(UsefulBuf UB)
 {
-	return !UB.ptr;
+	return (UB.ptr == NULL);
 }
 
-static inline int
+static inline bool
 UsefulBuf_IsNULLC(UsefulBufC UB)
 {
-	return !UB.ptr;
+	return (UB.ptr == NULL);
 }
 
-static inline int
+static inline bool
 UsefulBuf_IsEmpty(UsefulBuf UB)
 {
-	return !UB.len;
+	return (UB.len == 0U);
 }
 
-static inline int
+static inline bool
 UsefulBuf_IsEmptyC(UsefulBufC UB)
 {
-	return !UB.len;
+	return (UB.len == 0U);
 }
 
-static inline int
+static inline bool
 UsefulBuf_IsNULLOrEmpty(UsefulBuf UB)
 {
 	return UsefulBuf_IsEmpty(UB) || UsefulBuf_IsNULL(UB);
 }
 
-static inline int
+static inline bool
 UsefulBuf_IsNULLOrEmptyC(UsefulBufC UB)
 {
 	return UsefulBuf_IsEmptyC(UB) || UsefulBuf_IsNULLC(UB);
@@ -1750,15 +1756,6 @@ UsefulBuf_Unconst(const UsefulBufC UBC)
 }
 
 static inline UsefulBufC
-UsefulBuf_FromSZ(const char *szString)
-{
-	UsefulBufC UBC;
-	UBC.ptr = szString;
-	UBC.len = strlen(szString);
-	return UBC;
-}
-
-static inline UsefulBufC
 UsefulBuf_Copy(UsefulBuf Dest, const UsefulBufC Src)
 {
 	return UsefulBuf_CopyOffset(Dest, 0, Src);
@@ -1767,7 +1764,7 @@ UsefulBuf_Copy(UsefulBuf Dest, const UsefulBufC Src)
 static inline UsefulBufC
 UsefulBuf_Set(UsefulBuf Dest, uint8_t value)
 {
-	memset(Dest.ptr, value, Dest.len);
+	(void)memset(Dest.ptr, value, Dest.len);
 
 	UsefulBufC UBC;
 	UBC.ptr = Dest.ptr;
@@ -1777,11 +1774,11 @@ UsefulBuf_Set(UsefulBuf Dest, uint8_t value)
 }
 
 static inline UsefulBufC
-UsefulBuf_CopyPtr(UsefulBuf Dest, const void *ptr, size_t len)
+UsefulBuf_CopyPtr(UsefulBuf Dest, const void *ptr, size_t uLen)
 {
 	UsefulBufC UBC;
 	UBC.ptr = ptr;
-	UBC.len = len;
+	UBC.len = uLen;
 	return UsefulBuf_Copy(Dest, UBC);
 }
 
@@ -1830,8 +1827,8 @@ UsefulBuf_PointerToOffset(UsefulBufC UB, const void *p)
 	}
 
 	// Cast to size_t (from ptrdiff_t) is OK because of check above
-	const size_t uOffset =
-		(size_t)((const uint8_t *)p - (const uint8_t *)UB.ptr);
+	const size_t uOffset = (size_t)((const uint8_t *)p) -
+			       (size_t)((const uint8_t *)UB.ptr);
 
 	if (uOffset >= UB.len) {
 		/* given pointer is off the end of the buffer */
@@ -1846,7 +1843,8 @@ static inline uint32_t
 UsefulBufUtil_CopyFloatToUint32(float f)
 {
 	uint32_t u32;
-	memcpy(&u32, &f, sizeof(uint32_t));
+	static_assert(sizeof(u32) == sizeof(f), "float is not u32-sized");
+	(void)memscpy(&u32, sizeof(u32), &f, sizeof(f));
 	return u32;
 }
 
@@ -1854,7 +1852,8 @@ static inline uint64_t
 UsefulBufUtil_CopyDoubleToUint64(double d)
 {
 	uint64_t u64;
-	memcpy(&u64, &d, sizeof(uint64_t));
+	static_assert(sizeof(u64) == sizeof(d), "double is not u64-sized");
+	(void)memscpy(&u64, sizeof(u64), &d, sizeof(d));
 	return u64;
 }
 
@@ -1862,7 +1861,8 @@ static inline double
 UsefulBufUtil_CopyUint64ToDouble(uint64_t u64)
 {
 	double d;
-	memcpy(&d, &u64, sizeof(uint64_t));
+	static_assert(sizeof(u64) == sizeof(d), "double is not u64-sized");
+	(void)memscpy(&d, sizeof(d), &u64, sizeof(u64));
 	return d;
 }
 
@@ -1870,56 +1870,48 @@ static inline float
 UsefulBufUtil_CopyUint32ToFloat(uint32_t u32)
 {
 	float f;
-	memcpy(&f, &u32, sizeof(uint32_t));
+	static_assert(sizeof(u32) == sizeof(f), "float is not u32-sized");
+	(void)memscpy(&f, sizeof(f), &u32, sizeof(u32));
 	return f;
 }
 #endif /* USEFULBUF_DISABLE_ALL_FLOAT */
 
 static inline void
-UsefulOutBuf_Reset(UsefulOutBuf *pMe)
+UsefulOutBuf_Reset(UsefulOutBuf *pUOutBuf)
 {
-	pMe->data_len = 0;
-	pMe->err      = 0;
+	pUOutBuf->data_len = 0;
+	pUOutBuf->err	   = 0;
 }
 
 static inline size_t
-UsefulOutBuf_GetEndPosition(UsefulOutBuf *pMe)
+UsefulOutBuf_GetEndPosition(UsefulOutBuf *pUOutBuf)
 {
-	return pMe->data_len;
+	return pUOutBuf->data_len;
 }
 
-static inline int
-UsefulOutBuf_AtStart(UsefulOutBuf *pMe)
+static inline bool
+UsefulOutBuf_AtStart(UsefulOutBuf *pUOutBuf)
 {
-	return 0 == pMe->data_len;
+	return 0U == pUOutBuf->data_len;
 }
 
 static inline void
-UsefulOutBuf_InsertData(UsefulOutBuf *pMe, const void *pBytes, size_t uLen,
+UsefulOutBuf_InsertData(UsefulOutBuf *pUOutBuf, const void *pBytes, size_t uLen,
 			size_t uPos)
 {
 	UsefulBufC Data = { pBytes, uLen };
-	UsefulOutBuf_InsertUsefulBuf(pMe, Data, uPos);
+	UsefulOutBuf_InsertUsefulBuf(pUOutBuf, Data, uPos);
 }
 
 static inline void
-UsefulOutBuf_InsertString(UsefulOutBuf *pMe, const char *szString, size_t uPos)
+UsefulOutBuf_InsertByte(UsefulOutBuf *pUOutBuf, uint8_t byte, size_t uPos)
 {
-	UsefulBufC UBC;
-	UBC.ptr = szString;
-	UBC.len = strlen(szString);
-
-	UsefulOutBuf_InsertUsefulBuf(pMe, UBC, uPos);
+	UsefulOutBuf_InsertData(pUOutBuf, &byte, 1, uPos);
 }
 
 static inline void
-UsefulOutBuf_InsertByte(UsefulOutBuf *me, uint8_t byte, size_t uPos)
-{
-	UsefulOutBuf_InsertData(me, &byte, 1, uPos);
-}
-
-static inline void
-UsefulOutBuf_InsertUint16(UsefulOutBuf *me, uint16_t uInteger16, size_t uPos)
+UsefulOutBuf_InsertUint16(UsefulOutBuf *pUOutBuf, uint16_t uInteger16,
+			  size_t uPos)
 {
 	/* See UsefulOutBuf_InsertUint64() for comments on this code */
 
@@ -1939,17 +1931,18 @@ UsefulOutBuf_InsertUint16(UsefulOutBuf *me, uint16_t uInteger16, size_t uPos)
 #else
 	uint8_t aTmp[2];
 
-	aTmp[0] = (uint8_t)((uInteger16 & 0xff00) >> 8);
-	aTmp[1] = (uint8_t)(uInteger16 & 0xff);
+	aTmp[0] = (uint8_t)((uInteger16 & 0xff00U) >> 8);
+	aTmp[1] = (uint8_t)(uInteger16 & 0xffU);
 
 	pBytes = aTmp;
 #endif
 
-	UsefulOutBuf_InsertData(me, pBytes, 2, uPos);
+	UsefulOutBuf_InsertData(pUOutBuf, pBytes, 2, uPos);
 }
 
 static inline void
-UsefulOutBuf_InsertUint32(UsefulOutBuf *pMe, uint32_t uInteger32, size_t uPos)
+UsefulOutBuf_InsertUint32(UsefulOutBuf *pUOutBuf, uint32_t uInteger32,
+			  size_t uPos)
 {
 	/* See UsefulOutBuf_InsertUint64() for comments on this code */
 
@@ -1970,19 +1963,20 @@ UsefulOutBuf_InsertUint32(UsefulOutBuf *pMe, uint32_t uInteger32, size_t uPos)
 #else
 	uint8_t aTmp[4];
 
-	aTmp[0] = (uint8_t)((uInteger32 & 0xff000000) >> 24);
-	aTmp[1] = (uint8_t)((uInteger32 & 0xff0000) >> 16);
-	aTmp[2] = (uint8_t)((uInteger32 & 0xff00) >> 8);
-	aTmp[3] = (uint8_t)(uInteger32 & 0xff);
+	aTmp[0] = (uint8_t)((uInteger32 & 0xff000000U) >> 24);
+	aTmp[1] = (uint8_t)((uInteger32 & 0xff0000U) >> 16);
+	aTmp[2] = (uint8_t)((uInteger32 & 0xff00U) >> 8);
+	aTmp[3] = (uint8_t)(uInteger32 & 0xffU);
 
 	pBytes = aTmp;
 #endif
 
-	UsefulOutBuf_InsertData(pMe, pBytes, 4, uPos);
+	UsefulOutBuf_InsertData(pUOutBuf, pBytes, 4, uPos);
 }
 
 static inline void
-UsefulOutBuf_InsertUint64(UsefulOutBuf *pMe, uint64_t uInteger64, size_t uPos)
+UsefulOutBuf_InsertUint64(UsefulOutBuf *pUOutBuf, uint64_t uInteger64,
+			  size_t uPos)
 {
 	const void *pBytes;
 
@@ -2023,126 +2017,118 @@ UsefulOutBuf_InsertUint64(UsefulOutBuf *pMe, uint64_t uInteger64, size_t uPos)
 	 */
 	uint8_t aTmp[8];
 
-	aTmp[0] = (uint8_t)((uInteger64 & 0xff00000000000000) >> 56);
-	aTmp[1] = (uint8_t)((uInteger64 & 0xff000000000000) >> 48);
-	aTmp[2] = (uint8_t)((uInteger64 & 0xff0000000000) >> 40);
-	aTmp[3] = (uint8_t)((uInteger64 & 0xff00000000) >> 32);
-	aTmp[4] = (uint8_t)((uInteger64 & 0xff000000) >> 24);
-	aTmp[5] = (uint8_t)((uInteger64 & 0xff0000) >> 16);
-	aTmp[6] = (uint8_t)((uInteger64 & 0xff00) >> 8);
-	aTmp[7] = (uint8_t)(uInteger64 & 0xff);
+	aTmp[0] = (uint8_t)((uInteger64 & 0xff00000000000000U) >> 56);
+	aTmp[1] = (uint8_t)((uInteger64 & 0xff000000000000U) >> 48);
+	aTmp[2] = (uint8_t)((uInteger64 & 0xff0000000000U) >> 40);
+	aTmp[3] = (uint8_t)((uInteger64 & 0xff00000000U) >> 32);
+	aTmp[4] = (uint8_t)((uInteger64 & 0xff000000U) >> 24);
+	aTmp[5] = (uint8_t)((uInteger64 & 0xff0000U) >> 16);
+	aTmp[6] = (uint8_t)((uInteger64 & 0xff00U) >> 8);
+	aTmp[7] = (uint8_t)(uInteger64 & 0xffU);
 
 	pBytes = aTmp;
 #endif
 
 	/* Do the insert */
-	UsefulOutBuf_InsertData(pMe, pBytes, sizeof(uint64_t), uPos);
+	UsefulOutBuf_InsertData(pUOutBuf, pBytes, sizeof(uint64_t), uPos);
 }
 
 #ifndef USEFULBUF_DISABLE_ALL_FLOAT
 static inline void
-UsefulOutBuf_InsertFloat(UsefulOutBuf *pMe, float f, size_t uPos)
+UsefulOutBuf_InsertFloat(UsefulOutBuf *pUOutBuf, float f, size_t uPos)
 {
-	UsefulOutBuf_InsertUint32(pMe, UsefulBufUtil_CopyFloatToUint32(f),
+	UsefulOutBuf_InsertUint32(pUOutBuf, UsefulBufUtil_CopyFloatToUint32(f),
 				  uPos);
 }
 
 static inline void
-UsefulOutBuf_InsertDouble(UsefulOutBuf *pMe, double d, size_t uPos)
+UsefulOutBuf_InsertDouble(UsefulOutBuf *pUOutBuf, double d, size_t uPos)
 {
-	UsefulOutBuf_InsertUint64(pMe, UsefulBufUtil_CopyDoubleToUint64(d),
+	UsefulOutBuf_InsertUint64(pUOutBuf, UsefulBufUtil_CopyDoubleToUint64(d),
 				  uPos);
 }
 #endif /* USEFULBUF_DISABLE_ALL_FLOAT */
 
 static inline void
-UsefulOutBuf_AppendUsefulBuf(UsefulOutBuf *pMe, UsefulBufC NewData)
+UsefulOutBuf_AppendUsefulBuf(UsefulOutBuf *pUOutBuf, UsefulBufC NewData)
 {
 	/* An append is just a insert at the end */
-	UsefulOutBuf_InsertUsefulBuf(pMe, NewData,
-				     UsefulOutBuf_GetEndPosition(pMe));
+	UsefulOutBuf_InsertUsefulBuf(pUOutBuf, NewData,
+				     UsefulOutBuf_GetEndPosition(pUOutBuf));
 }
 
 static inline void
-UsefulOutBuf_AppendData(UsefulOutBuf *pMe, const void *pBytes, size_t uLen)
+UsefulOutBuf_AppendData(UsefulOutBuf *pUOutBuf, const void *pBytes, size_t uLen)
 {
 	UsefulBufC Data = { pBytes, uLen };
-	UsefulOutBuf_AppendUsefulBuf(pMe, Data);
+	UsefulOutBuf_AppendUsefulBuf(pUOutBuf, Data);
 }
 
 static inline void
-UsefulOutBuf_AppendString(UsefulOutBuf *pMe, const char *szString)
+UsefulOutBuf_AppendByte(UsefulOutBuf *pUOutBuf, uint8_t byte)
 {
-	UsefulBufC UBC;
-	UBC.ptr = szString;
-	UBC.len = strlen(szString);
-
-	UsefulOutBuf_AppendUsefulBuf(pMe, UBC);
+	UsefulOutBuf_AppendData(pUOutBuf, &byte, 1);
 }
 
 static inline void
-UsefulOutBuf_AppendByte(UsefulOutBuf *pMe, uint8_t byte)
+UsefulOutBuf_AppendUint16(UsefulOutBuf *pUOutBuf, uint16_t uInteger16)
 {
-	UsefulOutBuf_AppendData(pMe, &byte, 1);
+	UsefulOutBuf_InsertUint16(pUOutBuf, uInteger16,
+				  UsefulOutBuf_GetEndPosition(pUOutBuf));
 }
 
 static inline void
-UsefulOutBuf_AppendUint16(UsefulOutBuf *pMe, uint16_t uInteger16)
+UsefulOutBuf_AppendUint32(UsefulOutBuf *pUOutBuf, uint32_t uInteger32)
 {
-	UsefulOutBuf_InsertUint16(pMe, uInteger16,
-				  UsefulOutBuf_GetEndPosition(pMe));
+	UsefulOutBuf_InsertUint32(pUOutBuf, uInteger32,
+				  UsefulOutBuf_GetEndPosition(pUOutBuf));
 }
 
 static inline void
-UsefulOutBuf_AppendUint32(UsefulOutBuf *pMe, uint32_t uInteger32)
+UsefulOutBuf_AppendUint64(UsefulOutBuf *pUOutBuf, uint64_t uInteger64)
 {
-	UsefulOutBuf_InsertUint32(pMe, uInteger32,
-				  UsefulOutBuf_GetEndPosition(pMe));
-}
-
-static inline void
-UsefulOutBuf_AppendUint64(UsefulOutBuf *pMe, uint64_t uInteger64)
-{
-	UsefulOutBuf_InsertUint64(pMe, uInteger64,
-				  UsefulOutBuf_GetEndPosition(pMe));
+	UsefulOutBuf_InsertUint64(pUOutBuf, uInteger64,
+				  UsefulOutBuf_GetEndPosition(pUOutBuf));
 }
 
 #ifndef USEFULBUF_DISABLE_ALL_FLOAT
 static inline void
-UsefulOutBuf_AppendFloat(UsefulOutBuf *pMe, float f)
+UsefulOutBuf_AppendFloat(UsefulOutBuf *pUOutBuf, float f)
 {
-	UsefulOutBuf_InsertFloat(pMe, f, UsefulOutBuf_GetEndPosition(pMe));
+	UsefulOutBuf_InsertFloat(pUOutBuf, f,
+				 UsefulOutBuf_GetEndPosition(pUOutBuf));
 }
 
 static inline void
-UsefulOutBuf_AppendDouble(UsefulOutBuf *pMe, double d)
+UsefulOutBuf_AppendDouble(UsefulOutBuf *pUOutBuf, double d)
 {
-	UsefulOutBuf_InsertDouble(pMe, d, UsefulOutBuf_GetEndPosition(pMe));
+	UsefulOutBuf_InsertDouble(pUOutBuf, d,
+				  UsefulOutBuf_GetEndPosition(pUOutBuf));
 }
 #endif /* USEFULBUF_DISABLE_ALL_FLOAT */
 
 static inline int
-UsefulOutBuf_GetError(UsefulOutBuf *pMe)
+UsefulOutBuf_GetError(UsefulOutBuf *pUOutBuf)
 {
-	return pMe->err;
+	return (int)pUOutBuf->err;
 }
 
 static inline size_t
-UsefulOutBuf_RoomLeft(UsefulOutBuf *pMe)
+UsefulOutBuf_RoomLeft(UsefulOutBuf *pUOutBuf)
 {
-	return pMe->UB.len - pMe->data_len;
+	return pUOutBuf->UB.len - pUOutBuf->data_len;
 }
 
-static inline int
-UsefulOutBuf_WillItFit(UsefulOutBuf *pMe, size_t uLen)
+static inline bool
+UsefulOutBuf_WillItFit(UsefulOutBuf *pUOutBuf, size_t uLen)
 {
-	return uLen <= UsefulOutBuf_RoomLeft(pMe);
+	return uLen <= UsefulOutBuf_RoomLeft(pUOutBuf);
 }
 
-static inline int
-UsefulOutBuf_IsBufferNULL(UsefulOutBuf *pMe)
+static inline bool
+UsefulOutBuf_IsBufferNULL(UsefulOutBuf *pUOutBuf)
 {
-	return pMe->UB.ptr == NULL;
+	return pUOutBuf->UB.ptr == NULL;
 }
 
 static inline UsefulBuf
@@ -2151,7 +2137,7 @@ UsefulOutBuf_GetOutPlace(UsefulOutBuf *pUOutBuf)
 	UsefulBuf R;
 
 	R.len = UsefulOutBuf_RoomLeft(pUOutBuf);
-	if (R.len > 0 && pUOutBuf->UB.ptr != NULL) {
+	if ((R.len > 0U) && (pUOutBuf->UB.ptr != NULL)) {
 		R.ptr = (uint8_t *)pUOutBuf->UB.ptr + pUOutBuf->data_len;
 	} else {
 		R.ptr = NULL;
@@ -2163,45 +2149,45 @@ UsefulOutBuf_GetOutPlace(UsefulOutBuf *pUOutBuf)
 #ifdef ENABLE_DECODE_ROUTINES
 
 static inline void
-UsefulInputBuf_Init(UsefulInputBuf *pMe, UsefulBufC UB)
+UsefulInputBuf_Init(UsefulInputBuf *pUInBuf, UsefulBufC UB)
 {
-	pMe->cursor = 0;
-	pMe->err    = 0;
-	pMe->magic  = UIB_MAGIC;
-	pMe->UB	    = UB;
+	pUInBuf->cursor = 0;
+	pUInBuf->err	= 0;
+	pUInBuf->magic	= UIB_MAGIC;
+	pUInBuf->UB	= UB;
 }
 
 static inline size_t
-UsefulInputBuf_Tell(UsefulInputBuf *pMe)
+UsefulInputBuf_Tell(UsefulInputBuf *pUInBuf)
 {
-	return pMe->cursor;
+	return pUInBuf->cursor;
 }
 
 static inline size_t
-UsefulInputBuf_GetBufferLength(UsefulInputBuf *pMe)
+UsefulInputBuf_GetBufferLength(UsefulInputBuf *pUInBuf)
 {
-	return pMe->UB.len;
+	return pUInBuf->UB.len;
 }
 
 static inline void
-UsefulInputBuf_Seek(UsefulInputBuf *pMe, size_t uPos)
+UsefulInputBuf_Seek(UsefulInputBuf *pUInBuf, size_t uPos)
 {
-	if (uPos > pMe->UB.len) {
-		pMe->err = 1;
+	if (uPos > pUInBuf->UB.len) {
+		pUInBuf->err = 1;
 	} else {
-		pMe->cursor = uPos;
+		pUInBuf->cursor = uPos;
 	}
 }
 
 static inline size_t
-UsefulInputBuf_BytesUnconsumed(UsefulInputBuf *pMe)
+UsefulInputBuf_BytesUnconsumed(UsefulInputBuf *pUInBuf)
 {
 	/* Code Reviewers: THIS FUNCTION DOES POINTER MATH */
 
 	/* Magic number is messed up. Either the structure got overwritten
 	 * or was never initialized.
 	 */
-	if (pMe->magic != UIB_MAGIC) {
+	if (pUInBuf->magic != UIB_MAGIC) {
 		return 0;
 	}
 
@@ -2211,18 +2197,18 @@ UsefulInputBuf_BytesUnconsumed(UsefulInputBuf *pMe)
 	 * as a defense in case there is a bug in this code or the struct is
 	 * corrupted.
 	 */
-	if (pMe->cursor > pMe->UB.len) {
+	if (pUInBuf->cursor > pUInBuf->UB.len) {
 		return 0;
 	}
 
 	/* subtraction can't go negative because of check above */
-	return pMe->UB.len - pMe->cursor;
+	return pUInBuf->UB.len - pUInBuf->cursor;
 }
 
-static inline int
-UsefulInputBuf_BytesAvailable(UsefulInputBuf *pMe, size_t uLen)
+static inline bool
+UsefulInputBuf_BytesAvailable(UsefulInputBuf *pUInBuf, size_t uLen)
 {
-	return UsefulInputBuf_BytesUnconsumed(pMe) >= uLen ? 1 : 0;
+	return UsefulInputBuf_BytesUnconsumed(pUInBuf) >= uLen ? 1 : 0;
 }
 
 static inline size_t
@@ -2232,10 +2218,10 @@ UsefulInputBuf_PointerToOffset(UsefulInputBuf *pUInBuf, const void *p)
 }
 
 static inline UsefulBufC
-UsefulInputBuf_GetUsefulBuf(UsefulInputBuf *pMe, size_t uNum)
+UsefulInputBuf_GetUsefulBuf(UsefulInputBuf *pUInBuf, size_t uNum)
 {
-	const void *pResult = UsefulInputBuf_GetBytes(pMe, uNum);
-	if (!pResult) {
+	const void *pResult = UsefulInputBuf_GetBytes(pUInBuf, uNum);
+	if (pResult == NULL) {
 		return NULLUsefulBufC;
 	} else {
 		UsefulBufC UBC;
@@ -2246,25 +2232,25 @@ UsefulInputBuf_GetUsefulBuf(UsefulInputBuf *pMe, size_t uNum)
 }
 
 static inline uint8_t
-UsefulInputBuf_GetByte(UsefulInputBuf *pMe)
+UsefulInputBuf_GetByte(UsefulInputBuf *pUInBuf)
 {
-	const void *pResult = UsefulInputBuf_GetBytes(pMe, sizeof(uint8_t));
+	const void *pResult = UsefulInputBuf_GetBytes(pUInBuf, sizeof(uint8_t));
 
 	/* The ternary operator is subject to integer promotion, because
 	 * the operands are smaller than int, so cast back to uint8_t is
 	 * needed to be completely explicit about types (for static
 	 * analyzers).
 	 */
-	return (uint8_t)(pResult ? *(const uint8_t *)pResult : 0);
+	return (uint8_t)((pResult != NULL) ? *(const uint8_t *)pResult : 0U);
 }
 
 static inline uint16_t
-UsefulInputBuf_GetUint16(UsefulInputBuf *pMe)
+UsefulInputBuf_GetUint16(UsefulInputBuf *pUInBuf)
 {
-	const uint8_t *pResult =
-		(const uint8_t *)UsefulInputBuf_GetBytes(pMe, sizeof(uint16_t));
+	const uint8_t *pResult = (const uint8_t *)UsefulInputBuf_GetBytes(
+		pUInBuf, sizeof(uint16_t));
 
-	if (!pResult) {
+	if (pResult == NULL) {
 		return 0;
 	}
 
@@ -2272,7 +2258,7 @@ UsefulInputBuf_GetUint16(UsefulInputBuf *pMe)
 #if defined(USEFULBUF_CONFIG_BIG_ENDIAN) || defined(USEFULBUF_CONFIG_HTON) ||  \
 	defined(USEFULBUF_CONFIG_BSWAP)
 	uint16_t uTmp;
-	memcpy(&uTmp, pResult, sizeof(uint16_t));
+	memscpy(&uTmp, sizeof(uTmp), pResult, sizeof(uint16_t));
 
 #if defined(USEFULBUF_CONFIG_BIG_ENDIAN)
 	return uTmp;
@@ -2293,18 +2279,18 @@ UsefulInputBuf_GetUint16(UsefulInputBuf *pMe)
 	 * needed to be completely explicit about types (for static
 	 * analyzers).
 	 */
-	return (uint16_t)((pResult[0] << 8) + pResult[1]);
+	return (uint16_t)(((uint32_t)pResult[0] << 8) + pResult[1]);
 
 #endif
 }
 
 static inline uint32_t
-UsefulInputBuf_GetUint32(UsefulInputBuf *pMe)
+UsefulInputBuf_GetUint32(UsefulInputBuf *pUInBuf)
 {
-	const uint8_t *pResult =
-		(const uint8_t *)UsefulInputBuf_GetBytes(pMe, sizeof(uint32_t));
+	const uint8_t *pResult = (const uint8_t *)UsefulInputBuf_GetBytes(
+		pUInBuf, sizeof(uint32_t));
 
-	if (!pResult) {
+	if (pResult == NULL) {
 		return 0;
 	}
 
@@ -2312,7 +2298,7 @@ UsefulInputBuf_GetUint32(UsefulInputBuf *pMe)
 #if defined(USEFULBUF_CONFIG_BIG_ENDIAN) || defined(USEFULBUF_CONFIG_HTON) ||  \
 	defined(USEFULBUF_CONFIG_BSWAP)
 	uint32_t uTmp;
-	memcpy(&uTmp, pResult, sizeof(uint32_t));
+	memscpy(&uTmp, sizeof(uTmp), pResult, sizeof(uint32_t));
 
 #if defined(USEFULBUF_CONFIG_BIG_ENDIAN)
 	return uTmp;
@@ -2332,12 +2318,12 @@ UsefulInputBuf_GetUint32(UsefulInputBuf *pMe)
 }
 
 static inline uint64_t
-UsefulInputBuf_GetUint64(UsefulInputBuf *pMe)
+UsefulInputBuf_GetUint64(UsefulInputBuf *pUInBuf)
 {
-	const uint8_t *pResult =
-		(const uint8_t *)UsefulInputBuf_GetBytes(pMe, sizeof(uint64_t));
+	const uint8_t *pResult = (const uint8_t *)UsefulInputBuf_GetBytes(
+		pUInBuf, sizeof(uint64_t));
 
-	if (!pResult) {
+	if (pResult == NULL) {
 		return 0;
 	}
 
@@ -2349,7 +2335,7 @@ UsefulInputBuf_GetUint64(UsefulInputBuf *pMe)
 	 * memcpy() into a simple move instruction.
 	 */
 	uint64_t uTmp;
-	memcpy(&uTmp, pResult, sizeof(uint64_t));
+	memscpy(&uTmp, sizeof(uTmp), pResult, sizeof(uint64_t));
 
 #if defined(USEFULBUF_CONFIG_BIG_ENDIAN)
 	/* We have been told expliclity this is a big-endian CPU.  Since
@@ -2396,32 +2382,34 @@ UsefulInputBuf_GetUint64(UsefulInputBuf *pMe)
 
 #ifndef USEFULBUF_DISABLE_ALL_FLOAT
 static inline float
-UsefulInputBuf_GetFloat(UsefulInputBuf *pMe)
+UsefulInputBuf_GetFloat(UsefulInputBuf *pUInBuf)
 {
-	uint32_t uResult = UsefulInputBuf_GetUint32(pMe);
+	uint32_t uResult = UsefulInputBuf_GetUint32(pUInBuf);
 
-	return uResult ? UsefulBufUtil_CopyUint32ToFloat(uResult) : 0;
+	return ((uResult != 0U) ? UsefulBufUtil_CopyUint32ToFloat(uResult)
+				: (float)0);
 }
 
 static inline double
-UsefulInputBuf_GetDouble(UsefulInputBuf *pMe)
+UsefulInputBuf_GetDouble(UsefulInputBuf *pUInBuf)
 {
-	uint64_t uResult = UsefulInputBuf_GetUint64(pMe);
+	uint64_t uResult = UsefulInputBuf_GetUint64(pUInBuf);
 
-	return uResult ? UsefulBufUtil_CopyUint64ToDouble(uResult) : 0;
+	return ((uResult != 0U) ? UsefulBufUtil_CopyUint64ToDouble(uResult)
+				: (double)0);
 }
 #endif /* USEFULBUF_DISABLE_ALL_FLOAT */
 
 static inline int
-UsefulInputBuf_GetError(UsefulInputBuf *pMe)
+UsefulInputBuf_GetError(UsefulInputBuf *pUInBuf)
 {
-	return pMe->err;
+	return (int)pUInBuf->err;
 }
 
 static inline void
-UsefulInputBuf_SetBufferLength(UsefulInputBuf *pMe, size_t uNewLen)
+UsefulInputBuf_SetBufferLength(UsefulInputBuf *pUInBuf, size_t uNewLen)
 {
-	pMe->UB.len = uNewLen;
+	pUInBuf->UB.len = uNewLen;
 }
 #endif /*  ENABLE_DECODE_ROUTINES */
 

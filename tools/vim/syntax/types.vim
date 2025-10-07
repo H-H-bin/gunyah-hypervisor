@@ -1,6 +1,6 @@
 " Vim syntax file
 " Language:	Gunyah Type Files
-" Maintainer:	Carl van Schaik <quic_cvanscha@quicinc.com>
+" Maintainer:	Carl van Schaik <cvanscha@qti.qualcomm.com>
 " Extensions:   *.tc
 "
 " © 2021 Qualcomm Innovation Center, Inc. All rights reserved.

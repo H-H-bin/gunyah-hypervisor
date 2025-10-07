@@ -1,4 +1,5 @@
-# © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+# © 2019 Qualcomm Innovation Center, Inc. All rights reserved.
+# All Rights Reserved.
 #
 # 2019 Cog Systems Pty Ltd.
 #
@@ -10,7 +11,7 @@ import itertools
 import os
 import abc
 from Cheetah.Template import Template
-from exceptions import DSLError
+from exceptions import DSLError, DSLErrorWithRefs
 from collections import namedtuple
 from functools import wraps
 
@@ -34,7 +35,8 @@ __loc__ = os.path.realpath(
         os.path.dirname(__file__)))
 
 default_copyright = \
-    "© 2021 Qualcomm Innovation Center, Inc. All rights reserved.\n" \
+    "© 2019 Qualcomm Innovation Center, Inc. All rights reserved.\n" \
+    "All Rights Reserved.\n\n" \
     "SPDX-License-Identifier: BSD-3-Clause"
 
 
@@ -66,25 +68,42 @@ class TopLevel:
         sorted_defs = []
         seen = set()
 
-        def visit(d):
+        def visit(d, stack=()):
             if d in seen:
                 return
             seen.add(d)
             for dep in sorted(d.dependencies, key=lambda x: x.indicator):
-                visit(dep)
+                if dep in stack:
+                    refs = tuple(x.indicator
+                                 for x in stack[stack.index(dep):])
+                    raise DSLErrorWithRefs("Circular type dependency:",
+                                           dep.indicator, refs)
+                visit(dep, stack + (d,))
             sorted_defs.append(d)
 
-        # Sort, ensuring that dependencies come before dependent definitions
+        all_defs = []
         for d in sorted(self.definitions, key=lambda x: x.indicator):
-            visit(d)
-        assert all(d in self.definitions for d in sorted_defs)
-        assert all(d in sorted_defs for d in self.definitions)
-
-        for d in sorted_defs:
             if public_only and not d.is_public:
                 continue
+            all_defs.append(d)
+
+        # Generate forward declarations in simple alphabetical order; they
+        # can never have dependencies
+        for d in all_defs:
             f = d.gen_forward_decl()
             code += f
+
+        # Sort, ensuring that dependencies come before dependent definitions
+        for d in all_defs:
+            visit(d)
+
+        missing_deps = [(d.type_name, d.is_public)
+                        for d in sorted_defs if d not in all_defs]
+        if missing_deps:
+            raise DSLError("error, missing {}deps: {}".format(
+                "public " if public_only else "", missing_deps),
+                missing_deps[0])
+        assert all(d in sorted_defs for d in all_defs)
 
         if self.definitions:
             code += '\n'
@@ -132,11 +151,14 @@ class TopLevel:
 
         return list(templates)
 
-    def apply_template(self, template_file, public_only=False):
+    def apply_template(self, template_file, abi, public_only=False):
         ns = [{
-            'declarations': tuple(d for d in self.declarations
+            'abi': abi,
+            'declarations': tuple(d for d in sorted(self.declarations,
+                                                    key=lambda d: d.name)
                                   if d.is_public or not public_only),
-            'definitions': tuple(d for d in self.definitions
+            'definitions': tuple(d for d in sorted(self.definitions,
+                                                   key=lambda d: d.type_name)
                                  if d.is_public or not public_only),
             'primitives': tuple(PrimitiveType(t) for t in
                                 PrimitiveType.c_type_names),
@@ -459,6 +481,13 @@ class IType(metaclass=abc.ABCMeta):
         """
         return ([])
 
+    @abc.abstractproperty
+    def is_usable_early(self):
+        """
+        True if this type need not be defined before use as a pointer target.
+        """
+        raise NotImplementedError
+
     def _gen_type(self, unqualified=False):
         """
         Construct a C type name or declaration.
@@ -678,6 +707,13 @@ class IType(metaclass=abc.ABCMeta):
         """
         raise NotImplementedError
 
+    @property
+    def specifies_array(self):
+        """
+        True if this type's specifier contains an array.
+        """
+        return any(dep.specifies_array for dep in self.dependencies)
+
 
 class ICustomizedType(ICustomizedReference, IType):
     """
@@ -762,6 +798,21 @@ class ICustomizedType(ICustomizedReference, IType):
             return self.definition.is_public
         except AttributeError:
             raise DSLError(self.type_name + " is not defined", self.type_name)
+
+    @property
+    def is_usable_early(self):
+        try:
+            return self.definition.is_usable_early
+        except AttributeError:
+            raise DSLError(self.type_name + " is not defined", self.type_name)
+
+    @property
+    def specifies_array(self):
+        """
+        True if this type's specifier contains an array.
+        """
+        # A customised type's specifier only names the type itself.
+        return False
 
     def _gen_type(self, **_):
         return ([self.type_name + self.type_suffix], [])
@@ -976,6 +1027,14 @@ class PrimitiveType(IType):
 
     def _gen_type(self, **_):
         return ([self.c_type_name], [])
+
+    @property
+    def is_usable_early(self):
+        """
+        True if this type need not be complete before use as a pointer target.
+        """
+        # A basic type is always usable.
+        return True
 
     @property
     def size(self):
@@ -1309,6 +1368,10 @@ class DirectType(IType):
         return self._basic_type.is_public
 
     @property
+    def is_usable_early(self):
+        return self._basic_type.is_usable_early
+
+    @property
     def dependencies(self):
         """
         Return all definitions that this type relies on.
@@ -1354,6 +1417,14 @@ class ArrayType(IType):
         return self.base_type.is_public
 
     @property
+    def is_usable_early(self):
+        """
+        True if this type need not be defined before use as a pointer target.
+        """
+        # Array types always require their base types to be complete.
+        return False
+
+    @property
     def dependencies(self):
         """
         Return all other types that this type definition relies on.
@@ -1362,6 +1433,13 @@ class ArrayType(IType):
         forward declared.
         """
         return self.base_type.dependencies
+
+    @property
+    def specifies_array(self):
+        """
+        True if this type's specifier contains an array.
+        """
+        return True
 
 
 class PointerType(IType):
@@ -1419,6 +1497,14 @@ class PointerType(IType):
         return self.base_type.is_public
 
     @property
+    def is_usable_early(self):
+        """
+        True if this type need not be complete before use as a pointer target.
+        """
+        # A pointer is complete if its base type does not specify an array.
+        return not self.base_type.specifies_array
+
+    @property
     def dependencies(self):
         """
         Return all definitions that this type relies on.
@@ -1431,7 +1517,12 @@ class PointerType(IType):
             # taking a pointer to one. This is not clearly required by the
             # standard and seems to be a Clang implementation quirk.
             return self.base_type.dependencies
-        return ()
+        elif self.base_type.is_usable_early:
+            # If the type has a forward declaration, pointers to it can use
+            # that declaration and don't need the type to be fully defined.
+            return ()
+        else:
+            return self.base_type.dependencies
 
 
 class PrimitiveDeclaration(IDeclaration):
@@ -1831,6 +1922,13 @@ class StructureDefinition(IGenCode, ICustomizedDefinition):
 
         return (code)
 
+    def is_usable_early(self):
+        """
+        True if this type need not be defined before use as a pointer target.
+        """
+        # Pointers can use the forward declaration.
+        return True
+
     def gen_code(self):
         if self._layout is None:
             self._update_layout()
@@ -1990,6 +2088,13 @@ class UnionDefinition(IGenCode, ICustomizedDefinition):
 
         return code
 
+    @property
+    def is_usable_early(self):
+        """
+        True if this type need not be defined before use as a pointer target.
+        """
+        return True
+
     def gen_code(self):
         code = []
 
@@ -2066,6 +2171,15 @@ class UnionDefinition(IGenCode, ICustomizedDefinition):
             used_names.add(member_name)
 
     @property
+    def layout(self):
+        for member_name, member_type, _ in self._members():
+            yield (member_name, member_type, 0)
+
+    @property
+    def is_container(self):
+        return True
+
+    @property
     def dependencies(self):
         """
         Return all definitions that this type relies on.
@@ -2108,8 +2222,7 @@ class EnumerationDefinition(IGenCode, ICustomizedDefinition):
 
     def __getstate__(self):
         """
-        Temporary workaround to ensure types are updated before pickling. Auto
-        update should be removed entirely when issue is resolved.
+        Temporary workaround to ensure types are updated before pickling. 
         """
         if not self._updated:
             self._autoupdate()
@@ -2273,6 +2386,15 @@ class EnumerationDefinition(IGenCode, ICustomizedDefinition):
         return (code, extra)
 
     @property
+    def is_usable_early(self):
+        """
+        True if this type need not be defined before use as a pointer target.
+        """
+        # In theory enumerations could be forward-declared, but we don't do it
+        # because they can't have dependencies on other types.
+        return False
+
+    @property
     def dependencies(self):
         """
         Return all definitions that this type relies on.
@@ -2303,6 +2425,13 @@ class IDeclarationDefinition(IGenCode, ICustomizedDefinition, IDeclaration):
     @property
     def is_signed(self):
         return self.compound_type.is_signed
+
+    @property
+    def is_usable_early(self):
+        """
+        True if this type need not be defined before use as a pointer target.
+        """
+        return False
 
     @property
     def dependencies(self):
@@ -2344,6 +2473,28 @@ class ConstantDefinition(IDeclarationDefinition):
         super().__init__(type_name)
         self.value = value
         self.category = self.CONSTANT
+
+    def update(self):
+        super().update()
+
+        # Sanity check constants
+        if self.compound_type is not None:
+            val = int(self.value)
+            bits = self.compound_type.size * 8
+            if val.bit_length() > bits:
+                raise ValueError("value {:d} larger than type {:s}"
+                                 .format(val,
+                                         self.compound_type.gen_type_name(
+                                             unqualified=True)))
+
+    def get_value(self):
+        # generate raw value now
+        val = int(self.value)
+        if self.compound_type is not None:
+            if val < 0 and not self.compound_type.is_signed:
+                val &= ((1 << (self.compound_type.size * 8)) - 1)
+
+        return val
 
     def gen_code(self):
         code = []
@@ -2396,10 +2547,12 @@ class BitFieldDefinition(IGenCode, ICustomizedDefinition):
         self.extensions = []
         self.category = self.BITFIELD
         self._ranges = None
+        self._fields = None
         self.const = False
         self._signed = False
         self._has_set_ops = None
         self._template = None
+        self._updated = False
 
     def update_unit_info(self):
         if self.length <= 8:
@@ -2448,14 +2601,9 @@ class BitFieldDefinition(IGenCode, ICustomizedDefinition):
             for d in e.declarations:
                 yield d
 
-    @property
+    @property_autoupdate
     def fields(self):
-        items = []
-        for d in self._all_declarations:
-            if d.compound_type is not None:
-                items.append(d)
-        items = sorted(items, key=lambda x: x.field_maps[0].mapped_bit)
-        return tuple(items)
+        return self._fields
 
     @property
     def all_fields_boolean(self):
@@ -2486,7 +2634,7 @@ class BitFieldDefinition(IGenCode, ICustomizedDefinition):
             "unit_type": self.unit_type,
             "unit_size": self.unit_size,
             "unit_cnt": self.unit_count,
-            "declarations": self._all_declarations,
+            "declarations": self.fields,
             "init_values": self.init_values,
             "compare_masks": self.compare_masks,
             "boolean_masks": self.boolean_masks,
@@ -2574,6 +2722,16 @@ class BitFieldDefinition(IGenCode, ICustomizedDefinition):
         return tuple((boolean_mask >> (i * self.unit_size)) & unit_mask
                      for i in range(self.unit_count))
 
+    def gen_forward_decl(self):
+        """
+        Generates a forward declaration (if needed) for the type.
+        """
+        return [
+            'typedef struct',
+            self.type_name + '_b',
+            self.type_name + '_t;\n'
+        ]
+
     def gen_code(self):
         code = []
         extra = []
@@ -2583,9 +2741,7 @@ class BitFieldDefinition(IGenCode, ICustomizedDefinition):
         code.append(self._gen_definition_code())
 
         # generate getters and setters for all declarations
-        for d in self._all_declarations:
-            if d.compound_type is None:
-                continue
+        for d in self.fields:
             if d.bitfield_specifier is None:
                 raise DSLError("each declaration needs to specify logical" +
                                " physical bit map", d.member_name)
@@ -2598,11 +2754,8 @@ class BitFieldDefinition(IGenCode, ICustomizedDefinition):
 
     def get_template_deps(self):
         templates = []
-        for d in self._all_declarations:
-            if d.compound_type is None:
-                continue
-            else:
-                templates += d.get_template_deps()
+        for d in self.fields:
+            templates += d.get_template_deps()
         return templates + [os.path.join(__loc__, self.TYPE_TEMPLATE)]
 
     def update(self):
@@ -2611,6 +2764,20 @@ class BitFieldDefinition(IGenCode, ICustomizedDefinition):
             self._update_layout()
 
         self._template = os.path.join(__loc__, self.TYPE_TEMPLATE)
+
+        items = []
+        for d in self._all_declarations:
+            if d.compound_type is not None:
+                items.append(d)
+        items = sorted(items, key=lambda x: x.field_maps[0].mapped_bit)
+        self._fields = tuple(items)
+
+    def _autoupdate(self):
+        """
+        Update internal data, prepare to generate code
+        """
+        self.update()
+        self._updated = True
 
     def _update_layout(self):
         """
@@ -2655,6 +2822,16 @@ class BitFieldDefinition(IGenCode, ICustomizedDefinition):
             d.ranges = self._ranges
 
             d.update()
+
+    @property
+    def is_usable_early(self):
+        """
+        True if this type need not be defined before use as a pointer target.
+        """
+        # In theory bitfields could be forward-declared, but we don't do it
+        # because they only depend on other types for the accessor
+        # declarations, not for the type definition.
+        return False
 
     @property
     def dependencies(self):

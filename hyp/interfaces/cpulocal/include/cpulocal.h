@@ -42,8 +42,8 @@
 // violates MISRA rule 18.2) if the object is not a member of the specified
 // array.
 #define CPULOCAL_PTR_INDEX(name, ptr)                                          \
-	(assert(ptr != NULL),                                                  \
-	 cpulocal_check_index((cpu_index_t)(ptr - cpulocal_##name)))
+	(assert_safety((ptr) != NULL),                                         \
+	 cpulocal_ptr_check_index((ptr)-cpulocal_##name))
 
 // Return true if a CPU index is valid.
 bool
@@ -55,6 +55,13 @@ cpulocal_index_valid(cpu_index_t index);
 // returned unchanged.
 cpu_index_t
 cpulocal_check_index(cpu_index_t index);
+
+// Validate and return a CPU index.
+//
+// This is the same as cpulocal_check_index(), except that the function
+// accepts an argument of ptrdiff_t type instead of cpu_index_t type.
+cpu_index_t
+cpulocal_ptr_check_index(ptrdiff_t index);
 
 // Get the CPU index of the caller at the instant of the call.
 //

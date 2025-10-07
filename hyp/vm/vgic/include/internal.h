@@ -7,12 +7,12 @@
 //
 
 #define VGIC_TRACE(id, vic, vcpu, fmt, ...)                                    \
-	TRACE(VGIC, VGIC_##id, "{:#x} {:#x} " fmt, (uintptr_t)vic,             \
-	      (uintptr_t)vcpu, __VA_ARGS__)
+	TRACE(VGIC, VGIC_##id, "{:#x} {:#x} " fmt, (uintptr_t)(vic),           \
+	      (uintptr_t)(vcpu), __VA_ARGS__)
 
 #define VGIC_DEBUG_TRACE(id, vic, vcpu, fmt, ...)                              \
-	TRACE(VGIC_DEBUG, VGIC_##id, "{:#x} {:#x} " fmt, (uintptr_t)vic,       \
-	      (uintptr_t)vcpu, __VA_ARGS__)
+	TRACE(VGIC_DEBUG, VGIC_##id, "{:#x} {:#x} " fmt, (uintptr_t)(vic),     \
+	      (uintptr_t)(vcpu), __VA_ARGS__)
 
 //
 // VIRQ routing and delivery
@@ -47,7 +47,7 @@ void
 vgic_deactivate(vic_t *vic, thread_t *vcpu, virq_t virq,
 		_Atomic vgic_delivery_state_t *dstate,
 		vgic_delivery_state_t old_dstate, bool set_edge,
-		bool set_hw_active);
+		bool hw_active);
 
 void
 vgic_sync_all(vic_t *vic, bool wakeup);
@@ -88,13 +88,13 @@ vgic_get_index_for_mpidr(vic_t *vic, uint8_t aff0, uint8_t aff1, uint8_t aff2,
 //
 
 #define hwirq_from_virq_source(p)                                              \
-	(assert(p != NULL),                                                    \
-	 assert(p->trigger == VIRQ_TRIGGER_VGIC_FORWARDED_SPI),                \
+	(assert((p) != NULL),                                                  \
+	 assert((p)->trigger == VIRQ_TRIGGER_VGIC_FORWARDED_SPI),              \
 	 hwirq_container_of_vgic_spi_source(p))
 
 #define fwd_private_from_virq_source(p)                                        \
-	(assert(p != NULL),                                                    \
-	 assert(p->trigger == VIRQ_TRIGGER_VIC_BASE_FORWARD_PRIVATE),          \
+	(assert((p) != NULL),                                                  \
+	 assert((p)->trigger == VIRQ_TRIGGER_VIC_BASE_FORWARD_PRIVATE),        \
 	 vic_forward_private_container_of_source(p))
 
 vgic_irq_type_t
@@ -109,10 +109,13 @@ vgic_irq_is_spi(virq_t virq);
 bool
 vgic_irq_is_ppi(virq_t virq);
 
+virq_source_t *_Atomic *
+vgic_find_source_ptr(vic_t *vic, thread_t *vcpu, virq_t virq);
+
 virq_source_t *
 vgic_find_source(vic_t *vic, thread_t *vcpu, virq_t virq);
 
-_Atomic(vgic_delivery_state_t) *
+vgic_delivery_state_t _Atomic *
 vgic_find_dstate(vic_t *vic, thread_t *vcpu, virq_t virq);
 
 bool

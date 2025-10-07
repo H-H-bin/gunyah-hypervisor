@@ -82,9 +82,7 @@ event thread_load_state
 // Handle entry from userspace.
 //
 // This is triggered immediately after entering the hypervisor from a lower
-// privilege level. The thread module does not trigger this event itself; it
-// must be triggered by any module that extends threads with userspace context
-// support.
+// privilege level.
 //
 // The last-priority handler is reserved for the preempt module, which can
 // enable preemption if appropriate. Other handlers can expect that preemption
@@ -98,19 +96,27 @@ event thread_entry_from_user
 // Handle exit to userspace.
 //
 // This is triggered immediately before exiting the hypervisor to a lower
-// privilege level. The thread module does not trigger this event itself; it
-// must be triggered by any module that extends threads with userspace context
-// support.
+// privilege level.
 //
 // The first-priority handler is reserved for the preempt module, which must
 // disable preemption if it had been enabled upon entry from user. Other
 // handlers can expect that preemption is disabled.
 //
 // The reason argument indicates the reason that the thread had entered the
-// hypervisor. If the reason is THREAD_ENTRY_REASON_NONE, then the user
-// context is newly initialised, either because the thread itself is new or
-// because an exception or hypercall has caused the context to be reset.
+// hypervisor (though note that there may have been a context switch since
+// then, so it may not match the last entry reason for the calling physical
+// CPU). If the reason is THREAD_ENTRY_REASON_NONE, then the user context is
+// newly initialised, either because the thread itself is new or because an
+// exception or hypercall has caused the context to be reset.
 event thread_exit_to_user
+	param reason: thread_entry_reason_t
+
+// Events for profiling. These handlers must not have any side-effects for the
+// thread.
+event thread_entry_from_user_trace
+	param reason: thread_entry_reason_t
+
+event thread_exit_to_user_trace
 	param reason: thread_entry_reason_t
 
 // Return the address to map the thread's kernel stack at.

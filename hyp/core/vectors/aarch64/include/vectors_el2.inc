@@ -62,7 +62,11 @@
 	sub	x0, sp, x0
 	sub	sp, sp, x0
 	neg	x0, x0
-	b.ne	handle_stack_fault
+#ifndef HYPVM_WITH_COVERAGE
+	b.ne    handle_stack_fault
+#else
+	b.eq 1f; b    handle_stack_fault; 1:
+#endif
 .endm
 
 .macro	save_kernel_context full:req overflow:req
@@ -172,7 +176,11 @@
 	msr	TPIDR_EL1, x1
 
 	// The emergency stacks must use the emergency vectors.
-	adr	x0, emergency_vectors_aarch64
+#ifndef HYPVM_WITH_COVERAGE
+	adr     x0, emergency_vectors_aarch64
+#else
+	adrl	x0, emergency_vectors_aarch64
+#endif
 	msr	VBAR_EL2, x0
 	isb
 

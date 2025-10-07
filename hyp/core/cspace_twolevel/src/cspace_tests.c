@@ -15,6 +15,7 @@
 #include <object.h>
 #include <partition.h>
 #include <partition_alloc.h>
+#include <preempt.h>
 #include <spinlock.h>
 
 #include <asm/event.h>
@@ -80,6 +81,8 @@ tests_cspace_cap_lookup(cap_id_t cap, cap_rights_t rights)
 bool
 tests_cspace_start(void)
 {
+	preempt_disable();
+
 	cap_id_result_t	    cap_ret;
 	cap_id_t	   *cap		  = CPULOCAL(test_caps);
 	cap_rights_cspace_t cspace_rights = cap_rights_cspace_default();
@@ -154,6 +157,8 @@ tests_cspace_start(void)
 	}
 
 	object_put_cspace(test_cspace);
+
+	preempt_enable();
 
 	return false;
 }

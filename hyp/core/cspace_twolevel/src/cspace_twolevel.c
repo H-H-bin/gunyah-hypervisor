@@ -60,7 +60,8 @@ cspace_get_cap_slot_index(const cap_table_t *table, const cap_t *cap)
 {
 	ptrdiff_t index = cap - &table->cap_slots[0];
 
-	assert((index >= 0U) && (index < (ptrdiff_t)CAP_TABLE_NUM_CAP_SLOTS));
+	assert((index >= (ptrdiff_t)0) &&
+	       (index < (ptrdiff_t)CAP_TABLE_NUM_CAP_SLOTS));
 	assert(cap == &table->cap_slots[index]);
 
 	return (index_t)index;
@@ -336,7 +337,7 @@ cspace_destroy_cap_table(rcu_entry_t *entry)
 		}
 	}
 
-	(void)partition_free(partition, table, sizeof(cap_table_t));
+	partition_free(partition, table, sizeof(cap_table_t));
 	object_put_partition(partition);
 
 	return ret;
@@ -586,8 +587,8 @@ cspace_twolevel_handle_object_cleanup_cspace(cspace_t *cspace)
 }
 
 cap_id_result_t
-cspace_create_master_cap(cspace_t *cspace, object_ptr_t object,
-			 object_type_t type)
+cspace_create_restricted_master_cap(cspace_t *cspace, object_ptr_t object,
+				    object_type_t type, cap_rights_t rights)
 {
 	error_t		err;
 	cap_t	       *new_cap;
@@ -600,7 +601,7 @@ cspace_create_master_cap(cspace_t *cspace, object_ptr_t object,
 	// Objects are initialized with a refcount of 1 which is for the master
 	// cap reference here.
 	cap_data.object = object;
-	cap_data.rights = cspace_get_rights_all(type);
+	cap_data.rights = rights;
 
 	cap_info_init(&cap_data.info);
 	cap_info_set_master_cap(&cap_data.info, true);
@@ -625,6 +626,14 @@ cspace_create_master_cap(cspace_t *cspace, object_ptr_t object,
 	rcu_read_finish();
 
 	return ret;
+}
+
+cap_id_result_t
+cspace_create_master_cap(cspace_t *cspace, object_ptr_t object,
+			 object_type_t type)
+{
+	return cspace_create_restricted_master_cap(cspace, object, type,
+						   cspace_get_rights_all(type));
 }
 
 cap_id_result_t

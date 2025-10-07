@@ -1,8 +1,8 @@
+## © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+##
+## SPDX-License-Identifier: BSD-3-Clause
 // Automatically generated. Do not modify.
-//
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
-//
-// SPDX-License-Identifier: BSD-3-Clause
+
 #extends hypercall_api
 #implements respond
 #def prefix: $internal_prefix
@@ -15,47 +15,24 @@
 \#include <thread.h>
 \#include <trace.h>
 
-\#include <events/thread.h>
-
-#def trace_in(hypcall_num, hypcall)
-    #set trace_fmt = $hypcall.name + ":"
-    #for i, input in $hypcall.inputs[:5]
-        #if not $input.ignore
-            #set trace_fmt = trace_fmt + " {:#x}"
-        #end if
-    #end for
-    TRACE(USER, HYPERCALL, "${trace_fmt}"
-    #for i, input in $hypcall.inputs[:5]
-        #if not $input.ignore
-        , (register_t)($register_expr($input))
-        #end if
-    #end for
-    );
+#def input_var_trace(variable):
+    (register_t)${register_expr(variable)}#slurp
 #end def
 
-#def trace_out(hypcall_num, hypcall)
-    #set trace_fmt = $hypcall.name + " ret:"
-    #for i, input in $hypcall.outputs[:5]
-        #if not $input.ignore
-            #set trace_fmt = trace_fmt + " {:#x}"
-        #end if
-    #end for
-    TRACE(USER, HYPERCALL, "${trace_fmt}"
-    #if len($hypcall.outputs) == 1
-        , (register_t)ret_
-    #else
-        #for i, output in $hypcall.outputs[:5]
-        , (register_t)ret_.$register_expr($output)
-        #end for
-    #end if
-    );
+#def output_var_trace(variable):
+    (register_t)ret_#slurp
+#end def
+
+#def output_resultvar_trace(variable):
+    (register_t)ret_.${register_expr(variable)}#slurp
 #end def
 
 #set $wrapper_suffix = "__c_wrapper"
 #for hypcall_num in sorted($hypcall_dict.keys())
     #set $hypcall = $hypcall_dict[$hypcall_num]
     #if len($hypcall.outputs) > 1
-    static_assert(sizeof(${return_type($hypcall)}) <= 8U * sizeof(register_t),
+    static_assert(sizeof(${return_type($hypcall)}) <= (8U *
+            sizeof(register_t)),
         "Return structure must fit in 8 machine registers");
 
     #end if
@@ -67,52 +44,22 @@
     #assert $num_out <= 8
 
 ${type_signature($hypcall, suffix=$wrapper_suffix, ignored_inputs=True)}
-	REQUIRE_PREEMPT_DISABLED;
+	REQUIRE_PREEMPT_DISABLED EXCLUDE_RCU_READ;
 
 ${type_signature($hypcall, suffix=$wrapper_suffix, ignored_inputs=True)} {
     #if $hypcall.outputs
         $return_type($hypcall) ret_;
     #end if
 
-    trigger_thread_entry_from_user_event(THREAD_ENTRY_REASON_HYPERCALL);
+    thread_entry_from_user(THREAD_ENTRY_REASON_HYPERCALL);
 
 #if $sensitive
     TRACE(USER, HYPERCALL, "$hypcall.name");
 #else
-    $trace_in($hypcall_num, $hypcall)
+    $trace_hypcall_entry($hypcall, lambda x,y: $input_var_trace(y))
 #end if
 
-    ## generate reserved input checks
-    #set has_ignores = False
-    #set error_ret = None
-    #for r, output in $hypcall.outputs
-        #if $output.ctype == 'error_t'
-            #set error_ret = $output
-            #break
-        #end if
-    #end for
-    #if error_ret
-        #for r, input in $hypcall.inputs
-            #if $input.ignore
-                #set has_ignores = True
-    if (compiler_unexpected(${input.name} != (${input.ctype})${input.default}U)) {
-                #if len($hypcall.outputs) == 1
-        ret_ = ERROR_ARGUMENT_INVALID;
-                #else
-        ret_ = ($return_type($hypcall)){ .${error_ret.name} = ERROR_ARGUMENT_INVALID };
-                #end if
-        goto out;
-    }
-            #end if
-        #end for
-    #else
-        // FIXME: unchecked reserved inputs
-        #for r, input in $hypcall.inputs
-            #if $input.ignore
-    (void)$input.name;
-            #end if
-        #end for
-    #end if
+    $hypcall_check_inputs($hypcall)
 
     ## call the implementation
     #if $hypcall.outputs
@@ -127,24 +74,23 @@ ${type_signature($hypcall, suffix=$wrapper_suffix, ignored_inputs=True)} {
         #end if
     #end for
     );
+    goto out;
 
-    #if has_ignores:
 out:
-    #end if
 
 #if not $sensitive
-    $trace_out($hypcall_num, $hypcall)
+    #if num_out == 1
+    $trace_hypcall_exit($hypcall, lambda x,y: $output_var_trace(y))
+    #else
+    $trace_hypcall_exit($hypcall, lambda x,y: $output_resultvar_trace(y))
+    #end if
 #end if
 
-    trigger_thread_exit_to_user_event(THREAD_ENTRY_REASON_HYPERCALL);
+    thread_exit_to_user(THREAD_ENTRY_REASON_HYPERCALL);
 
     ## return the result, if any
     #if $hypcall.outputs
     return ret_;
-    #else
-        #if has_ignores:
-    return;
-        #end if
     #end if
 }
 

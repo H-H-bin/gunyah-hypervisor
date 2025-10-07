@@ -8,10 +8,13 @@
 #include <hypregisters.h>
 
 #include <compiler.h>
+#include <log.h>
 #include <panic.h>
 #include <preempt.h>
+#include <qcbor.h>
 #include <scheduler.h>
 #include <thread.h>
+#include <trace.h>
 #include <util.h>
 #include <vcpu.h>
 
@@ -197,7 +200,30 @@ vgic_handle_vcpu_trap_sysreg_write(ESR_EL2_ISS_MSR_MRS_t iss)
 	case ISS_MRS_MSR_ICC_IGRPEN1_EL1:
 		vgic_icc_set_group_enable(true, ICC_IGRPEN_EL1_cast(val));
 		break;
-
+#if VGIC_HAS_EXT_SPIS && defined(VGIC_EMULATE_EXT_RANGE) &&                    \
+	VGIC_EMULATE_EXT_RANGE
+	// ICH_HCR_EL2.TC is set so we need to trap the following registers
+	case ISS_MRS_MSR_ICC_CTLR_EL1: {
+		ICC_CTLR_EL1_t ctlr = ICC_CTLR_EL1_cast(val);
+		preempt_disable();
+		ICH_VMCR_EL2_t vmcr = register_ICH_VMCR_EL2_read();
+		ICH_VMCR_EL2_set_VEOIM(&vmcr, ICC_CTLR_EL1_get_EOImode(&ctlr));
+		ICH_VMCR_EL2_set_VCBPR(&vmcr, ICC_CTLR_EL1_get_CBPR(&ctlr));
+		register_ICH_VMCR_EL2_write(vmcr);
+		preempt_enable();
+		break;
+	}
+	case ISS_MRS_MSR_ICC_PMR_EL1: {
+		preempt_disable();
+		ICH_VMCR_EL2_t vmcr = register_ICH_VMCR_EL2_read();
+		ICH_VMCR_EL2_set_VPMR(&vmcr, (uint8_t)val);
+		register_ICH_VMCR_EL2_write(vmcr);
+		preempt_enable();
+		break;
+	}
+	// ICC_DIR_EL1, ICC_ASGI1R_EL1, ICC_SGI0R_EL1, ICC_SGI1R_EL1 are
+	// already handled above.
+#endif
 	default:
 		ret = vgic_handle_vcpu_trap_sysreg_write_no_fgt(iss, vic, val);
 		break;
@@ -357,7 +383,40 @@ vgic_handle_vcpu_trap_sysreg_read(ESR_EL2_ISS_MSR_MRS_t iss)
 		val = ICC_IGRPEN_EL1_raw(igrpen);
 		break;
 	}
+#if VGIC_HAS_EXT_SPIS && defined(VGIC_EMULATE_EXT_RANGE) &&                    \
+	VGIC_EMULATE_EXT_RANGE
+	// ICH_HCR_EL2.TC is set so we need to trap the following registers
+	case ISS_MRS_MSR_ICC_CTLR_EL1: {
+		ICC_CTLR_EL1_t ctlr = ICC_CTLR_EL1_default();
+		// Show ExtRange as 1 when the platform shows ExtRange of 0
+		// when we want to support extended IRQs.
+		ICC_CTLR_EL1_set_ExtRange(&ctlr, true);
+		ICC_CTLR_EL1_set_RSS(&ctlr, true);
 
+		ICH_VTR_EL2_t vtr = register_ICH_VTR_EL2_read();
+		ICC_CTLR_EL1_set_A3V(&ctlr, ICH_VTR_EL2_get_A3V(&vtr));
+		ICC_CTLR_EL1_set_SEIS(&ctlr, ICH_VTR_EL2_get_SEIS(&vtr));
+		ICC_CTLR_EL1_set_IDbits(&ctlr, ICH_VTR_EL2_get_IDbits(&vtr));
+		ICC_CTLR_EL1_set_PRIbits(&ctlr, ICH_VTR_EL2_get_PRIbits(&vtr));
+
+		ICC_CTLR_EL1_set_PMHE(&ctlr, false);
+
+		ICH_VMCR_EL2_t vmcr = register_ICH_VMCR_EL2_read();
+		ICC_CTLR_EL1_set_EOImode(&ctlr, ICH_VMCR_EL2_get_VEOIM(&vmcr));
+		ICC_CTLR_EL1_set_CBPR(&ctlr, ICH_VMCR_EL2_get_VCBPR(&vmcr));
+		val = ICC_CTLR_EL1_raw(ctlr);
+		break;
+	}
+	case ISS_MRS_MSR_ICC_PMR_EL1: {
+		ICH_VMCR_EL2_t vmcr = register_ICH_VMCR_EL2_read();
+		val		    = ICH_VMCR_EL2_get_VPMR(&vmcr);
+		break;
+	}
+	case ISS_MRS_MSR_ICC_RPR_EL1: {
+		val = gicv3_ich_apr_find_highest();
+		break;
+	}
+#endif
 	default:
 		ret = vgic_handle_vcpu_trap_sysreg_read_no_fgt(iss, thread,
 							       &val);

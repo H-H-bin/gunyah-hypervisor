@@ -185,15 +185,18 @@ vic_bind_hwirq_forward_private(vic_t *vic, hwirq_t *hwirq, virq_t virq)
 		    &hwirq->vic_base_forward_private, &expected, fp,
 		    memory_order_release, memory_order_relaxed)) {
 		spinlock_release(&vic->forward_private_lock);
-		(void)partition_free(partition, fp, size);
+		partition_free(partition, fp, size);
 		err = ERROR_DENIED;
 		goto out;
 	}
 
 	list_insert_at_tail(&vic->forward_private_list, &fp->list_node);
 
+	// FIXME:
+	// Abstract ARM GIC specific details below from this vic module.
+
 	// Bind for VCPUs that are attached to the VIC and active.
-	for (cpu_index_t i = 0U; i < PLATFORM_MAX_CORES; i++) {
+	for (cpu_index_t i = 0U; i < vic->gicr_count; i++) {
 		rcu_read_start();
 
 		thread_t *vcpu = atomic_load_consume(&vic->gicr_vcpus[i]);
@@ -406,7 +409,7 @@ vic_handle_free_forward_private(rcu_entry_t *entry)
 
 	partition_t *partition = vic->header.partition;
 	assert(partition != NULL);
-	(void)partition_free(partition, fp, sizeof(vic_forward_private_t));
+	partition_free(partition, fp, sizeof(vic_forward_private_t));
 
 	object_put_vic(vic);
 

@@ -9,12 +9,6 @@
 
 #include "gicv3.h"
 
-irq_t
-platform_irq_max(void)
-{
-	return gicv3_irq_max();
-}
-
 error_t
 platform_irq_check(irq_t irq)
 {
@@ -83,6 +77,12 @@ void
 platform_irq_priority_drop(irq_t irq)
 {
 	gicv3_irq_priority_drop(irq);
+}
+
+void
+platform_irq_deactivate_forwarded(irq_t irq)
+{
+	gicv3_irq_deactivate_forwarded(irq);
 }
 
 void

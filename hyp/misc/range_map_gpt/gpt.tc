@@ -1,0 +1,119 @@
+// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define RANGE_MAP_MAX_SIZE_BITS constant type count_t = 52;
+define RANGE_MAP_MAX_SIZE constant size = 1 << RANGE_MAP_MAX_SIZE_BITS;
+
+define RANGE_MAP_LEVEL_LOG2_BITS constant type count_t = 1;
+define RANGE_MAP_LEVEL_BITS constant type count_t = 1 << RANGE_MAP_LEVEL_LOG2_BITS;
+define RANGE_MAP_LEVEL_ENTRIES constant type count_t = 1 << RANGE_MAP_LEVEL_BITS;
+
+define RANGE_MAP_MAX_LEVELS constant type count_t =
+		(RANGE_MAP_MAX_SIZE_BITS + RANGE_MAP_LEVEL_BITS - 1) / RANGE_MAP_LEVEL_BITS;
+
+define RANGE_MAP_SHIFT_BITS constant type count_t = 6 - RANGE_MAP_LEVEL_LOG2_BITS;
+define RANGE_MAP_TYPE_BITS constant type count_t =
+		64 - RANGE_MAP_MAX_SIZE_BITS - RANGE_MAP_SHIFT_BITS;
+
+extend range_map_type enumeration {
+	level;
+};
+
+extend rcu_update_class enumeration {
+	range_map_free_level;
+};
+
+define range_map_pte_info bitfield<64> {
+	auto<RANGE_MAP_MAX_SIZE_BITS>	guard	size;
+	auto<RANGE_MAP_SHIFT_BITS>	shifts	type count_t lsl(RANGE_MAP_LEVEL_LOG2_BITS);
+	auto<RANGE_MAP_TYPE_BITS>	type	enumeration range_map_type;
+};
+
+define range_map_pte structure {
+	info	bitfield range_map_pte_info;
+	value	union range_map_value;
+};
+
+define range_map_level_non_atomic structure {
+	entries		array(RANGE_MAP_LEVEL_ENTRIES) structure range_map_pte;
+};
+
+// FIXME:
+define range_map_level_atomic structure(aligned(16)) {
+	entries		array(RANGE_MAP_LEVEL_ENTRIES) structure range_map_pte(atomic);
+	rcu_entry	structure rcu_entry(contained);
+	partition	pointer object partition;
+};
+
+define range_map_level union {
+	raw		uintptr;
+	non_atomic	pointer structure range_map_level_non_atomic;
+	atomic		pointer structure range_map_level_atomic;
+};
+
+extend range_map_value union {
+	raw	uint64;
+	level	union range_map_level;
+};
+
+// FIXME:
+define range_map_root union(aligned(16)) {
+	non_atomic	structure range_map_pte;
+	atomic		structure range_map_pte(atomic);
+};
+
+extend range_map structure {
+	root		union range_map_root;
+	partition	pointer object partition;
+	config		bitfield range_map_config;
+	allowed_types	uregister;
+};
+
+define range_map_read_op enumeration {
+	lookup;
+	is_contiguous;
+	walk;
+	dump_range;
+};
+
+define range_map_read_data structure {
+	entry	structure range_map_entry;
+	base	size;
+	size	size;
+	cb	enumeration range_map_callback;
+	arg	union range_map_arg;
+};
+
+define range_map_frame_info bitfield<64> {
+	auto<RANGE_MAP_MAX_SIZE_BITS>	addr	size;
+	auto<RANGE_MAP_SHIFT_BITS>	shifts	type count_t lsl(RANGE_MAP_LEVEL_LOG2_BITS);
+	auto<RANGE_MAP_LEVEL_BITS>	index	type index_t;
+	auto			dirty	bool;
+};
+
+define range_map_stack_frame structure {
+	level	union range_map_level;
+	info	bitfield range_map_frame_info;
+};
+
+define range_map_stack structure {
+	depth	type count_t;
+	frame	array(RANGE_MAP_MAX_LEVELS) structure range_map_stack_frame;
+};
+
+#if defined(UNIT_TESTS)
+extend range_map_type enumeration {
+	test_a;
+	test_b;
+	test_c;
+};
+
+extend range_map_callback enumeration {
+	test;
+};
+
+extend range_map_arg union {
+	test	uregister;
+};
+#endif

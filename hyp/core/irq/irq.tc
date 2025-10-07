@@ -2,7 +2,13 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
+extend irq_range structure {
+	node		structure range_tree_node(contained);
+	range_type	enumeration irq_range_type;
+};
+
 extend hwirq object {
+	is_bound bool(atomic);
 	irq type irq_t;
 	action enumeration hwirq_action;
 };
@@ -14,4 +20,13 @@ extend hwirq_create structure {
 
 define hwirq_action enumeration {
 	ignore;
+};
+
+extend irq_range_type enumeration {
+	hwirq;
+};
+
+define irq_range_hwirq structure {
+	range		structure irq_range(contained);
+	hwirqs		pointer pointer(atomic) object hwirq;
 };

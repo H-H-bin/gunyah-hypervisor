@@ -17,14 +17,14 @@ extend cap_rights_msgqueue bitfield {
 
 extend msgqueue object {
 	buf		pointer uint8;
-	count		type count_t;
+	count		type count_t(atomic);
 	queue_size	size;
 	max_msg_size	size;
 	queue_depth	type count_t;
 	head		type count_t;
 	tail		type count_t;
-	notfull_thd	type count_t;
-	notempty_thd	type count_t;
+	notfull_thd	type count_t(atomic);
+	notempty_thd	type count_t(atomic);
 	lock		structure spinlock;
 	send_source	structure virq_source(contained);
 	rcv_source	structure virq_source(contained);

@@ -2,12 +2,15 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <limits.h>
+#define BITMAP_NUM_WORDS(x) (((x) + BITMAP_WORD_BITS - 1U) / BITMAP_WORD_BITS)
 
-#include <types/bitmap.h>
-
-#define BITMAP_DECLARE(bits, name)     register_t name[BITMAP_NUM_WORDS(bits)]
-#define BITMAP_DECLARE_PTR(bits, name) register_t(*name)[BITMAP_NUM_WORDS(bits)]
+#if defined(__TYPED_DSL__)
+#define BITMAP(bits, ...)                                                      \
+	array(BITMAP_NUM_WORDS(bits)) type register_t(__VA_ARGS__)
+#else
+#define BITMAP_DECLARE(bits, name) register_t name[BITMAP_NUM_WORDS(bits)]
+#define BITMAP_DECLARE_PTR(bits, name)                                         \
+	register_t(*(name))[BITMAP_NUM_WORDS(bits)]
 
 bool
 bitmap_isset(const register_t *bitmap, index_t bit);
@@ -95,16 +98,16 @@ bitmap__atomic_get_word(const _Atomic register_t *bitmap, index_t word)
 	{                                                                      \
 		index_t	   w = 0;                                              \
 		register_t r = 0;                                              \
-		while ((r != 0U) || ((w * BITMAP_WORD_BITS) < n)) {            \
-			if (r == 0U) {                                         \
+		while (((r) != 0U) || (((w)*BITMAP_WORD_BITS) < (n))) {        \
+			if ((r) == 0U) {                                       \
 				r = g((b), (w));                               \
-				w++;                                           \
+				(w)++;                                         \
 			}                                                      \
-			if (r != 0U) {                                         \
+			if ((r) != 0U) {                                       \
 				index_t i = compiler_ctz(r);                   \
-				r &= ~(register_t)1 << i;                      \
-				i += ((w - 1U) * BITMAP_WORD_BITS);            \
-				if (i >= n) {                                  \
+				(r) &= ~(register_t)1 << (i);                  \
+				(i) += (((w)-1U) * BITMAP_WORD_BITS);          \
+				if ((i) >= (n)) {                              \
 					r = 0;                                 \
 				} else {
 // clang-format off
@@ -134,3 +137,4 @@ bitmap__atomic_get_word(const _Atomic register_t *bitmap, index_t word)
 			      util_cpp_unique_ident(r), b,                     \
 			      ~bitmap__atomic_get_word, n)
 #define BITMAP_ATOMIC_FOREACH_CLEAR_END BITMAP__FOREACH_END
+#endif

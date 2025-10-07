@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <types/bitmap.h>
+#include <bitmap.h>
 
 define priority_t public newtype uint32;
 

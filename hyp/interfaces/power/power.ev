@@ -47,7 +47,6 @@ event power_cpu_offline
 setup_event power_cpu_suspend
 	param state: platform_power_state_t
 	param may_poweroff: bool
-	param last_cpu: bool
 	return: error_t = OK
 	success: OK
 

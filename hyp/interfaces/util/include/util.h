@@ -73,4 +73,22 @@
 #define util_offset_in_range(offset, type, member)                             \
 	(((offset) >= offsetof(type, member)) &&                               \
 	 ((offset) <                                                           \
-	  offsetof(type, member) + util_sizeof_member(type, member)))
+	  (offsetof(type, member) + util_sizeof_member(type, member))))
+
+// clang-format off
+// Produce a case range with ... separated by spaces, since clang-format does not
+// have any support for GNU case-ranges and otherwise removes spaces before or
+// after the ...
+#define util_case_range(a, b) (a) ... (b)
+// Provide a case range `<offset_start> ... <offset_end>` for a given structure
+// member. Case range is inclusive so we need to subtract 1 from the end value
+#define util_offset_case_range(type, member)                                   \
+	offsetof(type, member) ... (offsetof(type, member) +                   \
+				  util_sizeof_member(type, member) - 1U)
+// clang-format on
+
+// Convert an expanded preprocessor macro into a string.
+#define util_cpp_stringify_expanded(x) util_cpp_stringify(x)
+
+// Convert a token into a string
+#define util_cpp_stringify(x) #x

@@ -9,6 +9,7 @@
 
 #include <compiler.h>
 #include <irq.h>
+#include <thread.h>
 #include <timer_queue.h>
 #include <vcpu.h>
 #include <vic.h>

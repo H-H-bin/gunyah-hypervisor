@@ -7,11 +7,13 @@
 
 #include <hypcontainers.h>
 
+#include <atomic.h>
 #include <list.h>
 #include <preempt.h>
 #include <scheduler.h>
 #include <spinlock.h>
 #include <thread.h>
+#include <util.h>
 #include <wait_queue.h>
 
 #include "event_handlers.h"

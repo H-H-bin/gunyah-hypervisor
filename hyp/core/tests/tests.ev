@@ -17,7 +17,6 @@ subscribe tests_init
 
 subscribe tests_start
 	handler tests_spinlock_single_lock()
-	require_preempt_disabled
 
 #if defined (UNIT_TESTS)
 subscribe tests_init
@@ -26,7 +25,6 @@ subscribe tests_init
 
 subscribe tests_start
 	handler tests_spinlock_multiple_locks()
-	require_preempt_disabled
 
 subscribe thread_get_entry_fn[THREAD_KIND_TEST]
 

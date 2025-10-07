@@ -1,0 +1,11 @@
+// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+module watchdog
+
+subscribe object_activate_thread(thread)
+
+subscribe object_deactivate_thread
+
+subscribe object_activate_watchdog

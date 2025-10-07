@@ -36,10 +36,10 @@ platform_cpu_map_index_to_mpidr(const platform_mpidr_mapping_t *mapping,
 {
 	MPIDR_EL1_t mpidr = MPIDR_EL1_default();
 
-	assert(mapping->aff_shift[0] < 32U);
-	assert(mapping->aff_shift[1] < 32U);
-	assert(mapping->aff_shift[2] < 32U);
-	assert(mapping->aff_shift[3] < 32U);
+	assert_debug(mapping->aff_shift[0] < 32U);
+	assert_debug(mapping->aff_shift[1] < 32U);
+	assert_debug(mapping->aff_shift[2] < 32U);
+	assert_debug(mapping->aff_shift[3] < 32U);
 
 	MPIDR_EL1_set_Aff0(&mpidr, (uint8_t)((index >> mapping->aff_shift[0]) &
 					     mapping->aff_mask[0]));
@@ -61,10 +61,10 @@ platform_cpu_map_mpidr_to_index(const platform_mpidr_mapping_t *mapping,
 {
 	index_t index = 0U;
 
-	assert(mapping->aff_shift[0] < 32U);
-	assert(mapping->aff_shift[1] < 32U);
-	assert(mapping->aff_shift[2] < 32U);
-	assert(mapping->aff_shift[3] < 32U);
+	assert_debug(mapping->aff_shift[0] < 32U);
+	assert_debug(mapping->aff_shift[1] < 32U);
+	assert_debug(mapping->aff_shift[2] < 32U);
+	assert_debug(mapping->aff_shift[3] < 32U);
 
 	index |= ((index_t)MPIDR_EL1_get_Aff0(&mpidr) &
 		  (index_t)mapping->aff_mask[0])
@@ -79,6 +79,7 @@ platform_cpu_map_mpidr_to_index(const platform_mpidr_mapping_t *mapping,
 		  (index_t)mapping->aff_mask[3])
 		 << mapping->aff_shift[3];
 
+	assert_debug(index < CPU_INDEX_INVALID);
 	return index;
 }
 
@@ -88,10 +89,10 @@ platform_cpu_map_mpidr_valid(const platform_mpidr_mapping_t *mapping,
 {
 	bool valid = true;
 
-	assert(mapping->aff_shift[0] < 32U);
-	assert(mapping->aff_shift[1] < 32U);
-	assert(mapping->aff_shift[2] < 32U);
-	assert(mapping->aff_shift[3] < 32U);
+	assert_debug(mapping->aff_shift[0] < 32U);
+	assert_debug(mapping->aff_shift[1] < 32U);
+	assert_debug(mapping->aff_shift[2] < 32U);
+	assert_debug(mapping->aff_shift[3] < 32U);
 
 	if ((MPIDR_EL1_get_Aff0(&mpidr) & ~mapping->aff_mask[0]) != 0U) {
 		valid = false;
@@ -110,8 +111,9 @@ platform_cpu_map_mpidr_valid(const platform_mpidr_mapping_t *mapping,
 }
 
 MPIDR_EL1_t
-platform_cpu_index_to_mpidr(index_t index)
+platform_cpu_index_to_mpidr(cpu_index_t index)
 {
+	assert(cpulocal_index_valid(index));
 	platform_mpidr_mapping_t mapping = platform_cpu_get_mpidr_mapping();
 	return platform_cpu_map_index_to_mpidr(&mapping, index);
 }

@@ -19,25 +19,12 @@
 // to signal IPIs, or to support a debug console. Such IRQs are not exposed to
 // this interface.
 
-// Obtain the maximum valid IRQ number.
-//
-// This returns an irq_t value which is the upper bound for valid irq_t values
-// on this platform. Note that it is not necessarily the case that all irq_t
-// values less than this value are valid; see platform_irq_check() below.
-//
-// This function may be called by a default-priority boot_cold_init handler. If
-// the driver needs initialisation to determine this value, it should subscribe
-// to boot_cold_init with a positive priority.
-irq_t
-platform_irq_max(void);
-
 // Check whether a specific IRQ number is valid for handler registration.
 //
 // This function returns ERROR_DENIED for any IRQ number that is reserved by the
 // platform driver or by a higher privileged level, ERROR_ARGUMENT_INVALID for
-// any IRQ number that is greater than the value returned by platform_irq_max()
-// or is otherwise known not to be implemented by the hardware, and OK for any
-// other IRQ number.
+// any IRQ number that is known not to be implemented by the hardware, and OK
+// for any other IRQ number.
 error_t
 platform_irq_check(irq_t irq);
 
@@ -152,6 +139,15 @@ platform_irq_priority_drop(irq_t irq);
 void
 platform_irq_deactivate(irq_t irq);
 
+// Deactivate a forwarded IRQ.
+//
+// This function deactivates the corresponding IRQ, which was previously
+// disabled by platform_irq_disable_shared. For a per-CPU IRQ
+// it must be called on the same physical CPU that acknowledged the IRQ;
+// otherwise it may be called on any CPU.
+void
+platform_irq_deactivate_forwarded(irq_t irq);
+
 // Deactivate an acknowledged per-CPU IRQ on a specified physical CPU.
 //
 // This works the same way as platform_irq_deactivate(), but allows per-CPU
@@ -172,7 +168,7 @@ platform_irq_set_mode_percpu(irq_t irq, irq_trigger_t trigger, cpu_index_t cpu);
 // and programmed into the source devices, possibly after being mapped to a
 // hardware ID that is tagged with a source device identifier (e.g. a PCI bus
 // responder ID).
-#if IRQ_HAS_MSI
+#if PLATFORM_HAS_MSI_TABLE
 
 // The base of the platform's MSI range.
 //
@@ -209,7 +205,7 @@ platform_irq_msi_max(void);
 extern const platform_msi_controller_t *
 platform_irq_msi_devices(platform_msi_controller_id_t ctrl_index);
 
-#endif // IRQ_HAS_MSI
+#endif // PLATFORM_HAS_MSI_TABLE
 
 // Query the IRQ delivery class of a CPU.
 //

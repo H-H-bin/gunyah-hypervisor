@@ -19,8 +19,8 @@ doorbell_reset(doorbell_t *doorbell);
 // The Ack Mask controls which flags should be automatically cleared when the
 // interrupt is asserted.
 error_t
-doorbell_mask(doorbell_t *doorbell, doorbell_flags_t enable_mask,
-	      doorbell_flags_t ack_mask);
+doorbell_mask(doorbell_t *doorbell, doorbell_flags_t new_enable_mask,
+	      doorbell_flags_t new_ack_mask);
 
 // Binds a Doorbell to a virtual interrupt.
 error_t
@@ -28,4 +28,4 @@ doorbell_bind(doorbell_t *doorbell, vic_t *vic, virq_t virq);
 
 // Unbinds a Doorbell from a virtual interrupt.
 void
-doorbell_unbind(doorbell_t *doorbell);
+doorbell_unbind(doorbell_t *doorbell) EXCLUDE_PREEMPT_DISABLED;

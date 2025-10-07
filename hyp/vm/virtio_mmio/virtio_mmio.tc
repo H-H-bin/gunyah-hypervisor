@@ -2,64 +2,21 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-extend cap_rights_virtio_mmio bitfield {
-	0	bind_backend_virq	bool;
-	1	bind_frontend_virq	bool;
-	2	assert_virq		bool;
-	3	config			bool;
-};
-
-define VIRTIO_MMIO_MAX_VQS constant type count_t = 16;
-
-// Feature bits
-define VIRTIO_F_VERSION_1 constant type index_t = 32;
-define VIRTIO_F_ACCESS_PLATFORM constant type index_t = 33;
-define VIRTIO_F_NOTIFICATION_DATA constant type index_t = 38;
-
-define VIRTIO_MMIO_REG_CONFIG_BYTES constant type count_t = (PGTABLE_HYP_PAGE_SIZE - 0x100);
-
-define VIRTIO_MMIO_DEV_FEAT_NUM constant type count_t = 2;
-define VIRTIO_MMIO_DRV_FEAT_NUM constant type count_t = 2;
-
-// Device Status
-define virtio_mmio_status_reg bitfield<32> {
-	2	driver_ok		bool;
-	6	device_needs_reset	bool;
-	7	failed			bool;
-	others	unknown=0;
-};
-
-extend virtio_mmio object {
-	flags				bitfield virtio_option_flags;
-	me			pointer object memextent;
-	backend_source		structure virq_source(contained);
-	frontend_source		structure virq_source(contained);
-	frontend_device		structure vdevice(contained);
-	device_type			enumeration virtio_device_type;
+define virtio_mmio structure {
+	vdevice			structure vdevice(contained);
 	regs			pointer structure virtio_mmio_regs;
-	size			size;
-	vqs_num			type count_t;
-	lock			structure spinlock;
-	vqs_bitmap		type register_t(atomic);
-	drv_feat_sel		uint32;
-	queue_sel		uint32;
-	reason			bitfield virtio_mmio_notify_reason(atomic);
-	banked_dev_feat		array(VIRTIO_MMIO_DEV_FEAT_NUM) uint32;
-	banked_drv_feat		array(VIRTIO_MMIO_DRV_FEAT_NUM) uint32;
-	banked_queue_regs	pointer structure virtio_mmio_banked_queue_registers;
-	pending_rst		bool;
-};
 
-define virtio_mmio_banked_queue_registers structure {
-	num_max		uint32;
-	num		uint32;
-	ready		uint32;
-	desc_low	uint32;
-	desc_high	uint32;
-	drv_low		uint32;
-	drv_high	uint32;
-	dev_low		uint32;
-	dev_high	uint32;
+	virq_source		structure virq_source(contained);
+#if defined(PLATFORM_NO_DEVICE_ATTR_ATOMIC_UPDATE) && \
+	PLATFORM_NO_DEVICE_ATTR_ATOMIC_UPDATE
+	interrupt_lock		structure spinlock;
+#endif
+	notify_bitmap		type register_t(atomic);
+
+	banking_lock		structure spinlock;
+	dev_feat_sel		type index_t;
+	drv_feat_sel		type index_t;
+	queue_sel		type index_t;
 };
 
 define virtio_mmio_regs structure(aligned(PGTABLE_HYP_PAGE_SIZE)) {
@@ -78,7 +35,7 @@ define virtio_mmio_regs structure(aligned(PGTABLE_HYP_PAGE_SIZE)) {
 	queue_notify @ 0x050		uint32(atomic);
 	interrupt_status @ 0x060	uint32(atomic);
 	interrupt_ack @ 0x064		uint32(atomic);
-	status @ 0x070			bitfield virtio_mmio_status_reg(atomic);
+	status @ 0x070			bitfield virtio_status(atomic);
 	queue_desc_low @ 0x080		uint32(atomic);
 	queue_desc_high @ 0x084		uint32(atomic);
 	queue_drv_low @ 0x090		uint32(atomic);
@@ -86,14 +43,17 @@ define virtio_mmio_regs structure(aligned(PGTABLE_HYP_PAGE_SIZE)) {
 	queue_dev_low @ 0x0a0		uint32(atomic);
 	queue_dev_high @ 0x0a4		uint32(atomic);
 	config_gen @ 0x0fc		uint32(atomic);
-	device_config @ 0x100		union virtio_config_space;
+	device_config @ 0x100		union virtio_config_space(contained);
 };
 
 extend virq_trigger enumeration {
-	virtio_mmio_backend;
 	virtio_mmio_frontend;
 };
 
 extend vdevice_type enumeration {
 	VIRTIO_MMIO;
+};
+
+extend virtio_frontend union {
+	mmio		structure virtio_mmio(contained);
 };

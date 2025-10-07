@@ -1,0 +1,200 @@
+// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include <bitmap.h>
+
+// We only support internally maintained collections, and only enough of them
+// to support Linux's usage model of one fixed collection per CPU. However, we
+// can't assume that they will be used that way; this is not an actual CPU ID.
+// FIXME:
+//define vgic_its_ic_id_t newtype type cpu_index_t;
+define vgic_its_ic_id_t newtype uint16;
+
+// The virtual ITS uses the GICR index in its rdbase fields.
+// FIXME:
+//define vgic_its_rdbase_t newtype type cpu_index_t;
+define vgic_its_rdbase_t newtype uint16;
+
+// The maximum possible number of ITSs is not clearly defined; we pick 16 as
+// that is the only clear limit in the spec (though it is implicit and only
+// applies to GICv4 implementations with no hardware broadcast of VMOVP).
+define VGIC_ITS_MAX_NUM public constant type index_t = 16;
+
+// The number of event bits implemented by the virtual ITSs. We also instruct
+// the physical ITS driver to allocate at least this many event IDs for the
+// valid device IDs when mapping the physical devices, regardless of how many
+// IDs are configured by the platform (see build.conf).
+define VGIC_ITS_EVENT_BITS constant type count_t = PLATFORM_VGIC_ITS_EVENT_BITS;
+
+// The number of redistributor index bits implemented by the virtual ITSs.
+// This is not used to allocate memory; it only affects the CTE size.
+define VGIC_ITS_RD_BITS constant type count_t = 6;
+
+// The number of collection index bits implemented by the virtual ITSs. This
+// is used to allocate memory for the CTE cache; however Linux only ever uses
+// one collection per physical CPU so this does not need to be large.
+define VGIC_ITS_IC_BITS constant type count_t = 6;
+
+extend platform_msi_device structure module vgic_its {
+	// The virtual ITS that this device is assigned to. Weak (RCU-
+	// protected) reference; pointer is set by vgic_its activate and
+	// cleared by vgic_its deactivate.
+	owner		pointer(atomic) object vgic_its;
+
+	// Entry in the virtual ITS's list of device IDs.
+	list		structure list_node(contained);
+
+	// A bitmap of events that have been mapped to one of the owner's ICs.
+	// Protected by the ITS lock.
+	//
+	// This is used to issue DISCARD commands for vLPIs when the owner's
+	// enable bit is cleared, the owner is detached from a VIC, or a
+	// virtual MAPD with V=0 is processed, without having to trust the VM
+	// not to touch the ITTs in memory. It is also used to optimise
+	// virtual MAPC, which only needs to check ITTEs and issue VMOVI /
+	// VMAPTI for event IDs that have bits set here.
+	mapped_events	BITMAP(1 << VGIC_ITS_EVENT_BITS);
+};
+
+// Device table entry (stored in guest memory)
+define vgic_its_dte bitfield<64> {
+	auto			valid		bool;
+	51:8			itt_addr	type vmaddr_t lsl(8);
+	auto<5>			itt_size	type count_t;
+	others			unknown=0;
+};
+
+// Interrupt translation table entry (stored in guest memory)
+define vgic_its_itte bitfield<32> {
+	auto			valid		bool;
+	auto<VGIC_LPI_BITS>	lpi		type virq_t;
+	auto<VGIC_ITS_IC_BITS>	icid		type vgic_its_ic_id_t;
+	others			unknown=0;
+};
+
+// Collection table entry (stored in guest memory when virtual ITS is
+// disabled, cached internally when enabled)
+define vgic_its_cte bitfield<8> {
+	auto			valid		bool;
+	auto			known_empty	bool;
+	auto<VGIC_ITS_RD_BITS>	rd_index	type vgic_its_rdbase_t;
+	others			unknown=0;
+};
+
+extend vgic_its object {
+	// Head of the list of owned physical device IDs. This list is set
+	// during object creation and cannot change after activation.
+	device_list			structure list;
+
+	// Lock protecting attachment and enable changes and command execution.
+	lock				structure spinlock;
+
+	// The current enable and quiescent state of the virtual ITS.
+	ctlr				bitfield GITS_CTLR;
+
+	// Pointer to the virtual GIC that currently owns this virtual ITS.
+	// Weak (RCU-protected) reference; pointer is set by vic attach and
+	// cleared by vic deactivate.
+	owner				pointer(atomic) object vic;
+	// Reference to the VM address space that this virtual ITS reads its
+	// configuration tables from. This may be set at any time.
+	addrspace			pointer object addrspace;
+
+	// Guest base address and size of the device table. The ITT base IPAs
+	// are stored in this table, in VM memory.
+	//
+	// This is used for asserting (INT) or moving (MOVALL) LPIs that can't
+	// be raised normally by hardware (i.e. for unused device IDs). We
+	// must update it on MAPD, MAP[T]I and MOVI.
+	//
+	// Indirect (2-level) support is implemented for this table, because
+	// the device ID space is large (32 bits) and typically very sparse.
+	device_table_base		bitfield GITS_BASER;
+
+	// Guest base address and size of the collection table. The RD
+	// mappings of the collections are stored in this table, in VM memory.
+	// However, since there are relatively few of them (one per CPU in
+	// Linux) we cache them internally while the ITS is enabled, so this
+	// can be copied in completely on enable and copied out on disable.
+	//
+	// Note that we do not simply declare these as internally stored (by
+	// setting GITS_TYPER.HCC>0), because Linux assumes that the firmware
+	// will deal with ITS save/restore (as required by PSCI) if HCC is
+	// zero, but does the save/restore itself if HCC is nonzero because
+	// the firmware can't do it in that case.
+	//
+	// The save/restore is very slow to virtualise because we must issue a
+	// physical DISCARD for everything mapped on VM suspend, and then
+	// re-parse all the device tables and issue a physical MAPTI for
+	// everything mapped on VM resume; being able to copy this in and out
+	// is much cheaper, especially if we don't have to actually do it.
+	collection_table_base		bitfield GITS_BASER;
+
+	// The internal collection table cache.
+	collection_table		array(1 << VGIC_ITS_IC_BITS)
+					bitfield vgic_its_cte;
+
+	// Guest base address and size of the command queue buffer.
+	command_queue_base		bitfield GITS_CBASER;
+
+	// Read and write offsets for the command queue. These must be
+	// multiples of sizeof(git_its_cmd_t) and must be less than
+	// command_queue_size.
+	command_queue_read		bitfield GITS_CREADR;
+	command_queue_write		bitfield GITS_CWRITER;
+
+	// Dummy event ID which is mapped to a virtual LPI whenever we need to
+	// do something to that LPI that can only be done via a valid event
+	// mapping, but no such mapping exists.
+	//
+	// This is used when a virtual device ID that has no corresponding
+	// physical device is specified in the following virtual ITS commands:
+	// CLEAR, INT, INV (for GICv4.0 only), DISCARD (which has an implicit
+	// CLEAR), or MOVI (which has an implicit CLEAR and INT if the LPI is
+	// already pending). For GICv4.1, INV can be done with a GICR_INVLPIR
+	// write and does not need a dummy event mapping.
+	dummy_event			bitfield platform_msi_id;
+
+	// The LPI number dummy_event is mapped to, if any; otherwise 0.
+	dummy_event_mapped_lpi		type virq_t;
+
+	// Index of the physical ITS that this virtual ITS is attached to.
+	// This is set at object creation and is unique by construction (i.e.
+	// these objects are only created at boot time).
+	phys_index			type platform_msi_controller_id_t;
+
+	// Virtual device structure representing the GITS registers. If the
+	// type is set to VDEVICE_TYPE_NONE, it has not been mapped. Mapping
+	// is protected by the lock.
+	gits_device		structure vdevice(contained);
+};
+
+extend cap_rights_vgic_its bitfield {
+	0	bind_vic		bool;
+	1	attach_addrspace	bool;
+};
+
+extend vgic_its_create structure {
+	phys_index			type platform_msi_controller_id_t;
+};
+
+extend vic object module vgic_its {
+	// Array of reference-counted pointers to the attached virtual ITSs.
+	// Updates from NULL to valid are atomic compare-exchanges. Updates
+	// from valid to NULL are only permitted during vic object
+	// destruction.
+	ptrs		array(VGIC_ITS_MAX_NUM) pointer(atomic) object vgic_its;
+};
+
+extend trace_class enumeration {
+	vgic_its = 19;
+};
+
+extend trace_id enumeration {
+	vgic_its_command = 39;
+};
+
+extend vdevice_type enumeration {
+	vgic_its;
+};

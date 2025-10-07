@@ -17,7 +17,16 @@
 // a relaxed atomic load (assuming that volatile has the new semantics specified
 // in C18, as it does in virtually every C implementation ever).
 #if !defined(atomic_load_consume)
-#define atomic_load_consume(p) atomic_load_explicit(p, memory_order_relaxed)
+#define atomic_load_consume(p) atomic_load_explicit((p), memory_order_relaxed)
+#endif
+
+// Atomic consume fence.
+//
+// On most CPUs, this just requires an acquire signal fence to ensure the
+// compiler orders accesses after the load they are dependent on, rather than
+// any explicit barrier instructions.
+#if !defined(atomic_consume_fence)
+#define atomic_consume_fence() atomic_signal_fence(memory_order_acquire)
 #endif
 
 // Shortcuts for store-relaxed and store-release
@@ -33,4 +42,18 @@
 // may be redefined by <asm/atomic.h> to use stronger instructions if necessary.
 #if !defined(atomic_device_fence)
 #define atomic_device_fence(o) atomic_thread_fence(o)
+#endif
+
+// Atomic compare-exchange weak with ll sc instructions where available.
+//
+// On some architectures, the LLVM compiler is emitting atomic compare-set
+// instructions for atomic_compare_exchange_weak instead of using ll/sc type
+// instructions. Those compare-set instructions can be more heavy-weight and
+// more subject to races. Architectures can define their own
+// atomic_compare_exchange_ll_sc_weak if needed.
+#if !defined(atomic_compare_exchange_ll_sc_weak)
+#define atomic_compare_exchange_ll_sc_weak(obj, expected, desired)             \
+	atomic_compare_exchange_weak_explicit((obj), (expected), (desired),    \
+					      memory_order_relaxed,            \
+					      memory_order_relaxed)
 #endif

@@ -17,13 +17,31 @@
 			break;                                                 \
 		case memory_order_acquire:                                     \
 		case memory_order_consume:                                     \
+			/* Order all reads before DMB with reads and writes */ \
+			/* after it. */                                        \
 			__asm__ volatile("dmb ld" ::: "memory");               \
 			break;                                                 \
 		case memory_order_release:                                     \
 		case memory_order_acq_rel:                                     \
 		case memory_order_seq_cst:                                     \
 		default:                                                       \
+			/* Order all reads and writes before DMB with reads */ \
+			/* and writes after it. */                             \
 			__asm__ volatile("dmb sy" ::: "memory");               \
 			break;                                                 \
 		}                                                              \
 	} while (0)
+
+bool
+atomic_compare_exchange_uint32_ll_sc_weak(_Atomic uint32_t *obj,
+					  uint32_t *expected, uint32_t desired);
+
+bool
+atomic_compare_exchange_uint64_ll_sc_weak(_Atomic uint64_t *obj,
+					  uint64_t *expected, uint64_t desired);
+
+#define atomic_compare_exchange_ll_sc_weak(obj, expected, desired)             \
+	_Generic((obj), \
+	_Atomic uint32_t *: atomic_compare_exchange_uint32_ll_sc_weak, \
+	_Atomic uint64_t *: atomic_compare_exchange_uint64_ll_sc_weak) \
+	((obj), (expected), (desired))

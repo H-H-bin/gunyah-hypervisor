@@ -1,0 +1,8 @@
+// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier; BSD-3-Clause
+
+#if defined(ARCH_ARM_FEAT_SVE)
+ZCR_EL2 +sve
+ID_AA64ZFR0_EL1 +sve <uint64>
+#endif

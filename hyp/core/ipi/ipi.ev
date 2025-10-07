@@ -2,7 +2,18 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
+interface ipi
+
+// Private interface for ipi and trace modules
+handled_event ipi_received_trace
+	param reason: ipi_reason_t
+	return: bool = false
+
 module ipi
+
+subscribe ipi_received_trace
+	priority last
+	require_preempt_disabled
 
 subscribe platform_ipi
 	require_preempt_disabled
@@ -13,9 +24,6 @@ subscribe idle_yield
 	require_preempt_disabled
 
 subscribe power_cpu_suspend()
-	require_preempt_disabled
-
-subscribe thread_exit_to_user
 	require_preempt_disabled
 
 subscribe optional preempt_interrupt

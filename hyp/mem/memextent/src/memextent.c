@@ -9,6 +9,7 @@
 #include <bitmap.h>
 #include <compiler.h>
 #include <list.h>
+#include <log.h>
 #include <memdb.h>
 #include <memextent.h>
 #include <object.h>
@@ -16,8 +17,10 @@
 #include <partition.h>
 #include <partition_alloc.h>
 #include <pgtable.h>
+#include <platform_mem.h>
 #include <rcu.h>
 #include <spinlock.h>
+#include <trace.h>
 #include <util.h>
 
 #include <events/memextent.h>
@@ -29,14 +32,14 @@
 #include "event_handlers.h"
 
 error_t
-memextent_handle_object_create_memextent(memextent_create_t params)
+memextent_handle_object_create_memextent(memextent_create_t memextent_create)
 {
-	memextent_t *memextent = params.memextent;
+	memextent_t *memextent = memextent_create.memextent;
 	assert(memextent != NULL);
 	spinlock_init(&memextent->lock);
 	list_init(&memextent->children_list);
 
-	memextent->device_mem = params.memextent_device_mem;
+	memextent->device_mem = memextent_create.memextent_device_mem;
 
 	return OK;
 }
@@ -119,8 +122,7 @@ memextent_configure(memextent_t *me, paddr_t phys_base, size_t size,
 		goto out;
 	}
 
-	if ((memextent_attrs_get_res_0(&attributes) != 0U) ||
-	    (memextent_attrs_get_append(&attributes))) {
+	if (memextent_attrs_get_res_0(&attributes) != 0U) {
 		ret = ERROR_ARGUMENT_INVALID;
 		goto out;
 	}
@@ -179,8 +181,7 @@ memextent_configure_derive(memextent_t *me, memextent_t *parent, size_t offset,
 		goto out;
 	}
 
-	if ((memextent_attrs_get_res_0(&attributes) != 0U) ||
-	    (memextent_attrs_get_append(&attributes))) {
+	if (memextent_attrs_get_res_0(&attributes) != 0U) {
 		ret = ERROR_ARGUMENT_INVALID;
 		goto out;
 	}
@@ -211,6 +212,9 @@ memextent_configure_derive(memextent_t *me, memextent_t *parent, size_t offset,
 	me->size      = size;
 	me->memtype   = memtype;
 	me->access    = access;
+#if !defined(PLATFORM_RAM_NO_SANITISE_ON_RESET)
+	me->sanitise_on_reset = parent->sanitise_on_reset;
+#endif
 
 	if (me->parent != NULL) {
 		object_put_memextent(me->parent);
@@ -225,16 +229,16 @@ out:
 }
 
 error_t
-memextent_handle_object_activate_memextent(memextent_t *me)
+memextent_handle_object_activate_memextent(memextent_t *memextent)
 {
-	assert(me != NULL);
+	assert(memextent != NULL);
 	error_t ret = OK;
 
-	if (me->parent != NULL) {
-		assert(!me->device_mem);
+	if (memextent->parent != NULL) {
+		assert(!memextent->device_mem);
 
 		// Check new memtype is compatible with parent type
-		switch (me->parent->memtype) {
+		switch (memextent->parent->memtype) {
 		case MEMEXTENT_MEMTYPE_ANY:
 			break;
 		case MEMEXTENT_MEMTYPE_DEVICE:
@@ -242,7 +246,7 @@ memextent_handle_object_activate_memextent(memextent_t *me)
 #if defined(ARCH_AARCH64_USE_S2FWB)
 		case MEMEXTENT_MEMTYPE_CACHED:
 #endif
-			if (me->memtype != me->parent->memtype) {
+			if (memextent->memtype != memextent->parent->memtype) {
 				ret = ERROR_ARGUMENT_INVALID;
 			}
 			break;
@@ -258,20 +262,23 @@ memextent_handle_object_activate_memextent(memextent_t *me)
 			goto out;
 		}
 
-		assert((me->access & me->parent->access) == me->access);
+		assert(pgtable_access_check(memextent->parent->access,
+					    memextent->access));
 
-		ret = trigger_memextent_activate_derive_event(me->type, me);
+		ret = trigger_memextent_activate_derive_event(memextent->type,
+							      memextent);
 	} else {
-		if (me->size == 0U) {
+		if (memextent->size == 0U) {
 			ret = ERROR_OBJECT_CONFIG;
 			goto out;
 		}
 
-		ret = trigger_memextent_activate_event(me->type, me);
+		ret = trigger_memextent_activate_event(memextent->type,
+						       memextent);
 	}
 
 	if (ret == OK) {
-		me->active = true;
+		memextent->active = true;
 	}
 out:
 	return ret;
@@ -334,6 +341,11 @@ memextent_donate_sibling(memextent_t *from, memextent_t *to, size_t offset,
 {
 	error_t ret;
 
+	if (from == to) {
+		ret = ERROR_ARGUMENT_INVALID;
+		goto out;
+	}
+
 	if (!util_is_baligned(offset, PGTABLE_VM_PAGE_SIZE) ||
 	    !util_is_baligned(size, PGTABLE_VM_PAGE_SIZE)) {
 		ret = ERROR_ARGUMENT_ALIGNMENT;
@@ -358,14 +370,84 @@ memextent_donate_sibling(memextent_t *from, memextent_t *to, size_t offset,
 		goto out;
 	}
 
-	if ((from == to) || (from->parent == NULL) ||
-	    (from->parent != to->parent)) {
+	ret = trigger_memextent_donate_sibling_event(from->type, from, to, phys,
+						     size);
+
+out:
+	return ret;
+}
+
+error_t
+memextent_donate_protected_reclaim(memextent_t *from, size_t offset,
+				   size_t size)
+{
+	error_t ret;
+
+	if (from->parent == NULL) {
 		ret = ERROR_ARGUMENT_INVALID;
 		goto out;
 	}
 
-	ret = trigger_memextent_donate_sibling_event(from->type, from, to, phys,
-						     size);
+	if (!util_is_baligned(offset, PGTABLE_VM_PAGE_SIZE) ||
+	    !util_is_baligned(size, PGTABLE_VM_PAGE_SIZE)) {
+		ret = ERROR_ARGUMENT_ALIGNMENT;
+		goto out;
+	}
+
+	if (util_add_overflows(from->phys_base, offset)) {
+		ret = ERROR_ARGUMENT_INVALID;
+		goto out;
+	}
+
+	paddr_t phys = from->phys_base + offset;
+
+	if ((size == 0U) || util_add_overflows(phys, size - 1U)) {
+		ret = ERROR_ARGUMENT_SIZE;
+		goto out;
+	}
+
+	if (!extent_range_valid(from, phys, size) ||
+	    !extent_range_valid(from->parent, phys, size)) {
+		ret = ERROR_ARGUMENT_INVALID;
+		goto out;
+	}
+
+	ret = trigger_memextent_donate_protected_reclaim_event(from->type, from,
+							       phys, size);
+
+out:
+	return ret;
+}
+
+error_t
+memextent_donate_device(memextent_t *me, size_t offset, size_t size)
+{
+	error_t ret;
+
+	if (!util_is_baligned(offset, PGTABLE_VM_PAGE_SIZE) ||
+	    !util_is_baligned(size, PGTABLE_VM_PAGE_SIZE)) {
+		ret = ERROR_ARGUMENT_ALIGNMENT;
+		goto out;
+	}
+
+	if (util_add_overflows(me->phys_base, offset)) {
+		ret = ERROR_ARGUMENT_INVALID;
+		goto out;
+	}
+
+	paddr_t phys = me->phys_base + offset;
+
+	if ((size == 0U) || util_add_overflows(phys, size - 1U)) {
+		ret = ERROR_ARGUMENT_SIZE;
+		goto out;
+	}
+
+	if (!extent_range_valid(me, phys, size)) {
+		ret = ERROR_ARGUMENT_INVALID;
+		goto out;
+	}
+
+	ret = trigger_memextent_donate_device_event(me->type, me, phys, size);
 
 out:
 	return ret;
@@ -389,7 +471,8 @@ memextent_check_map_attrs(memextent_t		   *extent,
 
 error_t
 memextent_map(memextent_t *extent, addrspace_t *addrspace, vmaddr_t vm_base,
-	      memextent_mapping_attrs_t map_attrs)
+	      memextent_mapping_attrs_t map_attrs,
+	      addrspace_map_flags_t	map_flags)
 {
 	error_t ret;
 
@@ -406,8 +489,9 @@ memextent_map(memextent_t *extent, addrspace_t *addrspace, vmaddr_t vm_base,
 	if (addrspace->read_only) {
 		ret = ERROR_DENIED;
 	} else {
-		ret = trigger_memextent_map_event(
-			extent->type, extent, addrspace, vm_base, map_attrs);
+		ret = trigger_memextent_map_event(extent->type, extent,
+						  addrspace, vm_base, map_attrs,
+						  map_flags);
 	}
 
 out:
@@ -417,7 +501,8 @@ out:
 error_t
 memextent_map_partial(memextent_t *extent, addrspace_t *addrspace,
 		      vmaddr_t vm_base, size_t offset, size_t size,
-		      memextent_mapping_attrs_t map_attrs)
+		      memextent_mapping_attrs_t map_attrs,
+		      addrspace_map_flags_t	map_flags)
 {
 	error_t ret;
 
@@ -450,7 +535,7 @@ memextent_map_partial(memextent_t *extent, addrspace_t *addrspace,
 		ret = trigger_memextent_map_partial_event(extent->type, extent,
 							  addrspace, vm_base,
 							  offset, size,
-							  map_attrs);
+							  map_attrs, map_flags);
 	}
 
 out:
@@ -458,7 +543,8 @@ out:
 }
 
 error_t
-memextent_unmap(memextent_t *extent, addrspace_t *addrspace, vmaddr_t vm_base)
+memextent_unmap(memextent_t *extent, addrspace_t *addrspace, vmaddr_t vm_base,
+		addrspace_map_flags_t map_flags)
 {
 	error_t ret;
 
@@ -470,8 +556,8 @@ memextent_unmap(memextent_t *extent, addrspace_t *addrspace, vmaddr_t vm_base)
 	if (addrspace->read_only) {
 		ret = ERROR_DENIED;
 	} else {
-		ret = trigger_memextent_unmap_event(extent->type, extent,
-						    addrspace, vm_base);
+		ret = trigger_memextent_unmap_event(
+			extent->type, extent, addrspace, vm_base, map_flags);
 	}
 
 out:
@@ -480,7 +566,8 @@ out:
 
 error_t
 memextent_unmap_partial(memextent_t *extent, addrspace_t *addrspace,
-			vmaddr_t vm_base, size_t offset, size_t size)
+			vmaddr_t vm_base, size_t offset, size_t size,
+			addrspace_map_flags_t map_flags)
 {
 	error_t ret;
 
@@ -505,20 +592,20 @@ memextent_unmap_partial(memextent_t *extent, addrspace_t *addrspace,
 	if (addrspace->read_only) {
 		ret = ERROR_DENIED;
 	} else {
-		ret = trigger_memextent_unmap_partial_event(
-			extent->type, extent, addrspace, vm_base, offset, size);
+		ret = trigger_memextent_unmap_partial_event(extent->type,
+							    extent, addrspace,
+							    vm_base, offset,
+							    size, map_flags);
 	}
 
 out:
 	return ret;
 }
 
-void
+error_t
 memextent_unmap_all(memextent_t *extent)
 {
-	if (!trigger_memextent_unmap_all_event(extent->type, extent)) {
-		panic("Invalid memory extent unmap all!");
-	}
+	return trigger_memextent_unmap_all_event(extent->type, extent);
 }
 
 static error_t
@@ -628,7 +715,8 @@ memextent_check_access_attrs(memextent_t	     *extent,
 
 error_t
 memextent_update_access(memextent_t *extent, addrspace_t *addrspace,
-			vmaddr_t vm_base, memextent_access_attrs_t access_attrs)
+			vmaddr_t vm_base, memextent_access_attrs_t access_attrs,
+			addrspace_map_flags_t map_flags)
 {
 	error_t ret;
 
@@ -646,7 +734,8 @@ memextent_update_access(memextent_t *extent, addrspace_t *addrspace,
 		ret = ERROR_DENIED;
 	} else {
 		ret = trigger_memextent_update_access_event(
-			extent->type, extent, addrspace, vm_base, access_attrs);
+			extent->type, extent, addrspace, vm_base, access_attrs,
+			map_flags);
 	}
 
 out:
@@ -656,7 +745,8 @@ out:
 error_t
 memextent_update_access_partial(memextent_t *extent, addrspace_t *addrspace,
 				vmaddr_t vm_base, size_t offset, size_t size,
-				memextent_access_attrs_t access_attrs)
+				memextent_access_attrs_t access_attrs,
+				addrspace_map_flags_t	 map_flags)
 {
 	error_t ret;
 
@@ -688,7 +778,7 @@ memextent_update_access_partial(memextent_t *extent, addrspace_t *addrspace,
 	} else {
 		ret = trigger_memextent_update_access_partial_event(
 			extent->type, extent, addrspace, vm_base, offset, size,
-			access_attrs);
+			access_attrs, map_flags);
 	}
 
 out:
@@ -861,31 +951,31 @@ memextent_lookup_mapping(memextent_t *me, paddr_t phys, size_t size, index_t i)
 }
 
 error_t
-memextent_attach(partition_t *owner, memextent_t *me, uintptr_t hyp_va,
+memextent_attach(partition_t *owner, memextent_t *extent, uintptr_t hyp_va,
 		 size_t size)
 {
 	assert(owner != NULL);
-	assert(me != NULL);
+	assert(extent != NULL);
 
 	error_t ret = OK;
 
-	if (owner != me->header.partition) {
+	if (owner != extent->header.partition) {
 		ret = ERROR_DENIED;
 		goto out;
 	}
 
-	if (!pgtable_access_check(me->access, PGTABLE_ACCESS_RW)) {
+	if (!pgtable_access_check(extent->access, PGTABLE_ACCESS_RW)) {
 		ret = ERROR_DENIED;
 		goto out;
 	}
 
-	if (me->size < size) {
+	if (extent->size < size) {
 		ret = ERROR_ARGUMENT_SIZE;
 		goto out;
 	}
 
 	pgtable_hyp_memtype_t memtype;
-	switch (me->memtype) {
+	switch (extent->memtype) {
 	case MEMEXTENT_MEMTYPE_CACHED:
 	case MEMEXTENT_MEMTYPE_ANY:
 		memtype = PGTABLE_HYP_MEMTYPE_WRITEBACK;
@@ -904,19 +994,195 @@ memextent_attach(partition_t *owner, memextent_t *me, uintptr_t hyp_va,
 		goto out;
 	}
 
-	ret = trigger_memextent_attach_event(me->type, me, hyp_va, size,
+	ret = trigger_memextent_attach_event(extent->type, extent, hyp_va, size,
 					     memtype);
 out:
 	return ret;
 }
 
 void
-memextent_detach(partition_t *owner, memextent_t *me)
+memextent_detach(partition_t *owner, memextent_t *extent)
 {
 	assert(owner != NULL);
-	assert(me != NULL);
-	assert(owner == me->header.partition);
+	assert(extent != NULL);
+	assert(owner == extent->header.partition);
 
-	bool handled = trigger_memextent_detach_event(me->type, me);
+	bool handled = trigger_memextent_detach_event(extent->type, extent);
 	assert(handled);
 }
+
+static error_t
+memextent_do_memdb_update(partition_t *partition, memextent_t *from_me,
+			  memextent_t *to_me, paddr_t phys, size_t size)
+{
+	assert(from_me != to_me);
+	assert(size > 0U);
+	assert(!util_add_overflows(phys, size - 1U));
+	assert(partition != NULL);
+	assert((from_me == NULL) || (from_me->header.partition == partition));
+	assert((to_me == NULL) || (to_me->header.partition == partition));
+
+	partition_t *hyp_partition = partition_get_private();
+	error_t	     ret;
+	if (from_me == NULL) {
+		ret = memdb_update(hyp_partition, phys, phys + size - 1U,
+				   (uintptr_t)to_me, MEMDB_TYPE_EXTENT,
+				   (uintptr_t)partition, MEMDB_TYPE_PARTITION);
+	} else if (to_me == NULL) {
+		ret = memdb_update(hyp_partition, phys, phys + size - 1U,
+				   (uintptr_t)partition, MEMDB_TYPE_PARTITION,
+				   (uintptr_t)from_me, MEMDB_TYPE_EXTENT);
+	} else {
+		ret = memdb_update(hyp_partition, phys, phys + size - 1U,
+				   (uintptr_t)to_me, MEMDB_TYPE_EXTENT,
+				   (uintptr_t)from_me, MEMDB_TYPE_EXTENT);
+	}
+	return ret;
+}
+
+error_t
+memextent_handle_memextent_change_ownership(partition_t *partition,
+					    memextent_t *from_me,
+					    memextent_t *to_me, paddr_t phys,
+					    size_t size)
+{
+	return memextent_do_memdb_update(partition, from_me, to_me, phys, size);
+}
+
+void
+memextent_unwind_memextent_change_ownership(error_t	 result,
+					    partition_t *partition,
+					    memextent_t *from_me,
+					    memextent_t *to_me, paddr_t phys,
+					    size_t size)
+{
+	(void)result;
+	if (memextent_do_memdb_update(partition, to_me, from_me, phys, size) !=
+	    OK) {
+		panic("Unable to roll back memory ownership change!");
+	}
+}
+
+#if !defined(PLATFORM_RAM_NO_SANITISE_ON_RESET)
+error_t
+memextent_handle_sanitise_on_reset(memextent_t *from_me, memextent_t *to_me,
+				   paddr_t phys, size_t size)
+{
+	error_t err;
+	if ((to_me != NULL) && to_me->sanitise_on_reset &&
+	    ((from_me == NULL) || !from_me->sanitise_on_reset ||
+	     (to_me == from_me))) {
+		err = platform_ram_sanitise_on_reset(phys, size, true);
+	} else {
+		err = OK;
+	}
+	return err;
+}
+
+void
+memextent_unwind_sanitise_on_reset(error_t result, memextent_t *from_me,
+				   memextent_t *to_me, paddr_t phys,
+				   size_t size)
+{
+	// This handler is called before confirming that from_me is the
+	// owner of the memory, so we can't determine whether it should be
+	// tagged for sanitisation if the ownership change fails. Fall
+	// back to leaving it tagged. If we just tagged it, this may be
+	// unnecessary, so print a warning in debug builds.
+	if ((to_me != NULL) && to_me->sanitise_on_reset &&
+	    ((from_me == NULL) || !from_me->sanitise_on_reset)) {
+		TRACE_AND_LOG(
+			DEBUG, INFO,
+			"{:s}: err {:d}, leaving memory {:#x}/{:#x} tagged",
+			(register_t) __func__, (register_t)result, phys, size);
+	}
+}
+
+error_t
+memextent_handle_unsanitise_on_reset(memextent_t *from_me, memextent_t *to_me,
+				     paddr_t phys, size_t size)
+{
+	error_t err;
+	if ((from_me != NULL) && from_me->sanitise_on_reset &&
+	    ((to_me == NULL) || !to_me->sanitise_on_reset)) {
+		err = platform_ram_sanitise_on_reset(phys, size, false);
+	} else {
+		err = OK;
+	}
+	return err;
+}
+
+void
+memextent_unwind_unsanitise_on_reset(memextent_t *from_me, memextent_t *to_me,
+				     paddr_t phys, size_t size)
+{
+	if ((from_me != NULL) && from_me->sanitise_on_reset &&
+	    ((to_me == NULL) || !to_me->sanitise_on_reset)) {
+		if (platform_ram_sanitise_on_reset(phys, size, true) != OK) {
+			panic("Unable to unwind untagging for sanitise");
+		}
+	}
+}
+
+static error_t
+memextent_do_sanitise(paddr_t base, size_t size, void *arg)
+{
+	error_t err = platform_ram_sanitise_on_reset(base, size, true);
+	if (err != OK) {
+		paddr_t *failed_phys = (paddr_t *)arg;
+		*failed_phys	     = base;
+	}
+	return err;
+}
+
+static error_t
+memextent_do_unsanitise(paddr_t base, size_t size, void *arg)
+{
+	(void)arg;
+	return platform_ram_sanitise_on_reset(base, size, false);
+}
+
+error_t
+memextent_sanitise_on_reset(memextent_t *me)
+{
+	assert(me != NULL);
+
+	error_t err;
+
+	spinlock_acquire(&me->lock);
+	if (me->sanitise_on_reset) {
+		// Already set
+		err = OK;
+		goto out_unlock;
+	}
+
+	paddr_t failed_phys = 0U;
+
+	err = memdb_range_walk((uintptr_t)me, MEMDB_TYPE_EXTENT, me->phys_base,
+			       me->phys_base + me->size - 1U,
+			       memextent_do_sanitise, &failed_phys);
+
+	if (err == OK) {
+		me->sanitise_on_reset = true;
+	} else if (failed_phys > me->phys_base) {
+		// Roll back any tagged regions, ignoring failures
+		(void)memdb_range_walk((uintptr_t)me, MEMDB_TYPE_EXTENT,
+				       me->phys_base, failed_phys - 1U,
+				       memextent_do_unsanitise, NULL);
+	} else {
+		// Nothing to roll back
+	}
+
+out_unlock:
+	spinlock_release(&me->lock);
+
+	return err;
+}
+#else  // !PLATFORM_RAM_SANITISE_ON_RESET
+error_t
+memextent_sanitise_on_reset(memextent_t *me)
+{
+	(void)me;
+	return ERROR_UNIMPLEMENTED;
+}
+#endif // !PLATFORM_RAM_SANITISE_ON_RESET

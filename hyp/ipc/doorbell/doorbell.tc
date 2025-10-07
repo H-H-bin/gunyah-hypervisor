@@ -11,8 +11,8 @@ extend cap_rights_doorbell bitfield {
 };
 
 extend doorbell object {
-	flags		uint64;
-	enable_mask	uint64;
+	flags		uint64(atomic);
+	enable_mask	uint64(atomic);
 	ack_mask	uint64;
 	source		structure virq_source(contained);
 	lock		structure spinlock;

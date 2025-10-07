@@ -37,7 +37,7 @@ event boot_runtime_first_init
 // CPU-local storage will not work; handlers must not call
 // cpulocal_get_index(), nor access variables declared as _Thread_local.
 event boot_runtime_warm_init
-	param idle_thread: thread_t *
+	param boot_thread: thread_t *
 
 // Prepare temporary boot-time CPU configuration.
 //
@@ -67,7 +67,7 @@ event boot_cold_init
 // The CPU index is provided as an input and may be used for manual accesses
 // to CPU-local storage in handlers.
 event boot_cpu_cold_init
-	param cpu_index: cpu_index_t
+	param cpu: cpu_index_t
 
 // CPU initialisation; triggered on every power-on sequence.
 //

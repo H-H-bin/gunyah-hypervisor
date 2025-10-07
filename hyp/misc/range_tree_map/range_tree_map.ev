@@ -1,0 +1,9 @@
+// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+module range_tree_map
+
+subscribe range_map_values_equal[RANGE_MAP_TYPE_RANGE_TREE_NODE]
+
+subscribe range_map_walk_callback[RANGE_MAP_CALLBACK_RANGE_TREE_RELEASE](entry, arg)

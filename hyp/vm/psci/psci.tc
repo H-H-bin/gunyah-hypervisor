@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <types/bitmap.h>
+#include <bitmap.h>
 
 // PSCI 1.1 implemented
 #define PSCI_VER 0x10001
@@ -11,17 +11,21 @@ define PSCI_VERSION constant uint32 = PSCI_VER;
 
 // We need only 3 bits to encode the cpu level state of a vcpu
 define PSCI_VCPUS_STATE_PER_VCPU_BITS constant type count_t = 3;
-define PSCI_PER_CLUSTER_STATE_BITS constant type count_t = 3;
 define PSCI_VCPUS_STATE_PER_VCPU_MASK constant uint8 = 0x7;
-define PSCI_PER_CLUSTER_STATE_BITS_MASK constant uint8 = 0x7;
 define PSCI_VCPUS_STATE_BITS constant type count_t = (PLATFORM_MAX_CORES * PSCI_VCPUS_STATE_PER_VCPU_BITS);
-define PSCI_CLUSTER_STATE_BITS constant type count_t = (PLATFORM_MAX_CLUSTERS * PSCI_PER_CLUSTER_STATE_BITS);
 define PSCI_VCPUS_STATE_MAX_VCPUS constant type count_t = PSCI_VCPUS_STATE_BITS/PSCI_VCPUS_STATE_PER_VCPU_BITS;
 define PSCI_VCPUS_STATE_MAX_INDEX constant type count_t = PLATFORM_MAX_CORES*PSCI_VCPUS_STATE_PER_VCPU_BITS;
+#if (PLATFORM_MAX_HIERARCHY == 2)
+define PSCI_PER_CLUSTER_STATE_BITS constant type count_t = 3;
+define PSCI_PER_CLUSTER_STATE_BITS_MASK constant uint8 = 0x7;
+define PSCI_CLUSTER_STATE_BITS constant type count_t = (PLATFORM_MAX_CLUSTERS * PSCI_PER_CLUSTER_STATE_BITS);
+#endif
 
 define vpm_group_suspend_state bitfield<128> {
 	auto<PSCI_VCPUS_STATE_BITS>	vcpus_state	uint64;
+#if (PLATFORM_MAX_HIERARCHY == 2)
 	auto<PSCI_CLUSTER_STATE_BITS>	cluster_state	uint16;
+#endif
 	auto	system_suspend		bool;
 	others	unknown=0;
 };
@@ -29,7 +33,7 @@ define vpm_group_suspend_state bitfield<128> {
 // FIXME:
 extend vpm_group object module psci {
 	cpus			array(PLATFORM_MAX_CORES) pointer(atomic) object thread;
-	online_count		type count_t(atomic);
+	online_vcpus		type register_t(atomic);
 	mode			enumeration psci_mode;
 	vm_suspend_state	bitfield vpm_group_suspend_state(atomic, aligned(16));
 	system_suspend_virq	structure virq_source(contained);
