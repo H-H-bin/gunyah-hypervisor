@@ -1,4 +1,4 @@
-// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -27,22 +27,6 @@ virtio_set_dev_features(virtio_t *virtio, index_t feature_sel,
 	if (feature_sel_nospec.e != OK) {
 		ret = feature_sel_nospec.e;
 		goto out;
-	}
-
-	// Check features enforced by the hypervisor
-	if (feature_sel_nospec.r == 1U) {
-		uint32_t allow =
-			(uint32_t)util_bit((VIRTIO_F_VERSION_1 - 32U)) |
-			(uint32_t)util_bit((VIRTIO_F_ACCESS_PLATFORM - 32U)) |
-			features;
-		uint32_t forbid = ~(uint32_t)util_bit(
-					  (VIRTIO_F_NOTIFICATION_DATA - 32U)) &
-				  features;
-
-		if ((allow != features) || (forbid != features)) {
-			ret = ERROR_DENIED;
-			goto out;
-		}
 	}
 
 	if (!virtio_status_get_device_needs_reset(&virtio->status)) {
@@ -85,7 +69,8 @@ out:
 
 // Fetch the driver's requested features.
 uint32_result_t
-virtio_get_drv_features(virtio_t *virtio, index_t feature_sel)
+virtio_get_drv_features(const virtio_t *virtio, index_t feature_sel,
+			bool finalised)
 {
 	uint32_result_t ret;
 
@@ -96,7 +81,7 @@ virtio_get_drv_features(virtio_t *virtio, index_t feature_sel)
 		goto out;
 	}
 
-	if (!virtio->features_ok_set) {
+	if (finalised && !virtio->features_ok_set) {
 		// Driver has not tried to set features_ok yet
 		ret = uint32_result_error(ERROR_IDLE);
 		goto out;
@@ -167,6 +152,8 @@ virtio_ack_features_ok(virtio_t *virtio)
 						   virtio);
 	if (ret == OK) {
 		virtio_status_set_features_ok(&virtio->status, true);
+		trigger_virtio_status_updated_event(virtio->transport_type,
+						    virtio, virtio->status);
 	}
 
 out_locked:
@@ -239,15 +226,23 @@ virtio_config_update_end(virtio_t *virtio)
 error_t
 virtio_queue_ready(virtio_t *virtio, index_t vq)
 {
+	// If the caller didn't specify which VQ is ready but there is only one
+	// VQ, then the ready VQ is obviously queue 0.
+	index_t checked_vq =
+		((vq == VIRTIO_QUEUE_UNSPECIFIED) && (virtio->vqs == 1U)) ? 0U
+									  : vq;
 	return trigger_virtio_queue_ready_event(virtio->transport_type, virtio,
-						vq);
+						checked_vq);
 }
 
 // Notify the frontend that the backend needs to be reset.
-error_t
+void
 virtio_needs_reset(virtio_t *virtio)
 {
-	(void)virtio_status_set_device_needs_reset(&virtio->status, true);
+	virtio_status_set_device_needs_reset(&virtio->status, true);
+	trigger_virtio_status_updated_event(virtio->transport_type, virtio,
+					    virtio->status);
+
 	bool driver_ok = virtio_status_get_driver_ok(&virtio->status);
 
 	if (driver_ok) {
@@ -255,8 +250,6 @@ virtio_needs_reset(virtio_t *virtio)
 		trigger_virtio_config_update_end_event(virtio->transport_type,
 						       virtio);
 	}
-
-	return OK;
 }
 
 // Notify the frontend that a reset it requested is complete.
@@ -266,11 +259,13 @@ virtio_reset_complete(virtio_t *virtio)
 	error_t err;
 
 	if (virtio->reset_request) {
-		virtio->status		= virtio_status_cast(0U);
 		virtio->features_ok_set = false;
 		virtio->reset_request	= false;
 		trigger_virtio_reset_complete_event(virtio->transport_type,
 						    virtio);
+		virtio->status = virtio_status_cast(0U);
+		trigger_virtio_status_updated_event(virtio->transport_type,
+						    virtio, virtio->status);
 		err = OK;
 	} else {
 		err = ERROR_BUSY;

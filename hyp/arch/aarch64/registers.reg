@@ -1,5 +1,4 @@
-// © 2019 Qualcomm Innovation Center, Inc. All rights reserved.
-// All Rights Reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier; BSD-3-Clause
 
@@ -60,6 +59,8 @@ VHE_T(CNTV_TVAL_EL0, CNT_TVAL!)
 
 CNTVCT_EL0 R
 #if defined(ARCH_ARM_FEAT_ECV)
+CNTPCTSS_EL0 <CNTPCT_EL0> OR
+CNTVCTSS_EL0 <CNTVCT_EL0> OR
 CNTPOFF_EL2
 #endif
 CNTVOFF_EL2
@@ -91,7 +92,7 @@ VHE(ELR_EL1)
 //ERRIDR_EL1 r
 ERRSELR_EL1 Orw
 //ERXADDR_EL1
-//ERXCTLR_EL1
+ERXCTLR_EL1 Orw
 //ERXFR_EL1 r
 ERXMISC0_EL1 <uint64> Orw
 //ERXMISC1_EL1
@@ -108,10 +109,13 @@ ESR_EL2 Or
 VHE(FAR_EL1)
 FAR_EL2 Or
 FPCR +fp
-FPSR +fp
+FPSR +fp oOrw
 FPEXC32_EL2
 HACR_EL2
 HCR_EL2
+#if defined(ARCH_ARM_FEAT_HCX)
+HCRX_EL2
+#endif
 HPFAR_EL2 Or
 HSTR_EL2
 //ID_AA64AFR0_EL1 r
@@ -124,11 +128,8 @@ ID_AA64ISAR2_EL1 r
 ID_AA64MMFR0_EL1 r
 ID_AA64MMFR1_EL1 r
 ID_AA64MMFR2_EL1 r
-// Replace with the correct register names once we upgrade to a version of LLVM
-// that recognises them
-// FIXME:
-S3_0_C0_C7_3 [ID_AA64MMFR3_EL1!] r
-S3_0_C0_C7_4 [ID_AA64MMFR4_EL1!] r
+ID_AA64MMFR3_EL1 r
+ID_AA64MMFR4_EL1 r
 ID_AA64PFR0_EL1 r
 ID_AA64PFR1_EL1 r
 //ID_AA64ZFR0_EL1 r
@@ -256,7 +257,7 @@ PMCR_EL0 oOrw
 //PMUSERENR_EL0
 //PMXEVCNTR_EL0
 //PMXEVTYPER_EL0
-//REVIDR_EL1 r
+REVIDR_EL1 r
 VHE(SCTLR_EL1)
 #if defined(ARCH_ARM_FEAT_VHE)
 SCTLR_EL2 [VM E2H_TGE]
@@ -296,7 +297,7 @@ VPIDR_EL2 <MIDR_EL1>
 VSESR_EL2 <uint64> w
 //VSTCR_EL2
 //VSTTBR_EL2
-VTCR_EL2
+VTCR_EL2 oOrw
 VTTBR_EL2 oOrw
 //VHE(ZCR_EL1)
 //ZCR_EL2
@@ -315,6 +316,9 @@ ICC_SGI0R_EL1 <ICC_SGIR_EL1> Ow
 ICC_SGI1R_EL1 <ICC_SGIR_EL1> Ow
 ICC_SRE_EL1
 ICC_SRE_EL2 Orw
+#if defined(CPU_ERRATUM_1297) && CPU_ERRATUM_1297
+ICC_AP1R0_EL1 <uint32> Or
+#endif
 ICH_AP0R0_EL2 <uint32> oOrw
 ICH_AP0R1_EL2 <uint32> oOrw
 ICH_AP0R2_EL2 <uint32> oOrw
@@ -361,10 +365,10 @@ APGAKeyLo_EL1 <uint64> rw
 #endif
 
 #if defined(ARCH_ARM_FEAT_MTE) && defined(INTERFACE_VCPU)
-GCR_EL1 rw
-RGSR_EL1 rw
-VHE(TFSR_EL1) rw
-TFSRE0_EL1 rw
+GCR_EL1 wR
+RGSR_EL1 wR
+VHE(TFSR_EL1) wR
+TFSRE0_EL1 wR
 #endif
 
 #if defined(MODULE_CORE_DEBUG)
@@ -464,11 +468,11 @@ TRFCR_EL2 Orw
 TRCLAR <uint32> Orw
 // Barriered reads as these may not be accessible, and we need to prevent the
 // compiler issuing these reads speculatively.
-TRCIDR0 m
-TRCIDR2 m
-TRCIDR3 m
-TRCIDR4 m
-TRCIDR5 m
+TRCIDR0 R
+TRCIDR2 R
+TRCIDR3 R
+TRCIDR4 R
+TRCIDR5 R
 TRCSTATR Orw
 TRCPRGCTLR <uint64> Orw
 TRCCONFIGR <uint64> Orw
@@ -635,12 +639,8 @@ TRBMAR_EL1 <uint64> Orw
 TRBTRG_EL1 <uint64> Orw
 #endif
 
-#if defined(ARCH_ARM_FEAT_RNG)
-RNDR <uint64> O
-RNDRRS <uint64> O
-#endif
-
-#if defined(ARCH_ARM_FEAT_AMUv1) || defined(ARCH_ARM_FEAT_AMUv1p1)
+#if (defined(ARCH_ARM_FEAT_AMUv1) || defined(ARCH_ARM_FEAT_AMUv1p1)) && \
+    defined(INTERFACE_VCPU)
 AMCR_EL0 r
 AMCFGR_EL0 r
 AMCGCR_EL0 r
@@ -650,7 +650,7 @@ AMCNTENSET0_EL0 <uint64> r
 AMCNTENSET1_EL0 <uint64> r
 AMUSERENR_EL0 <uint64>
 #if defined(ARCH_ARM_FEAT_AMUv1p1)
-AMCG1IDR_EL0 <uint64> r
+AMCG1IDR_EL0 r
 #endif
 #endif
 
@@ -660,7 +660,27 @@ S3_0_C15_C3_1 [IMP_CLUSTERIDR_EL1!] Or
 
 #if defined(ARCH_ARM_FEAT_CSV2_2) || defined(ARCH_ARM_FEAT_CSV2_1p2) || \
     defined(ARCH_ARM_FEAT_CSV2_3)
-SCXTNUM_EL0 <uint64>
-SCXTNUM_EL1 <uint64>
-SCXTNUM_EL2 <uint64>
+SCXTNUM_EL0 <uint64> wR
+SCXTNUM_EL1 <uint64> wR
+SCXTNUM_EL2 <uint64> wR
+#endif
+
+#if defined(ARCH_ARM_FEAT_SVE)
+VHE_E(ZCR_EL1, +sve) oOrw
+ZCR_EL2 +sve oOrw
+#endif
+
+#if defined(ARCH_ARM_FEAT_SME)
+VHE_E(SMCR_EL1, +sme) oOrw
+SMCR_EL2 +sme oOrw
+SMIDR_EL1 +sme r
+SMPRI_EL1 +sme
+SMPRIMAP_EL2 +sme
+SVCR +sme oOrw
+ID_AA64SMFR0_EL1 +sme r
+TPIDR2_EL0 +sme wR
+#endif
+
+#if defined(ARCH_ARM_FEAT_SVE) || defined(ARCH_ARM_FEAT_SME)
+ID_AA64ZFR0_EL1 +sve <uint64> R
 #endif

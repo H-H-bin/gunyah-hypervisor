@@ -1,0 +1,75 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define ffa_version bitfield<32> {
+	15:0		minor		uint16;
+	30:16		major		uint16;
+};
+
+define FFA_HYP_PARTITION_ID	constant uint16 = 0;
+
+// FFA function ID range
+define FFA_FUNCTION_ID_MIN	constant uint16 = 0x60;
+define FFA_FUNCTION_ID_MAX	constant uint16 = 0xff;
+
+// FFA function ID list
+define FFA_FUNCTION_FFA_ERROR	constant uint16 = 0x60;
+define FFA_FUNCTION_FFA_SUCCESS	constant uint16 = 0x61;
+define FFA_FUNCTION_FFA_INTERRUPT	constant uint16 = 0x62;
+define FFA_FUNCTION_FFA_VERSION	constant uint16 = 0x63;
+define FFA_FUNCTION_FFA_FEATURES	constant uint16 = 0x64;
+define FFA_FUNCTION_FFA_RX_RELEASE	constant uint16 = 0x65;
+define FFA_FUNCTION_FFA_RXTX_MAP	constant uint16 = 0x66;
+define FFA_FUNCTION_FFA_RXTX_UNMAP	constant uint16 = 0x67;
+define FFA_FUNCTION_FFA_PARTITION_INFO_GET	constant uint16 = 0x68;
+define FFA_FUNCTION_FFA_ID_GET	constant uint16 = 0x69;
+define FFA_FUNCTION_FFA_MSG_POLL	constant uint16 = 0x6a;
+define FFA_FUNCTION_FFA_MSG_WAIT	constant uint16 = 0x6b;
+define FFA_FUNCTION_FFA_YIELD	constant uint16 = 0x6c;
+define FFA_FUNCTION_FFA_RUN	constant uint16 = 0x6d;
+define FFA_FUNCTION_FFA_MSG_SEND	constant uint16 = 0x6e;
+define FFA_FUNCTION_FFA_MSG_SEND_DIRECT_REQ	constant uint16 = 0x6f;
+define FFA_FUNCTION_FFA_MSG_SEND_DIRECT_RESP	constant uint16 = 0x70;
+define FFA_FUNCTION_FFA_MEM_DONATE	constant uint16 = 0x71;
+define FFA_FUNCTION_FFA_MEM_LEND	constant uint16 = 0x72;
+define FFA_FUNCTION_FFA_MEM_SHARE	constant uint16 = 0x73;
+define FFA_FUNCTION_FFA_MEM_RETRIEVE_REQ	constant uint16 = 0x74;
+define FFA_FUNCTION_FFA_MEM_RETRIEVE_RESP	constant uint16 = 0x75;
+define FFA_FUNCTION_FFA_MEM_RELINQUISH	constant uint16 = 0x76;
+define FFA_FUNCTION_FFA_MEM_RECLAIM	constant uint16 = 0x77;
+define FFA_FUNCTION_FFA_MEM_FRAG_RX	constant uint16 = 0x7a;
+define FFA_FUNCTION_FFA_MEM_FRAG_TX	constant uint16 = 0x7b;
+define FFA_FUNCTION_FFA_NORMAL_WORLD_RESUME	constant uint16 = 0x7c;
+define FFA_FUNCTION_FFA_NOTIFICATION_BITMAP_CREATE	constant uint16 = 0x7d;
+define FFA_FUNCTION_FFA_NOTIFICATION_BITMAP_DESTROY	constant uint16 = 0x7e;
+define FFA_FUNCTION_FFA_NOTIFICATION_BIND	constant uint16 = 0x7f;
+define FFA_FUNCTION_FFA_NOTIFICATION_UNBIND	constant uint16 = 0x80;
+define FFA_FUNCTION_FFA_NOTIFICATION_SET	constant uint16 = 0x81;
+define FFA_FUNCTION_FFA_NOTIFICATION_GET	constant uint16 = 0x82;
+define FFA_FUNCTION_FFA_NOTIFICATION_INFO_GET	constant uint16 = 0x83;
+define FFA_FUNCTION_FFA_RX_ACQUIRE	constant uint16 = 0x84;
+define FFA_FUNCTION_FFA_SPM_ID_GET	constant uint16 = 0x85;
+define FFA_FUNCTION_FFA_MSG_SEND2	constant uint16 = 0x86;
+define FFA_FUNCTION_FFA_SECONDARY_EP_REGISTER	constant uint16 = 0x87;
+define FFA_FUNCTION_FFA_MEM_PERM_GET	constant uint16 = 0x88;
+define FFA_FUNCTION_FFA_MEM_PERM_SET	constant uint16 = 0x89;
+define FFA_FUNCTION_FFA_CONSOLE_LOG	constant uint16 = 0x8a;
+define FFA_FUNCTION_FFA_PARTITION_INFO_GET_REGS	constant uint16 = 0x8b;
+define FFA_FUNCTION_FFA_EL3_INTR_HANDLE	constant uint16 = 0x8c;
+define FFA_FUNCTION_FFA_MSG_SEND_DIRECT_REQ2	constant uint16 = 0x8d;
+define FFA_FUNCTION_FFA_MSG_SEND_DIRECT_RESP2	constant uint16 = 0x8e;
+
+define ffa_ret enumeration(explicit) {
+	SUCCESS = 0;
+	NOT_SUPPORTED = -1;
+	INVALID_PARAMETERS = -2;
+	NO_MEMORY = -3;
+	BUSY = -4;
+	INTERRUPTED = -5;
+	DENIED = -6;
+	RETRY = -7;
+	ABORTED = -8;
+	NO_DATA = -9;
+	NOT_READY = -10;
+};

@@ -1,4 +1,4 @@
-// © 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -14,6 +14,7 @@
 #include <globals.h>
 #include <platform_features.h>
 #include <thread.h>
+#include <vcpu.h>
 
 #include "event_handlers.h"
 
@@ -46,11 +47,12 @@ arm_fgt_handle_boot_cold_init(void)
 
 #if defined(INTERFACE_VCPU)
 void
-arm_fgt_handle_thread_load_state(void)
+arm_fgt_handle_vcpu_load_state(void)
 {
 	thread_t *thread = thread_get_self();
-	if (compiler_expected((thread->kind == THREAD_KIND_VCPU) &&
-			      arm_fgt_is_allowed())) {
+
+	if (compiler_expected(arm_fgt_is_allowed())) {
+		register_HFGRTR_EL2_write(thread->vcpu_regs_el2.hfgrtr_el2);
 		register_HFGWTR_EL2_write(thread->vcpu_regs_el2.hfgwtr_el2);
 	}
 }

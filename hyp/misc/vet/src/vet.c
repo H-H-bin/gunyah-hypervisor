@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -15,6 +15,7 @@
 #include <scheduler.h>
 #include <thread.h>
 #include <trace.h>
+#include <vcpu.h>
 #include <vet.h>
 
 #include "event_handlers.h"
@@ -61,10 +62,10 @@ vet_handle_thread_context_switch_pre(void)
 }
 
 void
-vet_handle_thread_load_state(void)
+vet_handle_vcpu_load_state(void)
 {
 	thread_t *vcpu = thread_get_self();
-	assert(vcpu != NULL);
+	assert_debug(vcpu != NULL);
 
 	if (vcpu_option_flags_get_trace_allowed(&vcpu->vcpu_options)) {
 		if (vcpu->vet_trace_buffer_enabled) {
@@ -84,7 +85,7 @@ vet_handle_vcpu_activate_thread(thread_t *thread, vcpu_option_flags_t options)
 {
 	bool ret;
 
-	assert(thread->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(thread));
 
 	const global_options_t *global_options = globals_get_options();
 	bool ete_present = global_options_get_ete_present(global_options);

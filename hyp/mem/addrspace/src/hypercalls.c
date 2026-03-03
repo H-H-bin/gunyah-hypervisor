@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -205,6 +205,7 @@ hypercall_addrspace_unmap(cap_id_t addrspace_cap, cap_id_t memextent_cap,
 	addrspace_map_flags_copy_private(&checked_flags, &map_flags);
 	addrspace_map_flags_copy_vmmio(&checked_flags, &map_flags);
 	addrspace_map_flags_copy_partial(&checked_flags, &map_flags);
+	addrspace_map_flags_copy_whole_extent(&checked_flags, &map_flags);
 	addrspace_map_flags_copy_no_sync(&checked_flags, &map_flags);
 
 	if (!addrspace_map_flags_is_clean(map_flags) ||
@@ -215,6 +216,13 @@ hypercall_addrspace_unmap(cap_id_t addrspace_cap, cap_id_t memextent_cap,
 
 	if (addrspace_map_flags_get_private(&map_flags) &&
 	    addrspace_map_flags_get_vmmio(&map_flags)) {
+		// These flags are mutually exclusive.
+		ret = ERROR_ARGUMENT_INVALID;
+		goto out;
+	}
+
+	if (addrspace_map_flags_get_partial(&map_flags) &&
+	    addrspace_map_flags_get_whole_extent(&map_flags)) {
 		// These flags are mutually exclusive.
 		ret = ERROR_ARGUMENT_INVALID;
 		goto out;
@@ -248,6 +256,9 @@ hypercall_addrspace_unmap(cap_id_t addrspace_cap, cap_id_t memextent_cap,
 	if (addrspace_map_flags_get_partial(&map_flags)) {
 		ret = memextent_unmap_partial(memextent, addrspace, vbase,
 					      offset, size, map_flags);
+	} else if (addrspace_map_flags_get_whole_extent(&map_flags)) {
+		ret = memextent_unmap_whole_extent(memextent, addrspace,
+						   map_flags);
 	} else {
 		ret = memextent_unmap(memextent, addrspace, vbase, map_flags);
 	}
@@ -367,13 +378,13 @@ hypercall_addrspace_modify_pages(cap_id_t addrspace_cap, vmaddr_t vbase,
 		goto out;
 	}
 
-	size_result_t modified_r =
+	size_result_t remaining_r =
 		addrspace_modify_pages(c.r, vbase, size, flags);
 
-	assert(modified_r.r <= size);
+	assert(remaining_r.r <= size);
 	ret = (hypercall_addrspace_modify_pages_result_t){
-		.error		= modified_r.e,
-		.size_remaining = size - modified_r.r,
+		.error		= remaining_r.e,
+		.size_remaining = remaining_r.r,
 	};
 
 	object_put_addrspace(c.r);
@@ -556,15 +567,32 @@ hypercall_addrspace_info_area_add_entry(
 	user_ptr_t data, addrspace_info_area_entry_data_info_t data_info)
 {
 	hypercall_addrspace_info_area_add_entry_result_t ret;
-	cspace_t *cspace = cspace_get_self();
 
-	addrspace_ptr_result_t o = cspace_lookup_addrspace(
-		cspace, addrspace_cap, CAP_RIGHTS_ADDRSPACE_ADD_INFO);
+	addrspace_ptr_result_t o =
+		cspace_lookup_addrspace(cspace_get_self(), addrspace_cap,
+					CAP_RIGHTS_ADDRSPACE_ADD_INFO);
 	if (compiler_unexpected(o.e != OK)) {
 		ret = (hypercall_addrspace_info_area_add_entry_result_t){
 			.error = o.e,
 		};
-		goto out;
+		goto out_lookup;
+	}
+	addrspace_t *addrspace = o.r;
+
+	switch (addrspace_info_area_entry_type_get_owner(&type)) {
+	case ADDRSPACE_INFO_AREA_ID_OWNER_ROOTVM:
+	case ADDRSPACE_INFO_AREA_ID_OWNER_RM:
+	case ADDRSPACE_INFO_AREA_ID_OWNER_QCRM:
+	case ADDRSPACE_INFO_AREA_ID_OWNER_DEV:
+		break;
+	case ADDRSPACE_INFO_AREA_ID_OWNER_INVALID:
+	case ADDRSPACE_INFO_AREA_ID_OWNER_GUNYAH:
+	default:
+		// Reserved use
+		ret = (hypercall_addrspace_info_area_add_entry_result_t){
+			.error = ERROR_ARGUMENT_INVALID,
+		};
+		goto out_ref;
 	}
 
 	size_t size = addrspace_info_area_entry_data_info_get_size(&data_info);
@@ -572,7 +600,7 @@ hypercall_addrspace_info_area_add_entry(
 		addrspace_info_area_entry_data_info_get_alignment(&data_info);
 
 	addrspace_alloc_info_area_result_t alloc_r =
-		addrspace_alloc_info_area(o.r, size, alignment, true);
+		addrspace_alloc_info_area(addrspace, size, alignment, true);
 	if (alloc_r.e != OK) {
 		ret = (hypercall_addrspace_info_area_add_entry_result_t){
 			.error = alloc_r.e,
@@ -597,7 +625,66 @@ hypercall_addrspace_info_area_add_entry(
 		.ipa   = alloc_r.ipa,
 	};
 out_ref:
-	object_put_addrspace(o.r);
+	object_put_addrspace(addrspace);
+out_lookup:
+	return ret;
+}
+
+hypercall_addrspace_info_area_get_entry_result_t
+hypercall_addrspace_info_area_get_entry(addrspace_info_area_entry_type_t type,
+					user_ptr_t buf, size_t buf_size)
+{
+	hypercall_addrspace_info_area_get_entry_result_t ret;
+
+	addrspace_t *addrspace = thread_get_self()->addrspace;
+
+	addrspace_info_area_id_owner_t owner =
+		addrspace_info_area_entry_type_get_owner(&type);
+	bool by_index = (uint32_t)owner == ADDRSPACE_INFO_AREA_ID_OWNER_INDEX;
+
+	addrspace_info_area_entry_result_t entry_r;
+
+	if (by_index) {
+		entry_r = addrspace_info_area_get_by_index(
+			addrspace,
+			addrspace_info_area_entry_type_get_id(&type));
+	} else {
+		entry_r = addrspace_info_area_get_by_type(addrspace, type);
+	}
+	if (entry_r.e != OK) {
+		ret = (hypercall_addrspace_info_area_get_entry_result_t){
+			.error = entry_r.e
+		};
+		goto out;
+	}
+	addrspace_info_area_entry_t entry = entry_r.r;
+
+	uintptr_t data =
+		addrspace_info_area_get_data_addr(addrspace, entry.offset);
+
+	if (buf_size < entry.size) {
+		ret = (hypercall_addrspace_info_area_get_entry_result_t){
+			.error = ERROR_ARGUMENT_SIZE, .size = entry.size
+		};
+		goto out;
+	}
+
+	error_t err = useraccess_copy_to_guest_va((gvaddr_t)buf, buf_size,
+						  (void *)data, entry.size,
+						  false)
+			      .e;
+	if (err != OK) {
+		ret = (hypercall_addrspace_info_area_get_entry_result_t){
+			.error = err, .size = entry.size
+		};
+		goto out;
+	}
+
+	ret = (hypercall_addrspace_info_area_get_entry_result_t){
+		.error = OK,
+		.size  = entry.size,
+		.type  = entry.type,
+	};
 out:
 	return ret;
 }

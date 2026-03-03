@@ -1,0 +1,9 @@
+
+interface selector_event_with_priority_interface
+
+
+selector_event selector_event_with_priority_interface_event
+	selector action: hwirq_action_t
+	param param0: uint32_t
+		param param1: uint32_t
+	return: error_t = ERROR_ARGUMENT_INVALID

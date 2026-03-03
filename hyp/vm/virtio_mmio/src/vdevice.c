@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -134,20 +134,22 @@ out:
 }
 
 static void
-virtio_mmio_write_interrupt_ack(virtio_mmio_t *virtio_mmio, uint32_t val)
+virtio_mmio_write_interrupt_ack(virtio_mmio_t	  *virtio_mmio,
+				virtio_interrupt_t clear_interrupt_status)
 {
 #if defined(PLATFORM_NO_DEVICE_ATTR_ATOMIC_UPDATE) &&                          \
 	PLATFORM_NO_DEVICE_ATTR_ATOMIC_UPDATE
 	spinlock_acquire(&virtio_mmio->interrupt_lock);
-	uint32_t interrupt_status =
+	virtio_interrupt_t interrupt_status =
 		atomic_load_relaxed(&virtio_mmio->regs->interrupt_status);
-	interrupt_status &= ~val;
 	atomic_store_relaxed(&virtio_mmio->regs->interrupt_status,
-			     interrupt_status);
+			     virtio_interrupt_difference(
+				     interrupt_status, clear_interrupt_status));
 	spinlock_release(&virtio_mmio->interrupt_lock);
 #else
-	(void)atomic_fetch_and_explicit(&virtio_mmio->regs->interrupt_status,
-					~val, memory_order_relaxed);
+	(void)virtio_interrupt_atomic_difference(
+		&virtio_mmio->regs->interrupt_status, clear_interrupt_status,
+		memory_order_relaxed);
 #endif
 }
 
@@ -166,10 +168,12 @@ virtio_mmio_write_status(virtio_mmio_t *virtio_mmio, uint32_t val)
 #if defined(PLATFORM_NO_DEVICE_ATTR_ATOMIC_UPDATE) &&                          \
 	PLATFORM_NO_DEVICE_ATTR_ATOMIC_UPDATE
 		spinlock_acquire(&virtio_mmio->interrupt_lock);
-		atomic_store_relaxed(&virtio_mmio->regs->interrupt_status, 0U);
+		atomic_store_relaxed(&virtio_mmio->regs->interrupt_status,
+				     virtio_interrupt_default());
 		spinlock_release(&virtio_mmio->interrupt_lock);
 #else
-		atomic_store_relaxed(&virtio_mmio->regs->interrupt_status, 0U);
+		atomic_store_relaxed(&virtio_mmio->regs->interrupt_status,
+				     virtio_interrupt_default());
 #endif
 		(void)virq_clear(&virtio_mmio->virq_source);
 	}
@@ -177,9 +181,10 @@ virtio_mmio_write_status(virtio_mmio_t *virtio_mmio, uint32_t val)
 	error_t err = virtio_write_status(virtio, new_status);
 
 	if (err == OK) {
-		// Read back the updated status. Note that this might block.
-		atomic_store_relaxed(&virtio_mmio->regs->status,
-				     virtio_read_status(virtio));
+		// Read back the updated status. This is done to ensure that
+		// the write blocks until the reset is complete, if blocking
+		// resets are enabled.
+		(void)virtio_read_status(virtio);
 	} else {
 		rcu_read_finish();
 	}
@@ -303,7 +308,8 @@ virtio_mmio_vdevice_write(virtio_mmio_t *virtio_mmio, size_t offset,
 		break;
 
 	case offsetof(virtio_mmio_regs_t, interrupt_ack):
-		virtio_mmio_write_interrupt_ack(virtio_mmio, val);
+		virtio_mmio_write_interrupt_ack(
+			virtio_mmio, virtio_interrupt_cast((uint8_t)val));
 		ret = OK;
 		break;
 
@@ -311,7 +317,7 @@ virtio_mmio_vdevice_write(virtio_mmio_t *virtio_mmio, size_t offset,
 		ret = virtio_mmio_write_status(virtio_mmio, val);
 		// The status write might have blocked, and has therefore
 		// dropped the RCU critical section. Re-acquire it.
-		// FIXME:
+		// FIXME: QC Gunyah issue #252
 		rcu_read_start();
 		break;
 
@@ -336,7 +342,7 @@ virtio_mmio_vdevice_write(virtio_mmio_t *virtio_mmio, size_t offset,
 			// The config write might have blocked, and has
 			// therefore dropped the RCU critical section.
 			// Re-acquire it.
-			// FIXME:
+			// FIXME: QC Gunyah issue #252
 			rcu_read_start();
 		} else {
 			ret = ERROR_UNIMPLEMENTED;

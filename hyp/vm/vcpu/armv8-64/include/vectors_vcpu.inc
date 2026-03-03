@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -12,11 +12,7 @@
 // Define symbols for pointer auth offsets so we can access them from macros
 .equ	vcpu_pauth_tp_pauth_ofs, \
 	OFS_THREAD_VCPU_REGS_PAUTH - OFS_THREAD_VCPU_REGS_GPR
-.equ	pauth_DA_ofs, OFS_AARCH64_PAUTH_KEYS_DA
-.equ	pauth_DB_ofs, OFS_AARCH64_PAUTH_KEYS_DB
 .equ	pauth_IA_ofs, OFS_AARCH64_PAUTH_KEYS_IA
-.equ	pauth_IB_ofs, OFS_AARCH64_PAUTH_KEYS_IB
-.equ	pauth_GA_ofs, OFS_AARCH64_PAUTH_KEYS_GA
 
 // Macro for saving an EL1 key and loading the corresponding EL2 key
 .macro  vcpu_pauth_entry_key k:req, tp:req, kp:req, \
@@ -39,7 +35,7 @@
 
 .macro  vcpu_pauth_entry tp:req, kp:req, tl:req, th:req, kl:req, kh:req
 #if defined(ARCH_ARM_FEAT_PAuth)
-	thread_get_self	\tp, offset=OFS_THREAD_VCPU_REGS_GPR
+	thread_get_fast	\tp, \kp, offset=OFS_THREAD_VCPU_REGS_GPR
 	vcpu_pauth_entry_thread \tp, \kp, \tl, \th, \kl, \kh
 #endif
 .endm
@@ -47,18 +43,14 @@
 .macro  vcpu_pauth_entry_thread tp:req, kp:req, tl:req, th:req, kl:req, kh:req
 #if defined(ARCH_ARM_FEAT_PAuth)
 	adrl	\kp, aarch64_pauth_keys
-	vcpu_pauth_entry_key DA, \tp, \kp, \tl, \th, \kl, \kh
-	vcpu_pauth_entry_key DB, \tp, \kp, \tl, \th, \kl, \kh
 	vcpu_pauth_entry_key IA, \tp, \kp, \tl, \th, \kl, \kh
-	vcpu_pauth_entry_key IB, \tp, \kp, \tl, \th, \kl, \kh
-	vcpu_pauth_entry_key GA, \tp, \kp, \tl, \th, \kl, \kh
 	isb
 #endif
 .endm
 
 .macro  vcpu_pauth_exit tp:req, tl:req, th:req, spsr:req, tmp:req
 #if defined(ARCH_ARM_FEAT_PAuth)
-	thread_get_self	\tp, offset=OFS_THREAD_VCPU_REGS_GPR
+	thread_get_fast	\tp, \tl, offset=OFS_THREAD_VCPU_REGS_GPR
 	vcpu_pauth_exit_thread \tp, \tl, \th, \spsr, \tmp
 #endif
 .endm
@@ -69,22 +61,18 @@
 	// to check that we are actually returning to userspace here: either
 	// SPSR_EL2.M[4]=1 (for 32-bit mode) or SPSR_EL2.M[3]=0 (for EL1 or
 	// EL0), i.e. SPSR_EL2[4:3] != 0b01.
-	ubfx	\tmp, \spsr, 3, 2
+	and	\tmp, \spsr, 0x18
 
-	vcpu_pauth_exit_key DA, \tp, \tl, \th
-	vcpu_pauth_exit_key DB, \tp, \tl, \th
 	vcpu_pauth_exit_key IA, \tp, \tl, \th
-	vcpu_pauth_exit_key IB, \tp, \tl, \th
 
-	sub	\tmp, \tmp, 1
+	eor	\tmp, \tmp, 0x8  // invert bit 3, SPSR_EL2[4:3], ie '01' -> 00
 
-	vcpu_pauth_exit_key GA, \tp, \tl, \th
-
-#ifndef HYPVM_WITH_COVERAGE
-	cbz     \tmp, vcpu_pauth_exit_failed
+#if !defined(ARCH_AARCH64_CODE_MODEL_SMALL) || !ARCH_AARCH64_CODE_MODEL_SMALL
+	cbz	\tmp, vcpu_pauth_exit_failed
 #else
-	cbnz \tmp,1f;
-	b vcpu_pauth_exit_failed; 1:
+	cbnz	\tmp, .Ln\@
+	b	vcpu_pauth_exit_failed
+.Ln\@:
 #endif
 #endif
 .endm
@@ -94,17 +82,15 @@
 
 	// SP (SP_EL2) points to the kernel stack
 	stp	x0, x1, [sp, -16]!		// Save X0 & X1
-	thread_get_self	x0, offset=OFS_THREAD_VCPU_REGS_GPR
+	thread_get_fast x0, x1, OFS_THREAD_VCPU_REGS_GPR
 
 	stp	x2, x3, [x0, OFS_VCPU_GPR_X(2)]
-	mrs	x1, SPSR_EL2
 	stp	x4, x5, [x0, OFS_VCPU_GPR_X(4)]
 	stp	x6, x7, [x0, OFS_VCPU_GPR_X(6)]
 	clear_guest_registers "4,5"
 	ldp	x2, x3, [sp], #16		// Recover X0 & X1
 	stp	x8, x9, [x0, OFS_VCPU_GPR_X(8)]
 	clear_guest_registers "6,7"
-	str	x1, [x0, OFS_VCPU_GPR_SPSR_EL2]
 	stp	x10, x11, [x0, OFS_VCPU_GPR_X(10)]
 	clear_guest_registers "8,9"
 	stp	x12, x13, [x0, OFS_VCPU_GPR_X(12)]
@@ -112,9 +98,11 @@
 	clear_guest_registers "10,11"
 	stp	x2, x3, [x0, OFS_VCPU_GPR_X(0)]
 	clear_guest_registers "12,13"
-	clear_guest_registers "2,3"
+	mrs	x2, SPSR_EL2
 	stp	x30, x1, [x0, OFS_VCPU_GPR_X(30)]
-	clear_guest_registers "1"
+	clear_guest_registers "3"
+	str	x2, [x0, OFS_VCPU_GPR_SPSR_EL2]
+	clear_guest_registers "1, 2"
 .endm
 
 .macro	save_guest_context_vcpu_zero_14_29_irq
@@ -140,7 +128,7 @@
 .macro	save_guest_exception_context_zero_1_29
 	// SP (SP_EL2) points to the kernel stack
 	stp	x0, x1, [sp, -16]!		// Save X0 & X1
-	thread_get_self	x0, offset=OFS_THREAD_VCPU_REGS_GPR
+	thread_get_fast x0, x1, OFS_THREAD_VCPU_REGS_GPR
 
 	stp	x2, x3, [x0, OFS_VCPU_GPR_X(2)]
 	mrs	x1, SPSR_EL2

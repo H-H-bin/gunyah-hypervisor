@@ -1,4 +1,4 @@
-// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -15,17 +15,6 @@
 #include <preempt.h>
 #include <trace.h>
 #include <util.h>
-
-// FIXME 
-#if !defined(MODULE_PLATFORM_SOC_QCOM)
-// Platforms may override this with their own implementation
-core_id_t WEAK
-platform_cpu_get_coreid(MIDR_EL1_t midr)
-{
-	(void)midr;
-	return CORE_ID_UNKNOWN;
-}
-#endif
 
 static core_id_t
 get_core_id(uint16_t partnum, uint8_t variant, uint8_t revision)
@@ -113,9 +102,11 @@ get_current_core_id(void) REQUIRE_PREEMPT_DISABLED
 		coreid = CORE_ID_UNKNOWN;
 	}
 
+#if defined(PLATFORM_HAS_CPU_GET_COREID) && PLATFORM_HAS_CPU_GET_COREID
 	if (coreid == CORE_ID_UNKNOWN) {
 		coreid = platform_cpu_get_coreid(midr);
 	}
+#endif
 
 #if defined(VERBOSE) && VERBOSE
 	if (coreid == CORE_ID_UNKNOWN) {

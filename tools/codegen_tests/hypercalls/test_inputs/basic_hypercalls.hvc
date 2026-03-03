@@ -1,0 +1,24 @@
+// Hypercall with single input
+define test_hypercall_1 hypercall {
+	call_num	0x0;
+	in0		input bitfield interrupt_control_register;
+	error		output enumeration error_code;
+};
+
+// Hypercall with multiple inputs
+define test_hypercall_2 hypercall {
+	call_num	0x1;
+	in0		input uregister;
+	in1		input type count_t;
+	in2		input bitfield interrupt_control_register;
+	error		output enumeration error_code;
+};
+
+// Hypercall with multiple outputs
+define test_hypercall_3 hypercall {
+	call_num	0x2;
+	in0		input uregister;
+	out0		output uregister;
+	out1		output type count_t;
+	error		output enumeration error_code;
+};

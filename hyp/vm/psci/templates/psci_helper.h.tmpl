@@ -1,0 +1,75 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+// returns vpm_suspend_state for level passed
+static inline uint64_t
+psci_get_level_state(vpm_group_suspend_state_t* vm_state, index_t level) {
+	uint64_t lpm_state = 0U;
+	switch (level) {
+#for lr in range(0, $PLATFORM_MAX_HIERARCHY+1)
+	case ${lr}U:
+		lpm_state = vpm_group_suspend_state_get_level_${lr}_state(vm_state);
+		break;
+#end for
+	default:
+		panic("Out-of-range request");
+		break;
+	}
+	return lpm_state;
+}
+
+// returns node counts for level passed
+static inline index_t
+psci_get_level_node_count(index_t level) {
+	index_t node_counts = 0U;
+	switch (level) {
+#for lr in range(0, $PLATFORM_MAX_HIERARCHY+1)
+	case ${lr}U:
+		node_counts = PLATFORM_PSCI_L${lr}_COUNTS;
+		break;
+#end for
+	default:
+		panic("Out-of-range request");
+		break;
+	}
+	return node_counts;
+}
+
+// updates state bits and mask for level passed
+static inline void
+psci_get_level_bits_mask(index_t level, index_t* state_bits, index_t* state_mask) {
+	switch (level) {
+#for lr in range(0, $PLATFORM_MAX_HIERARCHY+1)
+	case ${lr}U:
+		*state_mask = PLATFORM_PSCI_L${lr}_MASK;
+		*state_bits = PLATFORM_PSCI_L${lr}_STATE_BITS;
+		break;
+#end for
+	default:
+		panic("Out-of-range request");
+		break;
+	}
+	return;
+}
+
+// set vpm_suspend_state for level/node idx/value passed
+static inline void
+psci_set_level_state(vpm_group_suspend_state_t *vm_state, index_t level, index_t idx, index_t val) {
+	uint64_t lpm_state = 0U;
+	switch (level) {
+#for lr in range(0, $PLATFORM_MAX_HIERARCHY+1)
+	case ${lr}U:
+		lpm_state = vpm_group_suspend_state_get_level_${lr}_state(vm_state);
+
+		lpm_state &= ~((uint64_t)PLATFORM_PSCI_L${lr}_MASK << (idx * PLATFORM_PSCI_L${lr}_STATE_BITS));
+		lpm_state |= (uint64_t)val << (idx * PLATFORM_PSCI_L${lr}_STATE_BITS);
+
+		vpm_group_suspend_state_set_level_${lr}_state(vm_state, lpm_state);
+		break;
+#end for
+	default:
+		panic("Out-of-range request");
+		break;
+	}
+}

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 #
 # 2019 Cog Systems Pty Ltd.
 #
@@ -13,6 +13,7 @@ import logging
 import subprocess
 import inspect
 import pickle
+import shlex
 
 
 if __name__ == '__main__' and __package__ is None:
@@ -130,7 +131,7 @@ def main():
 
         result = str(template)
         if options.formatter:
-            ret = subprocess.run([options.formatter],
+            ret = subprocess.run(shlex.split(options.formatter),
                                  input=result.encode("utf-8"),
                                  stdout=subprocess.PIPE)
             result = ret.stdout.decode("utf-8")

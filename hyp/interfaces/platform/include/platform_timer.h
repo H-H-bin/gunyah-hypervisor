@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -15,8 +15,14 @@ platform_timer_set_timeout(ticks_t timeout) REQUIRE_PREEMPT_DISABLED;
 uint32_t
 platform_timer_get_frequency(void);
 
+// Unsynchronized ticks value, might be read speculatively or out of order
 ticks_t
 platform_timer_get_current_ticks(void);
+
+// Synchronized ticks value, not speculated or read out of order with respect
+// to multiple calls
+uint64_t
+platform_timer_get_current_ticks_sync(void);
 
 ticks_t
 platform_timer_convert_ns_to_ticks(nanoseconds_t ns);

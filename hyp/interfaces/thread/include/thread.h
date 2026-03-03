@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -41,9 +41,10 @@ thread_switch_to(thread_t *thread, ticks_t schedtime) REQUIRE_PREEMPT_DISABLED;
 // such a guarantee is required, call thread_join() on it afterwards.
 //
 // The caller must either be the specified thread, or hold a reference to the
-// specified thread.
+// specified thread. The scheduler lock may not be held when calling
+// thread_kill.
 error_t
-thread_kill(thread_t *thread);
+thread_kill(thread_t *thread) EXCLUDE_SCHEDULER_LOCK(thread);
 
 // Return true if the specified thread has had thread_kill() called on it.
 //
@@ -137,5 +138,33 @@ thread_entry_from_user(thread_entry_reason_t reason) RELEASE_PREEMPT_DISABLED;
 // last entry reason for the calling thread. If the calling thread is newly
 // created and has never exited before, the reason must be NONE.
 void
-thread_exit_to_user(thread_entry_reason_t reason)
-	ACQUIRE_PREEMPT_DISABLED EXCLUDE_PREEMPT_DISABLED;
+thread_exit_to_user(thread_entry_reason_t reason) ACQUIRE_PREEMPT_DISABLED
+EXCLUDE_PREEMPT_DISABLED;
+
+// Get a thread's kind type.
+static inline thread_kind_t
+thread_kind(const thread_t *thread)
+{
+	return thread->kind;
+}
+
+// Get the current thread's kind type.
+static inline thread_kind_t
+thread_kind_self(void)
+{
+	return thread_kind(thread_get_self());
+}
+
+// Check a thread's kind type.
+static inline bool
+thread_is_kind(const thread_t *thread, thread_kind_t kind)
+{
+	return thread_kind(thread) == kind;
+}
+
+// Check current thread's kind type.
+static inline bool
+thread_is_kind_self(thread_kind_t kind)
+{
+	return thread_kind(thread_get_self()) == kind;
+}

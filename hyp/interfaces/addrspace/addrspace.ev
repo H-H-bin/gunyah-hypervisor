@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -25,6 +25,11 @@ handled_event addrspace_unmap
 	param vbase: vmaddr_t
 	param size: size_t
 	param phys: paddr_t
+	param no_sync_unmap: bool
+	return: error_t = ERROR_UNIMPLEMENTED
+
+handled_event addrspace_sync
+	param addrspace: addrspace_t *
 	return: error_t = ERROR_UNIMPLEMENTED
 
 handled_event addrspace_attach_vdevice

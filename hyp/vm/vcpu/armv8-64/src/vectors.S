@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -15,7 +15,7 @@
 #include "vectors_el2.inc"
 #include "vectors_vcpu.inc"
 
-.macro hypercall_decode_native el:req, ec:req
+.macro hypercall_decode_native ec:req, exc_label:req
 	// Extract the exception class
 	mrs	x18, ESR_EL2
 	lsr	w30, w18, 26
@@ -29,20 +29,20 @@
 	// Adjust in regards to the base hypercall number
 	sub	x18, x18, HYPERCALL_BASE
 
-#ifndef HYPVM_WITH_COVERAGE
-	b.ne    LOCAL(\el\()_non_hypercall)
+#if !defined(ARCH_AARCH64_CODE_MODEL_SMALL) || !ARCH_AARCH64_CODE_MODEL_SMALL
+	b.ne    \exc_label
 #else
-	b.eq 1f; b    LOCAL(\el\()_non_hypercall); 1:
+	b.eq 1f; b    \exc_label; 1:
 #endif
 	// Is it a valid hypercall?
 	cmp	x18, HYPERCALL_NUM
-#ifndef HYPVM_WITH_COVERAGE
-	b.hs	LOCAL(\el\()_non_hypercall)
+#if !defined(ARCH_AARCH64_CODE_MODEL_SMALL) || !ARCH_AARCH64_CODE_MODEL_SMALL
+	b.hs	\exc_label
 #else
-	b.lo 2f; b    LOCAL(\el\()_non_hypercall); 2:
+	b.lo 2f; b    \exc_label; 2:
 #endif
 
-	// FIXME:
+	// FIXME: QC Gunyah issue #95
 	// Temporarily preserve x8 for backwards compatibility.
 	stp	x8, x19, [sp, #-16]!
 
@@ -54,11 +54,11 @@
 	// passed as-is to the C code to prevent EL1 targeting EL2 gadgets.
 	// Note: x19 saved above
 	stp	x20, x21, [sp, #-16]!
-#ifndef HYPVM_WITH_COVERAGE
+#if !defined(ARCH_AARCH64_CODE_MODEL_SMALL) || !ARCH_AARCH64_CODE_MODEL_SMALL
 	clear_guest_registers "15,16,17"
 #endif
 	stp	x22, x23, [sp, #-16]!
-#ifndef HYPVM_WITH_COVERAGE
+#if !defined(ARCH_AARCH64_CODE_MODEL_SMALL) || !ARCH_AARCH64_CODE_MODEL_SMALL
 	clear_guest_registers "8,19"
 #endif
 	stp	x24, x25, [sp, #-16]!
@@ -71,8 +71,6 @@
 
 	b	hypercall_64_entry
 #endif
-
-local \el\()_non_hypercall:
 .endm
 
 	.section	.text.vectors
@@ -95,14 +93,7 @@ vector vector_guest64_sync
 
 	stp	x18, x30, [sp, #-16]!
 
-	hypercall_decode_native aarch64, ENUM_ESR_EC_HVC64_EL2
-
-	// Not a hypercall, jump to the trap handler
-	// Pop the original values of X18 and X30 as we need to save them in
-	// the exception context
-	ldp	x18, x30, [sp], #16
-
-	b	exception_64_entry
+	hypercall_decode_native ENUM_ESR_EC_HVC64_EL2, exception_64_entry
 vector_end vector_guest64_sync
 
 vector vector_guest64_irq
@@ -133,14 +124,7 @@ vector vector_guest32_sync
 
 	stp	x18, x30, [sp, #-16]!
 
-	hypercall_decode_native aarch32, ENUM_ESR_EC_HVC32_EL2
-
-	// Not a hypercall, jump to the trap handler
-	// Pop the original values of X18 and X30 as we need to save them in
-	// the exception context
-	ldp	x18, x30, [sp], #16
-
-	b	exception_32_entry
+	hypercall_decode_native ENUM_ESR_EC_HVC32_EL2, exception_32_entry
 vector_end vector_guest32_sync
 
 vector vector_guest32_irq
@@ -199,7 +183,7 @@ function_end vector_guest32_panic
 //      x9, x10, x11    - not zeroed/overwritten yet
 //      x24..x29        - need to be zeroed
 function hypercall_64_entry local, align=(1 << CPU_L1D_LINE_BITS)
-#ifdef HYPVM_WITH_COVERAGE
+#if defined(ARCH_AARCH64_CODE_MODEL_SMALL) && ARCH_AARCH64_CODE_MODEL_SMALL
 	clear_guest_registers "20,21"
 	clear_guest_registers "22,23"
 #endif
@@ -211,7 +195,7 @@ function hypercall_64_entry local, align=(1 << CPU_L1D_LINE_BITS)
 	clear_guest_registers "25,26,27"
 
 	// Get the hypercall table handler base address.
-#ifndef HYPVM_WITH_COVERAGE
+#if !defined(ARCH_AARCH64_CODE_MODEL_SMALL) || !ARCH_AARCH64_CODE_MODEL_SMALL
 	adr	x9, hypercall_table
 #else
 	adrl	x9, hypercall_table
@@ -237,6 +221,10 @@ function hypercall_64_entry local, align=(1 << CPU_L1D_LINE_BITS)
 function_end hypercall_64_entry
 
 function exception_64_entry local, align=(1 << CPU_L1D_LINE_BITS)
+	// Pop the original values of X18 and X30 as we need to save them in
+	// the exception context
+	ldp	x18, x30, [sp], #16
+
 	save_guest_exception_context_zero_1_29
 
 	mov	x0, 1		// 1: AArch64
@@ -260,6 +248,10 @@ function_end irq_64_entry
 
 #if ARCH_AARCH64_32BIT_EL1
 function exception_32_entry local, align=(1 << CPU_L1D_LINE_BITS)
+	// Pop the original values of X18 and X30 as we need to save them in
+	// the exception context
+	ldp	x18, x30, [sp], #16
+
 	save_guest_exception_context_zero_1_29
 
 	mov	x0, 0		// 0: AArch32

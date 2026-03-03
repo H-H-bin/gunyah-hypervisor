@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -19,6 +19,7 @@
 #include <partition.h>
 #include <partition_alloc.h>
 #include <partition_init.h>
+#include <platform_cpu.h>
 #include <platform_mem.h>
 #include <qcbor.h>
 #include <scheduler.h>
@@ -26,6 +27,10 @@
 #include <thread.h>
 #include <util.h>
 #include <vcpu.h>
+
+#if defined(PLATFORM_ENABLE_SYSTEM_SUSPEND) && PLATFORM_ENABLE_SYSTEM_SUSPEND
+#include "vpm_base.h"
+#endif // PLATFORM_ENABLE_SYSTEM_SUSPEND
 
 #include <events/object.h>
 #include <events/rootvm.h>
@@ -38,7 +43,7 @@
 
 // FIXME: remove when we have a device tree where to read it from
 // dummy value.
-#define MAX_CAPS 2048
+#define MAX_CAPS 4096
 
 static void
 copy_rm_env_data_to_rootvm_mem(hyp_env_data_t		hyp_env,
@@ -168,8 +173,16 @@ rootvm_init(void)
 	static_assert(ROOTVM_PRIORITY <= VCPU_MAX_PRIORITY,
 		      "unexpected scheduler configuration");
 
+	cpu_index_t boot_cpu_idx = cpulocal_get_index();
+
+#if defined(PLATFORM_ROOTVM_AFFINITY) && !defined(ROOTVM_ALWAYS_ON_BOOT_CORE)
+	if (platform_cpu_functional(PLATFORM_ROOTVM_AFFINITY)) {
+		boot_cpu_idx = PLATFORM_ROOTVM_AFFINITY;
+	}
+#endif
+
 	thread_create_t params = {
-		.scheduler_affinity	  = cpulocal_get_index(),
+		.scheduler_affinity	  = boot_cpu_idx,
 		.scheduler_affinity_valid = true,
 		.scheduler_priority	  = ROOTVM_PRIORITY,
 		.scheduler_priority_valid = true,
@@ -307,12 +320,14 @@ rootvm_init(void)
 	trigger_rootvm_init_late_event(root_partition, root_thread, root_cspace,
 				       &hyp_env);
 
+	vcpu_power_req_flags_t power_flags = vcpu_power_req_flags_default();
+
 	scheduler_lock_nopreempt(root_thread);
 	// FIXME: eventually pass as dtb, for now the rm_env_data ipa is passed
 	// directly.
 	bool_result_t power_ret =
 		vcpu_poweron(root_thread, vmaddr_result_ok(hyp_env.entry_ipa),
-			     register_result_ok(hyp_env.env_ipa));
+			     register_result_ok(hyp_env.env_ipa), power_flags);
 	if (power_ret.e != OK) {
 		panic("Error vcpu poweron");
 	}

@@ -1,5 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
-// All Rights Reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -29,6 +28,20 @@
 // The module to trap and emulate the read accesses to the cluster register. We
 // currently only emulate IMP_CLUSTERIDR_EL1 and treat the rest as RAZ.
 
+// Before reading any cluster registers we need to apply the DSU SCLK
+// gating erratum (2,313,941) workaround, which is executing a dummy
+// cache maintenance operation instruction immediately prior to
+// accessing the register.
+static inline void
+platform_dsu_apply_sclk_gating_erratum_workaround(void) REQUIRE_PREEMPT_DISABLED
+{
+	register_t dummy = 0;
+
+	assert_preempt_disabled();
+	__asm__ volatile("DC CIVAC, %[VA]; "
+			 : "+m"(asm_ordering)
+			 : [VA] "r"(&dummy));
+}
 
 static inline IMP_CLUSTERIDR_EL1_t
 register_CLUSTERIDR_EL1_read(void)
@@ -36,6 +49,7 @@ register_CLUSTERIDR_EL1_read(void)
 	IMP_CLUSTERIDR_EL1_t val;
 
 	preempt_disable();
+	platform_dsu_apply_sclk_gating_erratum_workaround();
 	val = register_IMP_CLUSTERIDR_EL1_read_ordered(&asm_ordering);
 	preempt_enable();
 

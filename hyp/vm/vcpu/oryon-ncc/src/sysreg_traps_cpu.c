@@ -1,0 +1,32 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include <assert.h>
+#include <hyptypes.h>
+
+#include <qcbor.h>
+#include <thread.h>
+#include <vcpu.h>
+
+#include <asm/system_registers.h>
+// #include <asm/system_registers_cpu.h>
+
+#include "event_handlers.h"
+
+// Oryon CPUs only implement ACTLR_EL3. There are no additional implementation
+// specific EL1 registers to emulate.
+
+vcpu_trap_result_t
+sysreg_read_cpu(ESR_EL2_ISS_MSR_MRS_t iss)
+{
+	(void)iss;
+	return VCPU_TRAP_RESULT_UNHANDLED;
+}
+
+vcpu_trap_result_t
+sysreg_write_cpu(ESR_EL2_ISS_MSR_MRS_t iss)
+{
+	(void)iss;
+	return VCPU_TRAP_RESULT_UNHANDLED;
+}

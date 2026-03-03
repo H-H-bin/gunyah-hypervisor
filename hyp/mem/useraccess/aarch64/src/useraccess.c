@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -26,28 +26,30 @@ useraccess_copy_from_to_translated_pa(addrspace_va_lookup_t lookup,
 				      bool from_guest, void *hyp_buf,
 				      size_t remaining)
 {
-	void *va = partition_phys_map(lookup.phys, lookup.size);
+	size_t access_size = util_min(lookup.size, remaining);
+	void  *hyp_va	   = partition_phys_map(lookup.phys, access_size);
 
-	partition_phys_access_enable(va);
+	partition_phys_access_enable(hyp_va);
 
 	if (compiler_unexpected(from_guest && !lookup.coherent)) {
-		cache_clean_range(va, util_min(remaining, lookup.size));
+		cache_clean_range(hyp_va, access_size);
 	}
 
 	size_t copied_size;
 	if (from_guest) {
-		copied_size = memscpy(hyp_buf, remaining, va, lookup.size);
+		copied_size = memscpy(hyp_buf, remaining, hyp_va, access_size);
 	} else {
-		copied_size = memscpy(va, lookup.size, hyp_buf, remaining);
+		copied_size = memscpy(hyp_va, access_size, hyp_buf, remaining);
 	}
+	assert_debug((copied_size > 0U) && (copied_size <= access_size));
 
 	if (compiler_unexpected(!from_guest && !lookup.coherent)) {
-		cache_clean_invalidate_range(va, copied_size);
+		cache_clean_invalidate_range(hyp_va, copied_size);
 	}
 
-	partition_phys_access_disable(va);
+	partition_phys_access_disable(hyp_va);
 
-	partition_phys_unmap(va, lookup.phys, lookup.size);
+	partition_phys_unmap(hyp_va, lookup.phys, access_size);
 
 	return copied_size;
 }
@@ -178,35 +180,38 @@ useraccess_copy_from_to_guest_ipa(addrspace_t *addrspace, vmaddr_t ipa,
 		mapped_base += mapping_offset;
 		mapped_size -= mapping_offset;
 
-		uint8_t *vm_addr = partition_phys_map(mapped_base, mapped_size);
+		size_t hyp_size = size - offset;
+
+		size_t	 access_size = util_min(mapped_size, hyp_size);
+		uint8_t *vm_addr = partition_phys_map(mapped_base, access_size);
 		partition_phys_access_enable(vm_addr);
 
-		uint8_t *hyp_va	  = (uint8_t *)hvaddr + offset;
-		size_t	 hyp_size = size - offset;
-		size_t	 copied_size;
+		uint8_t *hyp_va = (uint8_t *)hvaddr + offset;
 
+		size_t copied_size;
 		if (from_guest) {
 			if (force_coherent ||
 			    (mapped_memtype != PGTABLE_VM_MEMTYPE_NORMAL_WB)) {
-				cache_clean_invalidate_range(
-					(void *)vm_addr,
-					util_min(mapped_size, hyp_size));
+				cache_clean_invalidate_range((void *)vm_addr,
+							     access_size);
 			}
 
 			copied_size =
-				memscpy(hyp_va, hyp_size, vm_addr, mapped_size);
+				memscpy(hyp_va, hyp_size, vm_addr, access_size);
 		} else {
 			copied_size =
-				memscpy(vm_addr, mapped_size, hyp_va, hyp_size);
+				memscpy(vm_addr, access_size, hyp_va, hyp_size);
 
 			if (force_coherent ||
 			    (mapped_memtype != PGTABLE_VM_MEMTYPE_NORMAL_WB)) {
 				cache_clean_range((void *)vm_addr, copied_size);
 			}
 		}
+		assert_debug((copied_size > 0U) &&
+			     (copied_size <= access_size));
 
 		partition_phys_access_disable(vm_addr);
-		partition_phys_unmap(vm_addr, mapped_base, mapped_size);
+		partition_phys_unmap(vm_addr, mapped_base, access_size);
 
 		rcu_read_finish();
 

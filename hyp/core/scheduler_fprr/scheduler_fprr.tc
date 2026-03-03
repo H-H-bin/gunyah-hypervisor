@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -17,8 +17,13 @@ define SCHEDULER_MAX_TIMESLICE public constant type nanoseconds_t =
 	100000000; // 100ms
 define SCHEDULER_MIN_TIMESLICE public constant type nanoseconds_t =
 	100000; // 100µs
-define SCHEDULER_DEFAULT_TIMESLICE public constant type nanoseconds_t =
-	5000000; // 5ms
+define SCHEDULER_DEFAULT_TIMESLICE constant type nanoseconds_t =
+#if defined(PLATFORM_SCHEDULER_DEFAULT_TIMESLICE)
+		PLATFORM_SCHEDULER_DEFAULT_TIMESLICE;
+#else
+		5000000; // 5ms
+#endif
+
 
 define SCHEDULER_NUM_BLOCK_BITS constant type index_t = maxof(enumeration scheduler_block) + 1;
 

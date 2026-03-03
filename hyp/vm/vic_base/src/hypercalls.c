@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -138,7 +138,8 @@ out:
 }
 
 error_t
-hypercall_vic_bind_msi_source(cap_id_t vic_cap, cap_id_t msi_source_cap)
+hypercall_vic_bind_msi_source(cap_id_t vic_cap, cap_id_t msi_source_cap,
+			      vic_msi_source_config_t source_config)
 {
 	error_t	  err;
 	cspace_t *cspace = cspace_get_self();
@@ -150,7 +151,8 @@ hypercall_vic_bind_msi_source(cap_id_t vic_cap, cap_id_t msi_source_cap)
 		goto out;
 	}
 
-	err = trigger_vic_bind_msi_source_event(vic_r.r, msi_source_cap);
+	err = trigger_vic_bind_msi_source_event(vic_r.r, msi_source_cap,
+						source_config);
 
 	object_put_vic(vic_r.r);
 out:

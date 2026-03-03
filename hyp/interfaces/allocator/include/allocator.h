@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -21,4 +21,5 @@ allocator_deallocate_object(allocator_t *allocator, void *object, size_t size,
 			    allocator_memattr_t attr);
 
 error_t
-allocator_heap_remove_memory(allocator_t *allocator, void *obj, size_t size);
+allocator_get_stats(allocator_t *allocator, allocator_memattr_t attr,
+		    allocator_stats_t *stats);

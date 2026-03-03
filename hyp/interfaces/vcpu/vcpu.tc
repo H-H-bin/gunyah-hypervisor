@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -12,6 +12,7 @@ extend cap_rights_thread bitfield {
 	7	lifecycle	bool;
 	8	write_context	bool;
 	9	disable		bool;
+	10	bind_local_virq	bool;
 };
 
 define vcpu_trap_result enumeration {
@@ -57,4 +58,22 @@ define vcpu_poweron_flags public bitfield<64> {
 	0	preserve_entry_point		bool;
 	1	preserve_context		bool;
 	others	unknown=0;
+};
+
+// Internal module specific parameters passed to vcpu_poweron / vcpu_poweroff
+define vcpu_power_req_flags bitfield<64> {
+	others	unknown=0;
+};
+
+// Reasons for a VM turning off.
+define vm_off_flags enumeration {
+	reset;
+	reset_may_fail;
+	off;
+};
+
+// Local VIRQ types that can be configured per-VCPU.
+// This enum is extended by modules that provide local VIRQs (e.g., timers, PMU).
+define vcpu_local_virq_type public enumeration(explicit){
+	reserved = 0;
 };

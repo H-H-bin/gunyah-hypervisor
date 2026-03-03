@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -9,6 +9,7 @@
 #include <cpulocal.h>
 #include <panic.h>
 #include <power.h>
+#include <psci.h>
 #include <smccc.h>
 
 #include "psci_smc.h"
@@ -53,6 +54,75 @@ psci_smc_cpu_suspend(register_t power_state, paddr_t entry_point,
 
 	return err;
 }
+
+#if defined(PLATFORM_ENABLE_SYSTEM_SUSPEND) && PLATFORM_ENABLE_SYSTEM_SUSPEND
+error_t
+psci_smc_system_suspend(paddr_t entry_point, register_t context_id)
+{
+	error_t err;
+
+	switch (psci_smc_fn_call(PSCI_FUNCTION_SYSTEM_SUSPEND, entry_point,
+				 context_id, 0U)) {
+	case PSCI_RET_SUCCESS:
+		err = OK;
+		break;
+	case PSCI_RET_INVALID_PARAMETERS:
+	case PSCI_RET_INVALID_ADDRESS:
+		err = ERROR_ARGUMENT_INVALID;
+		break;
+	case PSCI_RET_DENIED:
+		err = ERROR_DENIED;
+		break;
+	case PSCI_RET_NOT_SUPPORTED:
+	case PSCI_RET_ALREADY_ON:
+	case PSCI_RET_ON_PENDING:
+	case PSCI_RET_INTERNAL_FAILURE:
+	case PSCI_RET_NOT_PRESENT:
+	case PSCI_RET_DISABLED:
+	default:
+		panic("Unexpected PSCI result");
+	}
+
+	return err;
+}
+
+psci_ret_affinity_info_result_t
+psci_smc_affinity_info(psci_mpidr_t cpu_id, uint32_t lowest_affinity_level)
+{
+	psci_ret_affinity_info_result_t ret;
+	psci_ret_t psci_ret = psci_smc_fn_call(PSCI_FUNCTION_AFFINITY_INFO,
+					       psci_mpidr_raw(cpu_id),
+					       lowest_affinity_level, 0U);
+
+	int32_t iret = (int32_t)psci_ret;
+
+	switch (iret) {
+	case (int32_t)PSCI_RET_AFFINITY_INFO_ON:
+		ret = psci_ret_affinity_info_result_ok(
+			PSCI_RET_AFFINITY_INFO_ON);
+		break;
+	case (int32_t)PSCI_RET_AFFINITY_INFO_OFF:
+		ret = psci_ret_affinity_info_result_ok(
+			PSCI_RET_AFFINITY_INFO_OFF);
+		break;
+	case (int32_t)PSCI_RET_AFFINITY_INFO_ON_PENDING:
+		ret = psci_ret_affinity_info_result_ok(
+			PSCI_RET_AFFINITY_INFO_ON_PENDING);
+		break;
+	case (int32_t)PSCI_RET_DISABLED:
+		ret = psci_ret_affinity_info_result_error(ERROR_FAILURE);
+		break;
+	case (int32_t)PSCI_RET_INVALID_PARAMETERS:
+		ret = psci_ret_affinity_info_result_error(
+			ERROR_ARGUMENT_INVALID);
+		break;
+	default:
+		panic("Unexpected PSCI result");
+	}
+
+	return ret;
+}
+#endif // PLATFORM_ENABLE_SYSTEM_SUSPEND
 
 #if defined(PLATFORM_PSCI_DEFAULT_SUSPEND)
 error_t
@@ -174,11 +244,8 @@ psci_smc_cpu_on(psci_mpidr_t cpu_id, paddr_t entry_point, register_t context_id)
 sint32_result_t
 psci_smc_psci_features(psci_function_t fn, bool smc64)
 {
-	smccc_function_id_t fn_id = smccc_function_id_default();
-	smccc_function_id_set_is_fast(&fn_id, true);
-	smccc_function_id_set_is_smc64(&fn_id, smc64);
-	smccc_function_id_set_owner_id(&fn_id, SMCCC_OWNER_ID_STANDARD);
-	smccc_function_id_set_function(&fn_id, (smccc_function_t)fn);
+	smccc_function_id_t fn_id = smccc_create_fn_id(
+		(smccc_function_t)fn, SMCCC_OWNER_ID_STANDARD, smc64, true);
 
 	sint32_result_t ret;
 	psci_ret_t psci_ret = psci_smc_fn_call32(PSCI_FUNCTION_PSCI_FEATURES,

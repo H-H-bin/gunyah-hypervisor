@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -253,6 +253,16 @@ extend CPTR_EL2_E2H1 bitfield {
 };
 #endif
 
+#if defined(ARCH_ARM_FEAT_SME)
+extend CPTR_EL2_E2H0 bitfield {
+	12		TSM		bool = 1;
+};
+
+extend CPTR_EL2_E2H1 bitfield {
+	25:24		SMEN		enumeration cptr_smen;
+};
+#endif
+
 #if defined(ARCH_ARM_FEAT_AMUv1) || defined(ARCH_ARM_FEAT_AMUv1p1)
 extend CPTR_EL2_E2H1 bitfield {
 	30		TAM		bool = 1;
@@ -352,6 +362,10 @@ ELR(EL2)
 define ERRSELR_EL1 bitfield<64> {
 	15:0		SEL		uint16;
 	others		unknown=0;
+};
+
+define ERXCTLR_EL1 bitfield<64> {
+	63:0		STATUS	uint64;
 };
 
 define ERXSTATUS_EL1 bitfield<64>(const) {
@@ -543,12 +557,18 @@ extend HCR_EL2 bitfield {
 };
 #endif
 
+#if defined(ARCH_ARM_FEAT_AMUv1p1)
+extend HCR_EL2 bitfield {
+	51		AMVOFFEN	bool;
+};
+#endif
+
 #if defined(ARCH_ARM_FEAT_CSV2_2) || defined(ARCH_ARM_FEAT_CSV2_1p2) || \
 	defined(ARCH_ARM_FEAT_CSV2_3)
 #if !defined(ARCH_ARM_FEAT_CSV2)
 #error ARCH_ARM_FEAT_CSV2 not defined
 #endif
-define ARCH_ARM_HAVE_SCXT constant bool = 1;
+define ARCH_ARM_HAVE_SCXT constant = 1;
 
 extend HCR_EL2 bitfield {
 	53		EnSCXT		bool;
@@ -566,6 +586,25 @@ extend HCR_EL2 bitfield {
 #if defined(ARCH_ARM_FEAT_LOR)
 extend HCR_EL2 bitfield {
 	35		TLOR		bool = 1;
+};
+#endif
+
+#if defined(ARCH_ARM_FEAT_TWED)
+extend HCR_EL2 bitfield {
+	59		TWEDEn		bool = 0;
+	63:60		TWEDEL		uint8 = 0;
+};
+#endif
+
+#if defined(ARCH_ARM_FEAT_HCX)
+define HCRX_EL2 bitfield<64> {
+	63:0		unknown=0;
+};
+#endif
+
+#if defined(ARCH_ARM_FEAT_SME)
+extend HCRX_EL2 bitfield {
+	5		SMPME		bool;
 };
 #endif
 
@@ -1157,6 +1196,10 @@ extend PMCR_EL0 bitfield {
 	7		LP		bool;
 };
 #endif
+
+define REVIDR_EL1 bitfield<64> {
+	63:0		unknown=0;
+};
 
 define SCTLR_EL1 bitfield<64> {
 	0		M		bool;
@@ -1839,6 +1882,100 @@ extend VTTBR_EL2 bitfield {
 };
 #endif
 
+#if defined(ARCH_ARM_FEAT_SVE)
+define ZCR_EL1 bitfield<64> {
+	3:0		LEN		uint8;
+	others		unknown=0;
+};
+
+define ZCR_EL2 bitfield<64> {
+	3:0		LEN		uint8;
+	others		unknown=0;
+};
+#endif
+
+#if defined(ARCH_ARM_FEAT_SME)
+define SMCR_EL1 bitfield<64> {
+	3:0		LEN		uint8;
+	others		unknown=0;
+};
+
+define SMCR_EL2 bitfield<64> {
+	3:0		LEN		uint8;
+	others		unknown=0;
+};
+
+#if defined(ARCH_ARM_FEAT_SME_FA64)
+extend SMCR_EL1 bitfield {
+	31		FA64		bool;
+};
+
+extend SMCR_EL2 bitfield {
+	31		FA64		bool;
+};
+#endif
+
+define SMIDR_EL1 bitfield<64> {
+	11:0		Affinity	uint16;
+	12		unknown=0;
+	14:13		SH		uint8;
+	15		SMPS		bool;
+	23:16		Revision	uint8;
+	31:24		Implementer	uint8;
+	51:32		Affinity2	uint32;
+	63:52		unknown=0;
+};
+
+define SMPRI_EL1 bitfield<64> {
+	3:0		Priority	uint8;
+	63:4		unknown=0;
+};
+
+define SMPRIMAP_EL2 bitfield<64> {
+	3:0		P0		uint8;
+	7:4		P1		uint8;
+	11:8		P2		uint8;
+	15:12		P3		uint8;
+	19:16		P4		uint8;
+	23:20		P5		uint8;
+	27:24		P6		uint8;
+	31:28		P7		uint8;
+	35:32		P8		uint8;
+	39:36		P9		uint8;
+	43:40		P10		uint8;
+	47:44		P11		uint8;
+	51:48		P12		uint8;
+	55:52		P13		uint8;
+	59:56		P14		uint8;
+	63:60		P15		uint8;
+};
+
+define SVCR bitfield<64> {
+	0		SM		bool;
+	1		ZA		bool;
+	others		unknown=0;
+};
+
+define ID_AA64SMFR0_EL1 bitfield<64> {
+	32		F32F32		bool;
+	33		BI32I32		bool;
+	34		B16F32		bool;
+	35		F16F32		bool;
+	39:36		I8I32		uint8;
+	42		F16F16		bool;
+	43		B16B16		bool;
+	47:44		I16I32		uint8;
+	48		F64F64		bool;
+	55:52		I16I64		uint8;
+	59:56		SMEver		uint8;
+	63		FA64		bool;
+	others		unknown=0;
+};
+
+define TPIDR2_EL0 bitfield<64> {
+	63:0		ThreadID	uint64;
+};
+#endif
 
 
 // ESR_EL2 ISS encodings (only some ISS encodings have been added)
@@ -1924,6 +2061,13 @@ define ESR_EL2_ISS_SERROR bitfield<25> {
 	24		IDS		bool;
 };
 
+#if defined(ARCH_ARM_FEAT_SME)
+define ESR_EL2_ISS_SME bitfield<25> {
+	2:0		SMTC		enumeration iss_sme_smtc;
+	24:3		unknown=0;
+};
+#endif
+
 #if ARCH_AARCH64_32BIT_EL0
 define ESR_EL2_ISS_MCR_MRC bitfield<25> {
 	0		Direction	bool;
@@ -1956,29 +2100,5 @@ define ESR_EL2_ISS_LDC_STC bitfield<25> {
 	19:12		imm8		uint8;
 	23:20		COND		uint8;
 	24		CV		bool;
-};
-#endif
-
-#if defined(ARCH_ARM_FEAT_AMUv1) || defined(ARCH_ARM_FEAT_AMUv1p1)
-define AMCR_EL0 bitfield<64> {
-	10		HDBG		bool;
-#if defined(ARCH_ARM_FEAT_AMUv1p1)
-	17		CG1RZ		bool;
-#endif
-	others		unknown=0;
-};
-
-define AMCFGR_EL0 bitfield<64> {
-	7:0		N		uint16;
-	13:8		Size		uint8;
-	24		HDBG		bool;
-	31:28		NCG		uint8;
-	others		unknown=0;
-};
-
-define AMCGCR_EL0 bitfield<64> {
-	7:0		CG0NC		uint16;
-	15:8		CG1NC		uint16;
-	others		unknown=0;
 };
 #endif

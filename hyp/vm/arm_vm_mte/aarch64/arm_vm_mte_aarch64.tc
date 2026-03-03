@@ -1,0 +1,45 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+#if defined(ARCH_ARM_FEAT_MTE)
+define GCR_EL1 bitfield<64> {
+	15:0		Exclude		uint16;
+	16		RRND		bool;
+	63:17		unknown=0;
+};
+
+define RGSR_EL1 bitfield<64> {
+	3:0		tag		uint8;
+	7:4		unknown=0;
+	23:8		seed		uint16;
+	63:24		unknown=0;
+};
+
+define TFSR_EL1 bitfield<64> {
+	0		TF0		bool;
+	1		TF1		bool;
+	63:2		unknown=0;
+};
+
+define TFSRE0_EL1 bitfield<64> {
+	0		TF0		bool;
+	1		TF1		bool;
+	63:2		unknown=0;
+};
+
+define vcpu_mte_registers structure {
+	gcr_el1		bitfield GCR_EL1;
+	rgsr_el1	bitfield RGSR_EL1;
+	tfsr_el1	bitfield TFSR_EL1;
+	tfsre0_el1	bitfield TFSRE0_EL1;
+};
+
+define mte structure {
+	mte_regs	structure vcpu_mte_registers;
+};
+
+extend thread object {
+	mte		structure mte;
+};
+#endif

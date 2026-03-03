@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -13,7 +13,7 @@ selector_event irq_registered
 selector_event irq_received
 	selector action: hwirq_action_t
 	param irq: irq_t
-	param hwirq: hwirq_t *
+	param hwirq: const hwirq_t *
 	// Returns true if the interrupt has been fully handled and should be
 	// deactivated; false if the interrupt has been forwarded to a guest
 	// or queued for deferred handling.
@@ -27,3 +27,6 @@ selector_event irq_dispatch
 	return: bool = false
 
 #endif
+
+event irq_init
+	param boot_cpu_index: cpu_index_t

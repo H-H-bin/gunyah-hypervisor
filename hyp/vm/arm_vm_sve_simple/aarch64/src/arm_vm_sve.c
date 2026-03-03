@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -83,7 +83,7 @@ arm_vm_sve_simple_handle_vcpu_activate_thread(thread_t		 *thread,
 	assert(thread != NULL);
 	bool ret;
 
-	if (thread->kind == THREAD_KIND_VCPU) {
+	if (vcpu_is_vcpu(thread)) {
 		bool hlos	 = vcpu_option_flags_get_hlos_vm(&options);
 		bool sve_allowed = vcpu_option_flags_get_sve_allowed(&options);
 
@@ -112,38 +112,4 @@ arm_vm_sve_simple_handle_vcpu_activate_thread(thread_t		 *thread,
 	return ret;
 }
 
-// ID_AA64ZFR0_EL1 is trapped through HCR_EL2.TID3
-vcpu_trap_result_t
-arm_vm_sve_simple_handle_vcpu_trap_sysreg_read(ESR_EL2_ISS_MSR_MRS_t iss)
-{
-	vcpu_trap_result_t ret;
-	thread_t	  *thread = thread_get_self();
-
-	// Assert this is a read
-	assert(ESR_EL2_ISS_MSR_MRS_get_Direction(&iss));
-
-	// Remove the fields that are not used in the comparison
-	ESR_EL2_ISS_MSR_MRS_t temp_iss = iss;
-	ESR_EL2_ISS_MSR_MRS_set_Rt(&temp_iss, 0U);
-	ESR_EL2_ISS_MSR_MRS_set_Direction(&temp_iss, false);
-
-	switch (ESR_EL2_ISS_MSR_MRS_raw(temp_iss)) {
-	case ISS_MRS_MSR_ID_AA64ZFR0_EL1:
-		ret = VCPU_TRAP_RESULT_EMULATED;
-		uint64_t val;
-		if (vcpu_option_flags_get_sve_allowed(&thread->vcpu_options)) {
-			val = register_ID_AA64ZFR0_EL1_read();
-		} else {
-			val = 0U;
-		}
-		uint8_t reg_num = ESR_EL2_ISS_MSR_MRS_get_Rt(&iss);
-		vcpu_gpr_write(thread, reg_num, val);
-		break;
-	default:
-		ret = VCPU_TRAP_RESULT_UNHANDLED;
-		break;
-	}
-
-	return ret;
-}
 #endif

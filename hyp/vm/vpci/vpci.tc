@@ -1,0 +1,181 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+extend vpci object {
+	// Object attachments. These are reference-counted pointers.
+	vic			pointer object vic;
+	addrspace		pointer object addrspace;
+
+	// Address ranges. These must not be changed after activation.
+	cam_base		type vmaddr_t;
+	cam_size		size;
+	npmem_base		type vmaddr_t;
+	npmem_size		size;
+	pmem_base		type vmaddr_t;
+	pmem_size		size;
+	io_base			type vmaddr_t;
+	io_size			size;
+
+	// Device pointers. RCU-protected.
+	//
+	// In the current implementation, they must not be changed to a
+	// non-NULL value (by calling vpci_bind_device()) after activation,
+	// and may only be changed to a NULL value by the deactivate handler
+	// of the object that contains the device. In future we might relax
+	// these rules to allow hot-plugging.
+	//
+	// Writes of non-NULL values to these pointers are synchronised by the
+	// activation lock (in the object header).
+	slots			array(32) pointer(atomic)
+				structure vpci_device;
+
+	// Bridge device.
+	//
+	// For a bus that is attached to an address space (bus 0), this device
+	// is attached to slot 0 of the bus containing it, and represents the
+	// host bridge. For a bus that is attached to a parent bus through a
+	// virtual PCI-PCI bridge, this device is attached to a slot of the
+	// parent bus, and represents the PCI-PCI bridge.
+	bridge			structure vpci_device;
+	bridge_fn0		structure vpci_function;
+
+	// vdevice structure to map the CAM / ECAM
+	vdevice			structure vdevice(contained);
+};
+
+extend vpci_function structure {
+	// Pointer to the function's PCIe helper capability, if any. This is
+	// used by the PCIe error reporting path.
+	pcie_data		pointer structure vpci_pcie_data;
+
+	// Pointer to the device that contains this function. The device is
+	// assumed to have the same lifetime as the function, so no RCU or
+	// reference count is needed.
+	device			pointer structure vpci_device;
+	function_index		type index_t;
+
+	// Writable registers for the configuration header. These are all
+	// reset to 0 and handled inside the framework, so they don't need to
+	// be exposed in the interface.
+	//
+	// Changes to the command register require the enclosing device's
+	// mapping lock to be held, because it contains bits that can map or
+	// unmap all BARs.
+	//
+	// The status register contains several W1C error reporting bits, and
+	// is marked atomic to allow these to be safely set and cleared
+	// concurrently.
+	command			bitfield pci_function_command;
+	status			bitfield pci_function_status(atomic);
+	interrupt_line		uint8;
+};
+
+extend vpci_device structure {
+	// Reference-counted pointer to the bus this device is attached to.
+	bus			pointer object vpci;
+
+	// This device's slot ID.
+	slot			type index_t;
+
+	// VIRQ source objects for the device's legacy IRQ lines; used by
+	// functions that have interrupt_pin set between 1 and 4.
+	virq_irqa		structure virq_source(contained);
+#if VPCI_MULTI_FUNCTION
+	virq_irqb		structure virq_source(contained);
+	virq_irqc		structure virq_source(contained);
+	virq_irqd		structure virq_source(contained);
+#endif
+
+	// Spinlock protecting BAR mapping updates for this device. These are
+	// serialised to make sure we don't end up unmapping the wrong address
+	// range or failing in map operations because of concurrent BAR writes
+	// by different VCPUs.
+	mapping_lock		structure spinlock;
+
+	// Spinlock protecting binding and unbinding of legacy IRQ sources.
+	irq_bind_lock		structure spinlock;
+};
+
+extend vpci_bar_data structure {
+	// Index of this BAR. Used in vdevice and RCU event handlers to find
+	// the enclosing function.
+	index			uint8;
+
+	// Flag indicating that there might be concurrent accesses to the BAR,
+	// protected by the containing device's mapping lock.
+	is_mapped		bool;
+
+	// Flag indicating that the BAR has been unmapped, but is waiting for
+	// an RCU update to clear the is_mapped flag.
+	unmap_pending		bool;
+
+	// RCU entry used to delay clearing is_mapped until concurrent
+	// accesses are known to be complete
+	unmap_rcu		structure rcu_entry(contained);
+
+	// Configured base address in the PCI Memory or PCI I/O space, as
+	// written to / read from the BAR.
+	pci_addr		type vmaddr_t;
+
+	// Base IPA of the BAR mapping.
+	ipa_addr		type vmaddr_t;
+
+	// vdevice structure to handle trapped BAR space accesses. If writes
+	// to the BAR space are trapped, this will be attached to the provided
+	// memextent, which will be automatically mapped at the base IPA. If
+	// reads and writes are trapped, this vdevices will be attached at the
+	// given IPA.
+	vdevice			structure vdevice(contained);
+};
+
+extend rcu_update_class enumeration {
+	vpci_unmap_bar;
+};
+
+extend vpci_function_type enumeration {
+	// Dummy host bridge device.
+	vpci_host_bridge;
+};
+
+extend vdevice_type enumeration {
+	vpci_cam;
+	vpci_bar0;
+	vpci_bar1;
+	vpci_bar2;
+	vpci_bar3;
+	vpci_bar4;
+	vpci_bar5;
+};
+
+extend virq_trigger enumeration {
+	// Legacy IRQ lines
+	vpci_irqa;
+#if VPCI_MULTI_FUNCTION
+	vpci_irqb;
+	vpci_irqc;
+	vpci_irqd;
+#endif
+};
+
+extend vpci_msix_data structure {
+	vectors		pointer structure vpci_msix_vector;
+	control		bitfield pci_msix_message_control(atomic);
+};
+
+define vpci_msix_vector structure {
+	addr		type vmaddr_t;
+	data		uint32;
+	status		bitfield vpci_msix_status(atomic);
+};
+
+define vpci_msix_status bitfield<8>(set_ops) {
+	auto		mask		bool;
+	auto		pending		bool;
+};
+
+extend vpci_pcie_data structure {
+	// PCIe command and status registers.
+	pcie_control		bitfield pci_express_device_control;
+	pcie_status		bitfield pci_express_device_status(atomic);
+};

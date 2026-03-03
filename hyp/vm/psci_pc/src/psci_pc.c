@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -37,7 +37,6 @@
 #include <vcpu.h>
 #include <vic.h>
 #include <virq.h>
-#include <vpm.h>
 
 #include <events/power.h>
 #include <events/psci.h>
@@ -46,7 +45,9 @@
 #include "event_handlers.h"
 #include "psci_arch.h"
 #include "psci_common.h"
+#include "psci_helper.h"
 #include "psci_pm_list.h"
+#include "vpm_base.h"
 
 void
 psci_pc_handle_boot_cold_init(void)
@@ -68,19 +69,19 @@ psci_cpu_suspend_features(void)
 
 psci_suspend_powerstate_stateid_t
 psci_vcpu_get_poweroff_state(thread_t *vcpu, cpu_index_t cpu,
-			     register_t prev_online)
+			     register_t online_cpus)
 {
 	(void)vcpu;
-	(void)prev_online;
+	(void)online_cpus;
 	psci_suspend_powerstate_stateid_t stateid;
 
-	// FIXME:
+	// FIXME: QC Gunyah issue #129
 #if !defined(PSCI_AFFINITY_LEVELS_NOT_SUPPORTED) ||                            \
 	!PSCI_AFFINITY_LEVELS_NOT_SUPPORTED
-	stateid = platform_psci_deepest_cluster_level_stateid(
-		cpu, PLATFORM_MAX_HIERARCHY);
+	stateid = platform_psci_deepest_level_stateid(cpu,
+						      PLATFORM_MAX_HIERARCHY);
 #else
-	stateid = platform_psci_deepest_cpu_level_stateid(cpu);
+	stateid = platform_psci_deepest_level_stateid(cpu, 0U);
 #endif
 
 	return stateid;
@@ -94,7 +95,7 @@ psci_pc_set_suspend_mode(uint32_t arg1, uint32_t *ret0)
 
 	thread_t *current = thread_get_self();
 
-	if (current->psci_group == NULL) {
+	if (current->vpm_group == NULL) {
 		handled = false;
 	} else {
 		if (arg1 == PSCI_MODE_PC) {
@@ -122,18 +123,16 @@ psci_pc_handle_object_activate_vpm_group(vpm_group_t *pg)
 	pg->psci_mode = PSCI_MODE_PC;
 
 	// Initialize vcpus states of the vpm to the deepest suspend state
-	// FIXME:
+	// FIXME: QC Gunyah issue #129
 	cpulocal_begin();
-	psci_cpu_state_t cpu_state =
-		platform_psci_deepest_cpu_state(cpulocal_get_index());
+	index_t cpu_state =
+		platform_psci_deepest_lpm_state(cpulocal_get_index(), 0U);
 	cpulocal_end();
 
 	vpm_group_suspend_state_t vm_state = vpm_group_suspend_state_default();
 
-	for (cpu_index_t i = 0;
-	     i < (PSCI_VCPUS_STATE_BITS / PSCI_VCPUS_STATE_PER_VCPU_BITS);
-	     i++) {
-		vcpus_state_set(&vm_state, i, cpu_state);
+	for (cpu_index_t i = 0; i < PLATFORM_PSCI_L0_COUNTS; i++) {
+		psci_set_level_state(&vm_state, 0, i, cpu_state);
 	}
 
 	atomic_store_release(&pg->psci_vm_suspend_state, vm_state);
@@ -164,16 +163,15 @@ vpm_get_state(vpm_group_t *vpm_group)
  * cleared by the same in wake-up path by calling into psci_vcpu_wakeup
  */
 void
-psci_vcpu_clear_vcpu_state(thread_t *thread, cpu_index_t target_cpu)
+psci_vcpu_clear_vcpu_state(thread_t *thread)
 {
-	(void)target_cpu;
 	if (thread->vpm_mode != VPM_MODE_PSCI) {
 		goto out;
 	}
 
-	assert(thread->psci_group != NULL);
+	assert(thread->vpm_group != NULL);
 
-	vpm_group_t *vpm_group = thread->psci_group;
+	vpm_group_t *vpm_group = thread->vpm_group;
 	cpu_index_t  vcpu_id   = thread->psci_index;
 
 	thread->psci_suspend_state = psci_suspend_powerstate_default();
@@ -183,7 +181,7 @@ psci_vcpu_clear_vcpu_state(thread_t *thread, cpu_index_t target_cpu)
 	vpm_group_suspend_state_t new_state;
 
 	new_state = old_state;
-	vcpus_state_clear(&new_state, vcpu_id);
+	psci_set_level_state(&new_state, 0, vcpu_id, 0U);
 
 out:
 	// Nothing to do for non PSCI threads
@@ -204,9 +202,9 @@ psci_vcpu_resume(thread_t *thread)
 		goto out;
 	}
 
-	assert(thread->psci_group != NULL);
+	assert(thread->vpm_group != NULL);
 
-	vpm_group_t *vpm_group = thread->psci_group;
+	vpm_group_t *vpm_group = thread->vpm_group;
 	cpu_index_t  vcpu_id   = thread->psci_index;
 
 	thread->psci_suspend_state = psci_suspend_powerstate_default();
@@ -217,8 +215,7 @@ psci_vcpu_resume(thread_t *thread)
 
 	do {
 		new_state = old_state;
-
-		vcpus_state_clear(&new_state, vcpu_id);
+		psci_set_level_state(&new_state, 0, vcpu_id, 0U);
 
 	} while (!atomic_compare_exchange_strong_explicit(
 		&vpm_group->psci_vm_suspend_state, &old_state, new_state,
@@ -244,12 +241,12 @@ psci_vcpu_suspend(thread_t *current)
 		goto out;
 	}
 
-	assert(current->psci_group != NULL);
+	assert(current->vpm_group != NULL);
 
-	vpm_group_t	*vpm_group = current->psci_group;
-	cpu_index_t	 vcpu_id   = current->psci_index;
-	psci_cpu_state_t cpu_state =
-		platform_psci_get_cpu_state(current->psci_suspend_state);
+	vpm_group_t *vpm_group = current->vpm_group;
+	cpu_index_t  vcpu_id   = current->psci_index;
+	index_t	     cpu_state =
+		platform_psci_get_lpm_state(current->psci_suspend_state, 0U);
 
 	vpm_group_suspend_state_t new_state;
 	vpm_group_suspend_state_t old_state;
@@ -259,7 +256,7 @@ psci_vcpu_suspend(thread_t *current)
 
 	do {
 		new_state = old_state;
-		vcpus_state_set(&new_state, vcpu_id, cpu_state);
+		psci_set_level_state(&new_state, 0, vcpu_id, cpu_state);
 
 	} while (!atomic_compare_exchange_strong_explicit(
 		&vpm_group->psci_vm_suspend_state, &old_state, new_state,
@@ -291,21 +288,20 @@ psci_pc_handle_idle_yield(bool in_idle_thread)
 		goto out;
 	}
 
-	thread_t *vcpu	       = NULL;
-	list_t	 *psci_pm_list = psci_pm_list_get_self();
+	list_t *psci_pm_list = psci_pm_list_get_self();
 	assert(psci_pm_list != NULL);
 
 	psci_suspend_powerstate_t pstate = psci_suspend_powerstate_default();
-	psci_cpu_state_t cpu_state	 = platform_psci_deepest_cpu_state(cpu);
+	index_t cpu_state = platform_psci_deepest_lpm_state(cpu, 0U);
 
 	// Iterate through affine VCPUs and get the shallowest cpu-level state
 	rcu_read_start();
-	list_foreach_container_consume (vcpu, psci_pm_list, thread,
-					psci_pm_list_node) {
-		psci_cpu_state_t cpu1 =
-			platform_psci_get_cpu_state(vcpu->psci_suspend_state);
-		cpu_state = platform_psci_shallowest_cpu_state(cpu_state, cpu1);
-	}
+	LIST_FOREACH_CONTAINER_CONSUME_BEGIN(thread_t, psci_pm_list, thread,
+					     psci_pm_list_node, vcpu)
+		index_t cpu1 = platform_psci_get_lpm_state(
+			vcpu->psci_suspend_state, 0U);
+		cpu_state = platform_psci_shallowest_lpm_state(cpu_state, cpu1);
+	LIST_FOREACH_CONTAINER_CONSUME_END
 	rcu_read_finish();
 
 	// Do not go to suspend if shallowest cpu state is zero. This may happen
@@ -316,9 +312,9 @@ psci_pc_handle_idle_yield(bool in_idle_thread)
 		goto out;
 	}
 
-	platform_psci_set_cpu_state(&pstate, cpu_state);
+	platform_psci_set_lpm_state(&pstate, cpu_state, 0U);
 
-	if (platform_psci_is_cpu_poweroff(cpu_state)) {
+	if (platform_psci_is_node_poweroff(cpu_state, 0U)) {
 		psci_suspend_powerstate_set_StateType(
 			&pstate, PSCI_SUSPEND_POWERSTATE_TYPE_POWERDOWN);
 	} else {

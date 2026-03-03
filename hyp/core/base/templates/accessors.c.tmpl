@@ -1,6 +1,6 @@
 // Automatically generated. Do not modify.
 //
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -8,6 +8,10 @@
 \#include <guest_types.h>
 #else
 \#include <hyptypes.h>
+#end if
+
+#if not $public_only
+\#include <panic.h>
 #end if
 
 // Bitfield Accessors
@@ -113,8 +117,8 @@ return#slurp
 ;
 }
 #end if
+#end if
 
-#if $all_fields_boolean
 bool
 ${type_name}_is_clean(${type_name}_t bit_field)
 {
@@ -125,12 +129,13 @@ return#slurp
  &&#slurp
 #end if
 #set $first = False
- ((bit_field.bf[$unit] & ${hex($boolean_masks[$unit] ^ $unit_size_mask)}U) == ${hex($init_values[$i] & ~$compare_masks[$i])}U)#slurp
+ ((bit_field.bf[$unit] & ${hex($compare_masks[$unit] ^ $unit_size_mask)}U) ==
+    ${hex($init_values[$i] & ~$compare_masks[$i])}U)#slurp
 #end for
 ;
 }
-#end if
 
+#if $definition.has_set_ops
 ${type_name}_t
 ${type_name}_union(${type_name}_t b1, ${type_name}_t b2)
 {
@@ -177,7 +182,7 @@ ${type_name}_inverse(${type_name}_t b)
        return (${type_name}_t){ .bf = { #slurp
 #for i in range($unit_cnt)
 #if $all_fields_boolean
-               ~b.bf[$i],
+               ($unit_type)~b.bf[$i],
 #elif $boolean_masks[$i] != 0
 #set mask = hex($boolean_masks[$i])
                b.bf[$i] ^ ${mask}U,
@@ -414,5 +419,95 @@ void ${dec.bf_type_name}_copy_${dec.field_name}(
 #end if
 #end if
 #end for
+#end if
+#end for
+
+// Enumeration accessors
+
+#for $definition in $definitions
+#if $definition.category == "enumeration"
+#set type_name = $definition.type_name
+#set type_size = $definition.size * 8
+#set raw_name = $type_name + '_raw'
+#if $definition.is_signed
+#set int_type = 'int{:d}_t'.format(type_size)
+#else
+#set int_type = 'uint{:d}_t'.format(type_size)
+#end if
+
+#if $public_only
+#set guard = '!defined(NDEBUG)'
+#else
+#set guard = '!defined(NDEBUG) || defined(PLATFORM_SAFETY)'
+#end if
+
+${type_name}_t
+${raw_name}_cast(${int_type} val)
+{
+	${type_name}_t ret;
+
+\#if $guard
+	switch (val) {
+#for e in $definition.enumerators
+#set enum_name = $e.prefix + $definition.get_enum_name(e)
+	case (${int_type})${enum_name}:
+		ret = ${enum_name};
+		break;
+#end for
+	default:
+#if $public_only
+		// Invalid ${type_name}
+		__builtin_trap();
+#else
+		panic("Invalid ${type_name}");
+#end if
+	}
+\#else
+	ret = (${type_name}_t)val;
+\#endif
+
+	return ret;
+}
+
+${type_name}_result_t
+${raw_name}_cast_safe(${int_type} val)
+{
+	${type_name}_result_t ret;
+
+	switch (val) {
+#for e in $definition.enumerators
+#set enum_name = $e.prefix + $definition.get_enum_name(e)
+	case (${int_type})${enum_name}:
+		ret = ${type_name}_result_ok(${enum_name});
+		break;
+#end for
+	default:
+		ret = ${type_name}_result_error(ERROR_ARGUMENT_INVALID);
+		break;
+	}
+
+	return ret;
+}
+
+bool
+${raw_name}_is_valid(${int_type} val)
+{
+	bool ret;
+
+	switch (val) {
+#for e in $definition.enumerators
+#set enum_name = $e.prefix + $definition.get_enum_name(e)
+	case (${int_type})${enum_name}:
+#end for
+		ret = true;
+		break;
+	default:
+		ret = false;
+		break;
+	}
+
+	return ret;
+}
+
 #end if
 #end for

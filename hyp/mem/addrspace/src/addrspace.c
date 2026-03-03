@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -32,6 +32,9 @@
 #include <spinlock.h>
 #include <thread.h>
 #include <util.h>
+#if defined(INTERFACE_VCPU)
+#include <vcpu.h>
+#endif
 
 #include <events/addrspace.h>
 
@@ -65,20 +68,18 @@ addrspace_handle_boot_cold_init(void)
 
 #if defined(INTERFACE_VCPU)
 void
-addrspace_context_switch_load(void)
+addrspace_handle_vcpu_load_state(void)
 {
 	thread_t *thread = thread_get_self();
 
-	if (compiler_expected(thread->kind == THREAD_KIND_VCPU)) {
-		pgtable_vm_load_regs(&thread->addrspace->vm_pgtable);
-	}
+	pgtable_vm_load_regs(&thread->addrspace->vm_pgtable);
 }
 
 static void
 addrspace_detach_thread(thread_t *thread)
 {
 	assert(thread != NULL);
-	assert(thread->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(thread));
 	assert(thread->addrspace != NULL);
 
 	addrspace_t *addrspace = thread->addrspace;
@@ -100,7 +101,7 @@ addrspace_attach_thread(addrspace_t *addrspace, thread_t *thread)
 
 	error_t ret = OK;
 
-	if (thread->kind != THREAD_KIND_VCPU) {
+	if (!vcpu_is_vcpu(thread)) {
 		ret = ERROR_ARGUMENT_INVALID;
 		goto out;
 	}
@@ -141,7 +142,7 @@ addrspace_handle_object_activate_thread(thread_t *thread)
 
 	assert(thread != NULL);
 
-	if ((thread->kind == THREAD_KIND_VCPU) && (thread->addrspace == NULL)) {
+	if ((vcpu_is_vcpu(thread)) && (thread->addrspace == NULL)) {
 		ret = ERROR_OBJECT_CONFIG;
 	}
 
@@ -151,7 +152,7 @@ addrspace_handle_object_activate_thread(thread_t *thread)
 void
 addrspace_handle_object_deactivate_thread(thread_t *thread)
 {
-	if ((thread->kind == THREAD_KIND_VCPU) && (thread->addrspace != NULL)) {
+	if ((vcpu_is_vcpu(thread)) && (thread->addrspace != NULL)) {
 		addrspace_detach_thread(thread);
 	}
 }
@@ -160,7 +161,7 @@ uintptr_t
 addrspace_handle_thread_get_stack_base(thread_t *thread)
 {
 	assert(thread != NULL);
-	assert(thread->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(thread));
 	assert(thread->addrspace != NULL);
 
 	virt_range_t *range = &thread->addrspace->hyp_va_range;
@@ -197,7 +198,7 @@ addrspace_handle_rootvm_init(thread_t *root_thread, cspace_t *root_cspace,
 	assert(!vcpu_option_flags_get_hlos_vm(&root_thread->vcpu_options));
 
 	spinlock_acquire(&root_addrspace->header.lock);
-	// FIXME:
+	// FIXME: QC Gunyah issue #60
 	// Root VM address space could be smaller
 	if (addrspace_configure(root_addrspace, ROOT_VM_VMID) != OK) {
 		spinlock_release(&root_addrspace->header.lock);
@@ -238,9 +239,7 @@ addrspace_handle_object_create_addrspace(addrspace_create_t addrspace_create)
 	addrspace_t *addrspace = addrspace_create.addrspace;
 	assert(addrspace != NULL);
 	spinlock_init(&addrspace->mapping_list_lock);
-	spinlock_init(&addrspace->pgtable_lock);
-#if defined(INTERFACE_VCPU_RUN)
-	spinlock_init(&addrspace->fault_range_lock);
+#if ADDRSPACE_FAULT_RANGES
 	ret = range_tree_init(&addrspace->fault_ranges,
 			      addrspace->header.partition);
 	if (ret != OK) {
@@ -280,14 +279,22 @@ addrspace_handle_object_cleanup_addrspace(addrspace_t *addrspace)
 {
 	assert(addrspace != NULL);
 
-#if defined(INTERFACE_VCPU_RUN)
+#if ADDRSPACE_FAULT_RANGES
+	range_tree_lock(&addrspace->fault_ranges);
 	range_tree_destroy(&addrspace->fault_ranges,
 			   RANGE_TREE_NODE_TYPE_ADDRSPACE_RANGE);
+	range_tree_unlock(&addrspace->fault_ranges);
 #endif
 
 	if (addrspace->hyp_va_range.size != 0U) {
-		hyp_aspace_deallocate(addrspace->header.partition,
-				      addrspace->hyp_va_range);
+		hyp_aspace_unmap_and_deallocate(addrspace->header.partition,
+						addrspace->hyp_va_range);
+		addrspace->info_area.hyp_va = NULL;
+	}
+
+	if (addrspace->info_area.me != NULL) {
+		object_put_memextent(addrspace->info_area.me);
+		addrspace->info_area.me = NULL;
 	}
 }
 
@@ -449,6 +456,90 @@ out:
 	return ret;
 }
 
+static_assert((uint32_t)ADDRSPACE_INFO_AREA_ID_OWNER_INVALID ==
+		      ADDRSPACE_INFO_AREA_ID_OWNER_INDEX,
+	      "invalid enum");
+
+addrspace_info_area_entry_result_t
+addrspace_info_area_get_by_index(addrspace_t *addrspace, index_t index)
+{
+	addrspace_info_area_entry_result_t ret;
+
+	uintptr_t va = (uintptr_t)addrspace->info_area.hyp_va;
+
+	if (va == (uintptr_t)NULL) {
+		ret = addrspace_info_area_entry_result_error(ERROR_IDLE);
+		goto out;
+	}
+	addrspace_info_area_entry_t *items = (addrspace_info_area_entry_t *)va;
+
+	ret = addrspace_info_area_entry_result_error(ERROR_ADDR_NOTFOUND);
+
+	for (index_t i = 0U; i <= index; i++) {
+		assert(((uintptr_t)&items[i + 1U] - va) <=
+		       addrspace->info_area.data_offset);
+
+		if (addrspace_info_area_entry_type_get_owner(&items[i].type) ==
+		    ADDRSPACE_INFO_AREA_ID_OWNER_INVALID) {
+			break;
+		}
+		if (i == index) {
+			// Found index
+			ret = addrspace_info_area_entry_result_ok(items[i]);
+		}
+	}
+
+out:
+	return ret;
+}
+
+addrspace_info_area_entry_result_t
+addrspace_info_area_get_by_type(addrspace_t			*addrspace,
+				addrspace_info_area_entry_type_t type)
+{
+	addrspace_info_area_entry_result_t ret;
+
+	uintptr_t va = (uintptr_t)addrspace->info_area.hyp_va;
+
+	if (va == (uintptr_t)NULL) {
+		ret = addrspace_info_area_entry_result_error(ERROR_IDLE);
+		goto out;
+	}
+	addrspace_info_area_entry_t *items = (addrspace_info_area_entry_t *)va;
+
+	index_t i = 0U;
+
+	ret = addrspace_info_area_entry_result_error(ERROR_ADDR_NOTFOUND);
+
+	while (addrspace_info_area_entry_type_get_owner(&items[i].type) !=
+	       ADDRSPACE_INFO_AREA_ID_OWNER_INVALID) {
+		assert(((uintptr_t)&items[i + 1U] - va) <=
+		       addrspace->info_area.data_offset);
+		if (addrspace_info_area_entry_type_is_equal(items[i].type,
+							    type)) {
+			// Found the entry
+			ret = addrspace_info_area_entry_result_ok(items[i]);
+			break;
+		}
+		i += 1U;
+	}
+
+out:
+	return ret;
+}
+
+uintptr_t
+addrspace_info_area_get_data_addr(addrspace_t *addrspace, size_t offset)
+{
+	uintptr_t va = (uintptr_t)addrspace->info_area.hyp_va;
+
+	assert(va != (uintptr_t)NULL);
+	assert(addrspace->info_area.me != NULL);
+	assert(offset < addrspace->info_area.me->size);
+
+	return va + offset;
+}
+
 void
 addrspace_enable_info_area(addrspace_info_area_entry_t	   *descriptor,
 			   addrspace_info_area_entry_type_t type)
@@ -469,7 +560,7 @@ addrspace_handle_object_activate_addrspace(addrspace_t *addrspace)
 
 	assert(addrspace != NULL);
 
-	// FIXME:
+	// FIXME: QC Gunyah issue #61
 	bool already_set = bitmap_atomic_test_and_set(
 		addrspace_vmids, addrspace->vmid, memory_order_relaxed);
 	if (already_set) {
@@ -538,6 +629,15 @@ out_busy:
 }
 
 void
+addrspace_destroy_pgtables(addrspace_t *addrspace)
+{
+	if (!pgtable_vm_is_platform_managed(&addrspace->vm_pgtable)) {
+		pgtable_vm_destroy(addrspace->header.partition,
+				   &addrspace->vm_pgtable);
+	}
+}
+
+void
 addrspace_handle_object_deactivate_addrspace(addrspace_t *addrspace)
 {
 	assert(addrspace != NULL);
@@ -550,11 +650,6 @@ addrspace_handle_object_deactivate_addrspace(addrspace_t *addrspace)
 		addrspace->info_area.me = NULL;
 	}
 
-	if (!addrspace->read_only) {
-		pgtable_vm_destroy(addrspace->header.partition,
-				   &addrspace->vm_pgtable);
-	}
-
 	bool set = bitmap_atomic_test_and_clear(
 		addrspace_vmids, addrspace->vm_pgtable.control.vmid,
 		memory_order_relaxed);
@@ -564,10 +659,19 @@ addrspace_handle_object_deactivate_addrspace(addrspace_t *addrspace)
 	addrspace->vmid = 0U;
 }
 
+void
+addrspace_start(addrspace_t *addrspace, addrspace_map_flags_t map_flags)
+{
+	(void)map_flags;
+	pgtable_vm_start(&addrspace->vm_pgtable);
+}
+
 error_t
-addrspace_map(addrspace_t *addrspace, vmaddr_t vbase, size_t size, paddr_t phys,
-	      pgtable_vm_memtype_t memtype, pgtable_access_t kernel_access,
-	      pgtable_access_t user_access, addrspace_map_flags_t map_flags)
+addrspace_map_locked(addrspace_t *addrspace, vmaddr_t vbase, size_t size,
+		     paddr_t phys, pgtable_vm_memtype_t memtype,
+		     pgtable_access_t	   kernel_access,
+		     pgtable_access_t	   user_access,
+		     addrspace_map_flags_t map_flags)
 {
 	error_t err;
 
@@ -648,19 +752,12 @@ addrspace_map(addrspace_t *addrspace, vmaddr_t vbase, size_t size, paddr_t phys,
 		// Nothing special to do at this point.
 	}
 
-	spinlock_acquire(&addrspace->pgtable_lock);
 	err = trigger_addrspace_map_event(addrspace, vbase, size, phys, memtype,
 					  kernel_access, user_access);
-	if (err != ERROR_UNIMPLEMENTED) {
-		goto out_unlock;
+	if ((err != ERROR_UNIMPLEMENTED) ||
+	    pgtable_vm_is_platform_managed(&addrspace->vm_pgtable)) {
+		goto out;
 	}
-
-	if (addrspace->read_only) {
-		err = ERROR_DENIED;
-		goto out_unlock;
-	}
-
-	pgtable_vm_start(&addrspace->vm_pgtable);
 
 	// We do not set the try_map option; we expect the caller to know if it
 	// is overwriting an existing mapping.
@@ -669,16 +766,13 @@ addrspace_map(addrspace_t *addrspace, vmaddr_t vbase, size_t size, paddr_t phys,
 			     kernel_access, user_access, false, false,
 			     addrspace_map_flags_get_private(&map_flags));
 
-	pgtable_vm_commit(&addrspace->vm_pgtable);
-out_unlock:
-	spinlock_release(&addrspace->pgtable_lock);
 out:
 	return err;
 }
 
 error_t
-addrspace_unmap(addrspace_t *addrspace, vmaddr_t vbase, size_t size,
-		paddr_t phys, addrspace_map_flags_t map_flags)
+addrspace_unmap_locked(addrspace_t *addrspace, vmaddr_t vbase, size_t size,
+		       paddr_t phys, addrspace_map_flags_t map_flags)
 {
 	error_t err;
 
@@ -705,28 +799,47 @@ addrspace_unmap(addrspace_t *addrspace, vmaddr_t vbase, size_t size,
 #endif
 	}
 
-	spinlock_acquire(&addrspace->pgtable_lock);
-	err = trigger_addrspace_unmap_event(addrspace, vbase, size, phys);
-	if (err != ERROR_UNIMPLEMENTED) {
-		goto out_unlock;
+	err = trigger_addrspace_unmap_event(
+		addrspace, vbase, size, phys,
+		addrspace_map_flags_get_no_sync(&map_flags));
+	if ((err != ERROR_UNIMPLEMENTED) ||
+	    pgtable_vm_is_platform_managed(&addrspace->vm_pgtable)) {
+		goto out;
 	}
-
-	if (addrspace->read_only) {
-		err = ERROR_DENIED;
-		goto out_unlock;
-	}
-
-	pgtable_vm_start(&addrspace->vm_pgtable);
 
 	// Unmap only if the physical address is matching.
 	err = pgtable_vm_unmap_matching(
 		addrspace->header.partition, &addrspace->vm_pgtable, vbase,
 		phys, size, addrspace_map_flags_get_private(&map_flags));
 
-	pgtable_vm_commit(&addrspace->vm_pgtable);
+out:
+	return err;
+}
 
-out_unlock:
-	spinlock_release(&addrspace->pgtable_lock);
+void
+addrspace_commit(addrspace_t *addrspace, addrspace_map_flags_t map_flags)
+{
+	pgtable_vm_commit(&addrspace->vm_pgtable,
+			  addrspace_map_flags_get_no_sync(&map_flags));
+}
+
+error_t
+addrspace_unmap_sync(addrspace_t *addrspace)
+{
+	error_t err;
+
+	err = trigger_addrspace_sync_event(addrspace);
+	if (err != ERROR_UNIMPLEMENTED) {
+		goto out;
+	}
+
+	// All we need to do is start a page table operation and then commit it
+	// with the no_sync_unmap flag set to false. This will synchronise any
+	// previous unmaps in the address space.
+	pgtable_vm_start(&addrspace->vm_pgtable);
+	pgtable_vm_commit(&addrspace->vm_pgtable, false);
+	err = OK;
+
 out:
 	return err;
 }
@@ -735,49 +848,41 @@ size_result_t
 addrspace_modify_pages(addrspace_t *addrspace, vmaddr_t vbase, size_t size,
 		       addrspace_modify_pages_flags_t flags)
 {
-	size_t	 size_remaining = size;
-	vmaddr_t vbase_next	= vbase;
-	error_t	 err;
+	size_t	size_remaining = size;
+	error_t err;
 
 	if ((size > 0U) && util_add_overflows(vbase, size - 1U)) {
 		err = ERROR_ADDR_OVERFLOW;
 		goto out;
 	}
 
-	if (addrspace->read_only) {
-		err = ERROR_DENIED;
+	if (pgtable_vm_is_platform_managed(&addrspace->vm_pgtable)) {
+		err = ERROR_UNIMPLEMENTED;
 		goto out;
 	}
 
-	do {
-		spinlock_acquire(&addrspace->pgtable_lock);
-		pgtable_vm_start(&addrspace->vm_pgtable);
+	pgtable_vm_start(&addrspace->vm_pgtable);
 
-		size_result_t modify_ret = pgtable_vm_modify_protected(
-			addrspace->header.partition, &addrspace->vm_pgtable,
-			vbase_next, size_remaining,
-			addrspace_modify_pages_flags_get_unlock(&flags),
-			addrspace_modify_pages_flags_get_sanitise(&flags),
-			!addrspace_modify_pages_flags_get_no_sync_unlock(
-				&flags));
+	size_result_t modify_ret = pgtable_vm_modify_protected(
+		addrspace->header.partition, &addrspace->vm_pgtable, vbase,
+		size, addrspace_modify_pages_flags_get_unlock(&flags),
+		!addrspace_modify_pages_flags_get_do_not_sanitise(&flags),
+		!addrspace_modify_pages_flags_get_no_sync_unlock(&flags));
 
-		pgtable_vm_commit(&addrspace->vm_pgtable);
-		spinlock_release(&addrspace->pgtable_lock);
+	pgtable_vm_commit(&addrspace->vm_pgtable, false);
 
-		assert(size_remaining >= modify_ret.r);
+	assert(size >= modify_ret.r);
 
-		size_remaining -= modify_ret.r;
-		vbase_next += modify_ret.r;
-		err = modify_ret.e;
-	} while (err == ERROR_RETRY);
+	size_remaining -= modify_ret.r;
+	err = modify_ret.e;
 
 	size_result_t ret;
 out:
 	if (err == OK) {
 		assert(size_remaining == 0U);
-		ret = size_result_ok(size);
+		ret = size_result_ok(0U);
 	} else {
-		ret = (size_result_t){ .e = err, .r = size - size_remaining };
+		ret = (size_result_t){ .e = err, .r = size_remaining };
 	}
 	return ret;
 }
@@ -811,8 +916,6 @@ addrspace_lookup(addrspace_t *addrspace, vmaddr_t vbase, size_t size)
 	pgtable_vm_memtype_t lookup_memtype = PGTABLE_VM_MEMTYPE_NORMAL_WB;
 	pgtable_access_t     lookup_kernel_access = PGTABLE_ACCESS_NONE;
 	pgtable_access_t     lookup_user_access	  = PGTABLE_ACCESS_NONE;
-
-	spinlock_acquire(&addrspace->pgtable_lock);
 
 	bool   mapped	   = true;
 	size_t mapped_size = 0U;
@@ -860,8 +963,6 @@ addrspace_lookup(addrspace_t *addrspace, vmaddr_t vbase, size_t size)
 		offset += mapped_size;
 	}
 
-	spinlock_release(&addrspace->pgtable_lock);
-
 	if (first_lookup) {
 		ret = addrspace_lookup_result_error(ERROR_ADDR_INVALID);
 		goto out;
@@ -898,7 +999,7 @@ addrspace_add_fault_range(addrspace_t *addrspace, vmaddr_t base, size_t size,
 		goto out;
 	}
 
-	spinlock_acquire(&addrspace->fault_range_lock);
+	range_tree_lock(&addrspace->fault_ranges);
 
 	addrspace_range_t *fault_range = NULL;
 
@@ -914,9 +1015,8 @@ addrspace_add_fault_range(addrspace_t *addrspace, vmaddr_t base, size_t size,
 		ret = alloc_r.e;
 		goto out_locked;
 	}
-	(void)memset(alloc_r.r, 0, sizeof(*fault_range));
-	fault_range	      = (addrspace_range_t *)alloc_r.r;
-	fault_range->is_vmmio = vmmio;
+	fault_range  = (addrspace_range_t *)alloc_r.r;
+	*fault_range = (addrspace_range_t){ .is_vmmio = vmmio };
 
 	ret = range_tree_insert(&addrspace->fault_ranges, &fault_range->range,
 				base, size);
@@ -924,11 +1024,25 @@ addrspace_add_fault_range(addrspace_t *addrspace, vmaddr_t base, size_t size,
 	if (ret == OK) {
 		// Note: it's safe to set this after insertion because it is
 		// only accessed in the RCU update handler, and that can only be
-		// enqueued for this range after we release fault_range_lock.
+		// enqueued for this range after we release the range tree lock.
 		fault_range->partition = object_get_partition_additional(
 			addrspace->header.partition);
 
 		addrspace->fault_range_count++;
+	} else {
+		// Insertion failed because of a conflicting range. Determine
+		// whether the existing range completely covers the requested
+		// range and is of the same type; if so, we return an alternate
+		// error code so the caller knows its accesses will still work.
+		rcu_read_start();
+		range_tree_lookup_result_t range_r =
+			range_tree_lookup(&addrspace->fault_ranges, base, size);
+		if ((range_r.node != NULL) && (range_r.size == size) &&
+		    (addrspace_range_container_of_range(range_r.node)
+			     ->is_vmmio == vmmio)) {
+			ret = ERROR_BUSY;
+		}
+		rcu_read_finish();
 	}
 
 out_locked:
@@ -936,7 +1050,7 @@ out_locked:
 		(void)partition_free(addrspace->header.partition, fault_range,
 				     sizeof(*fault_range));
 	}
-	spinlock_release(&addrspace->fault_range_lock);
+	range_tree_unlock(&addrspace->fault_ranges);
 out:
 #else // !ADDRSPACE_FAULT_RANGES
 	(void)addrspace;
@@ -965,30 +1079,36 @@ addrspace_remove_fault_range(addrspace_t *addrspace, vmaddr_t base, size_t size,
 		goto out;
 	}
 
-	spinlock_acquire(&addrspace->fault_range_lock);
+	range_tree_lock(&addrspace->fault_ranges);
 	rcu_read_start();
 
-	range_tree_lookup_result_t range_r = range_tree_lookup(
-		&addrspace->fault_ranges, base, SIZE_MAX - base);
+	range_tree_lookup_result_t range_r =
+		range_tree_lookup(&addrspace->fault_ranges, base, SIZE_MAX);
 
 	if ((range_r.node != NULL) && (range_r.size == size) &&
 	    (addrspace_range_container_of_range(range_r.node)->is_vmmio ==
 	     vmmio)) {
-		ret = range_tree_remove(&addrspace->fault_ranges, range_r.node);
+		addrspace_range_t *range =
+			addrspace_range_container_of_range(range_r.node);
+		ret = range_tree_remove(&addrspace->fault_ranges,
+					&range->range);
 		if (ret == OK) {
 			assert(addrspace->fault_range_count > 0U);
-			addrspace_range_t *range =
-				addrspace_range_container_of_range(
-					range_r.node);
-			(void)addrspace_release_range(&range->range);
+			rcu_enqueue(&range->rcu_entry,
+				    RCU_UPDATE_CLASS_ADDRSPACE_RELEASE_RANGE);
 			addrspace->fault_range_count--;
 		}
+	} else if ((range_r.node == NULL) && (range_r.size >= size)) {
+		// The entire specified range is already empty
+		ret = ERROR_IDLE;
 	} else {
+		// The specified range is not empty, but the request doesn't
+		// match a registered range
 		ret = ERROR_ARGUMENT_INVALID;
 	}
 
 	rcu_read_finish();
-	spinlock_release(&addrspace->fault_range_lock);
+	range_tree_unlock(&addrspace->fault_ranges);
 out:
 #else // !ADDRSPACE_FAULT_RANGES
 	(void)addrspace;
@@ -1001,28 +1121,27 @@ out:
 }
 
 #if ADDRSPACE_FAULT_RANGES
-error_t
-addrspace_release_range(range_tree_node_t *node)
+static void
+addrspace_range_free(addrspace_range_t *range)
 {
-	addrspace_range_t *range = addrspace_range_container_of_range(node);
-	rcu_enqueue(&range->rcu_entry,
-		    RCU_UPDATE_CLASS_ADDRSPACE_RELEASE_RANGE);
-	return OK;
-}
-
-rcu_update_status_t
-addrspace_free_range(rcu_entry_t *entry)
-{
-	addrspace_range_t *range =
-		addrspace_range_container_of_rcu_entry(entry);
 	assert(range != NULL);
-
 	partition_t *partition = range->partition;
 	assert(partition != NULL);
 	(void)partition_free(partition, range, sizeof(*range));
-
 	object_put_partition(partition);
+}
 
+bool
+addrspace_handle_range_tree_release_node(range_tree_node_t *node)
+{
+	addrspace_range_free(addrspace_range_container_of_range(node));
+	return true;
+}
+
+rcu_update_status_t
+addrspace_handle_rcu_update(rcu_entry_t *entry)
+{
+	addrspace_range_free(addrspace_range_container_of_rcu_entry(entry));
 	return rcu_update_status_default();
 }
 #endif

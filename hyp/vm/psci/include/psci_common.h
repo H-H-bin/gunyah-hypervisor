@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -11,15 +11,14 @@ void
 psci_vcpu_resume(thread_t *thread) REQUIRE_PREEMPT_DISABLED;
 
 void
-psci_vcpu_clear_vcpu_state(thread_t *thread, cpu_index_t target_cpu)
-	REQUIRE_PREEMPT_DISABLED REQUIRE_SCHEDULER_LOCK(thread);
+psci_vcpu_clear_vcpu_state(thread_t *thread);
 
 uint32_t
 psci_cpu_suspend_features(void);
 
 psci_suspend_powerstate_stateid_t
 psci_vcpu_get_poweroff_state(thread_t *vcpu, cpu_index_t cpu,
-			     register_t prev_online) REQUIRE_PREEMPT_DISABLED;
+			     register_t online_cpus) REQUIRE_PREEMPT_DISABLED;
 
 // Implemented by psci_common
 
@@ -32,7 +31,7 @@ bool
 psci_set_vpm_active_pcpus_bit(cpu_index_t bit);
 
 index_t
-psci_clear_vpm_active_pcpus_bit(cpu_index_t bit);
+psci_clear_vpm_active_pcpus_bit(cpu_index_t bit) REQUIRE_PREEMPT_DISABLED;
 
 void
 psci_vpm_active_vcpus_get(cpu_index_t cpu, thread_t *vcpu)
@@ -48,10 +47,3 @@ psci_vpm_active_vcpus_is_zero(cpu_index_t cpu);
 bool
 vcpus_state_is_any_awake(vpm_group_suspend_state_t vm_state, uint32_t level,
 			 cpu_index_t cpu);
-
-void
-vcpus_state_set(vpm_group_suspend_state_t *vm_state, cpu_index_t cpu,
-		psci_cpu_state_t cpu_state);
-
-void
-vcpus_state_clear(vpm_group_suspend_state_t *vm_state, cpu_index_t cpu);

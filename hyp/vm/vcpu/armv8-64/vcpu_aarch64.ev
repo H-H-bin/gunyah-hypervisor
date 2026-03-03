@@ -1,4 +1,4 @@
-// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -6,3 +6,17 @@ module vcpu
 
 subscribe boot_cpu_cold_init
 	handler vcpu_arch_handle_boot_cpu_cold_init
+
+#if defined(ARCH_ARM_FEAT_PAuth)
+subscribe vcpu_save_state
+	handler vcpu_pauth_save_state
+	require_preempt_disabled
+
+subscribe vcpu_load_state
+	handler vcpu_pauth_load_state
+	require_preempt_disabled
+
+subscribe vcpu_disable_state
+	handler vcpu_pauth_disable_state
+	require_preempt_disabled
+#endif

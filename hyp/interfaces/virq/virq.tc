@@ -1,10 +1,11 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 define virq_t public newtype uint32;
 
 define VIRQ_INVALID public constant type virq_t = -1;
+define VIRQ_SDEI_BIT public constant type virq_t = 1 << 31;
 
 define virq_trigger enumeration {
 	// Used for VIRQs with no virq_check_pending handler; if level

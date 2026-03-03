@@ -1,0 +1,74 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+// The lvl1 entry describes the lvl2 properties
+define smmu_v3_stream_table_lvl1_entry structure {
+	span		uint8;
+	l2_vaddr	type vmaddr_t;
+	l2_phys		type paddr_t;
+	l2_size		uint32;
+};
+
+// Meta data
+define smmu_v3_stream_table structure {
+	table		type vmaddr_t;
+	phys		type paddr_t;
+	l1size		uint32;
+	log2size	uint32;
+	split		uint8;
+	lvl1_entries	pointer structure smmu_v3_stream_table_lvl1_entry;
+};
+
+define smmu_v3_stream_table_lvl1_desc bitfield<64> {
+	4:0	Span		uint8;
+	51:6	L2Ptr		uint64;
+	others	unknown=0;
+};
+
+define smmu_v3_ste_config enumeration {
+	abort			= 0x0;
+	s1bypass_s2bypass	= 0x4;
+	s1translate_s2bypass	= 0x5;
+	s1bypass_s2translate	= 0x6;
+	s1translate_s2translate	= 0x7;
+};
+
+define smmu_v3_ste_s1fmt enumeration {
+	linear			= 0x0;
+	twolevel_4k		= 0x1;
+	twolevel_64k		= 0x2;
+};
+
+define smmu_v3_ste_eats enumeration {
+	disable			= 0x0;
+	full			= 0x1;
+	split			= 0x2;
+	full_dpt		= 0x3;
+};
+
+// Stream Table Entries (STE)
+define smmu_v3_stream_table_entry bitfield<512> {
+	0	Valid		bool;
+	3:1	Config		enumeration smmu_v3_ste_config;
+	5:4	S1Fmt		enumeration smmu_v3_ste_s1fmt;
+	51:6	S1ContextPtr	type paddr_t lsl(6);
+	63:59	S1CDMax		uint8;
+	87:84	SW_RESERVED	uint8; // Reserved for SW use, ignored by SMMU.
+	91	S1STALLD	bool;
+	93:92	EATS		enumeration smmu_v3_ste_eats;
+	143:128	S2VMID		uint16;
+	165:160 S2T0SZ		uint8;
+	167:166	S2SL0		uint8;
+	169:168 S2IR0		uint8;
+	171:170 S2OR0		uint8;
+	173:172 S2SH0		uint8;
+	175:174	S2TG		uint8;
+	178:176	S2PS		uint8;
+	179	S2AA64		bool;
+	185	S2Stall		bool;
+	186	S2Record	bool;
+
+	243:196	S2TTB		uint64;
+	others	unknown=0;
+};

@@ -1,0 +1,41 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+#if ARCH_AARCH64_32BIT_EL1
+define VSESR_EL2_A32_EL1 bitfield<64> {
+	11:0		unknown=0;
+	12		ExT		bool;
+	13		unknown=0;
+	15:14		AET		uint8;
+	63:16		unknown=0;
+};
+#endif
+define VSESR_EL2_A64_EL1 bitfield<64> {
+	23:0		ISS		uint32;
+	24		IDS		bool;
+	63:25		unknown=0;
+};
+
+define vcpu_ras_registers structure {
+	vdisr_el2	uint64;
+	vsesr_el2	uint64;
+};
+
+define ras structure {
+	ras_regs	structure vcpu_ras_registers;
+};
+
+extend thread object {
+	ras		structure ras;
+};
+
+#if defined(ARCH_ARM_FEAT_RAS) || defined(ARCH_ARM_FEAT_RASv1p1)
+extend ipi_reason enumeration {
+	ras_hlos_access_disable;
+};
+#endif
+
+extend abort_reason enumeration {
+	RAS;
+};

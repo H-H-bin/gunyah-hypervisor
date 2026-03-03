@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -126,7 +126,7 @@ vetm_handle_vdevice_access_fixed_addr(vmaddr_t ipa, size_t access_size,
 	thread_t *vcpu = thread_get_self();
 	assert(vcpu != NULL);
 
-	if (!vcpu_option_flags_get_hlos_vm(&vcpu->vcpu_options)) {
+	if (!vcpu_option_flags_get_trace_allowed(&vcpu->vcpu_options)) {
 		goto out;
 	}
 
@@ -162,7 +162,7 @@ vetm_handle_thread_load_state(void)
 	thread_t *vcpu = thread_get_self();
 	assert(vcpu != NULL);
 
-	if (vcpu_option_flags_get_hlos_vm(&vcpu->vcpu_options)) {
+	if (vcpu_option_flags_get_trace_allowed(&vcpu->vcpu_options)) {
 		etm_set_reg(pcpu, offsetof(etm_t, trcvictlr),
 			    ETM_TRCVI_CTLR_raw(vcpu->vetm_trcvi_ctlr),
 			    sizeof(vcpu->vetm_trcvi_ctlr));
@@ -175,7 +175,7 @@ vetm_handle_thread_context_switch_pre(void)
 	thread_t *vcpu = thread_get_self();
 	assert(vcpu != NULL);
 
-	if (vcpu_option_flags_get_hlos_vm(&vcpu->vcpu_options)) {
+	if (vcpu_option_flags_get_trace_allowed(&vcpu->vcpu_options)) {
 		// clear trcvi_ctlr
 		ETM_TRCVI_CTLR_t trcvi_ctlr = ETM_TRCVI_CTLR_default();
 		etm_set_reg(pcpu, offsetof(etm_t, trcvictlr),

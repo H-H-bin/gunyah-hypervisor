@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -7,11 +7,11 @@ extend memextent object {
 };
 
 extend vdevice structure {
+	lock		structure spinlock;
 	addrspace	pointer object addrspace;
 	range		structure range_tree_node(contained);
 };
 
 extend addrspace object {
 	vdevice_tree	structure range_tree;
-	vdevice_lock	structure spinlock;
 };

@@ -365,7 +365,7 @@ UsefulOutBuf_Advance(UsefulOutBuf *pUOutBuf, size_t uAmount)
 
 	/* Make sure valid data is less than buffer size. This would only
 	 * occur if there was corruption of me, but it is also part of the
-	 * checks to be sure there is no pointer arithmatic
+	 * checks to be sure there is no pointer arithmetic
 	 * under/overflow.
 	 */
 	if (pUOutBuf->data_len > pUOutBuf->UB.len) { // Check #1

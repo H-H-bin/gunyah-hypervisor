@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -137,11 +137,10 @@ thread_arch_switch_thread(thread_t *next_thread, ticks_t *schedtime)
 noreturn void
 thread_arch_set_thread(thread_t *thread)
 {
-	// This should only be called on the idle thread during power-up, which
+	// This should be called on the thread during power-up, which
 	// should already be the current thread for TLS. It discards the current
 	// execution state.
 	assert(thread == thread_get_self());
-	assert(thread == idle_thread());
 
 	// The previous thread and the scheduling time must be kept in X0 and X1
 	// to ensure that thread_arch_main() receives them as arguments on the
@@ -180,7 +179,7 @@ thread_freeze(fptr_t fn, register_t param, register_t resumed_result)
 	trigger_thread_save_state_event();
 
 	thread_t *thread = thread_get_self();
-	assert(thread != NULL);
+	assert_safety(thread != NULL);
 
 	// The parameter must be kept in X0 so the freeze function gets it as an
 	// argument.

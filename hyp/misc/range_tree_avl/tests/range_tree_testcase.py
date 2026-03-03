@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+# Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+#
+# 2019 Cog Systems Pty Ltd.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+""" Script for test cases generation.
+
+This module generates an input file for the range tree random test.
+
+Based on pgtable_hyp_testcase.py.
+"""
+
+import random
+import sys
+import queue
+from transitions import Machine
+
+
+class StateException(Exception):
+    # Used to abort a test op that can't progress
+    pass
+
+
+class Range(object):
+    def __init__(self, base, end):
+        self.base = base
+        self.end = end
+        self.size = end - base + 1
+        self.node_index = None
+
+
+class TestCase:
+    states = ["start", "running", "stop"]
+    transitions = [{"trigger": "init",
+                    "source": "start",
+                    "dest": "running",
+                    "after": "gen_init_op",
+                    },
+                   {"trigger": "destroy",
+                    "source": "running",
+                    "dest": "stop",
+                    "after": "gen_destroy_op",
+                    },
+                   {"trigger": "step",
+                    "source": "running",
+                    "dest": "=",
+                    "after": "gen_step_ops"},
+                   ]
+
+    # the same as C test file
+    init_op = 0
+    insert_op = 1
+    remove_op = 2
+    lookup_op = 3
+    destroy_op = 4
+    check_op = 5
+    next_node_op = 6
+
+    def __init__(self):
+        self.top = 1 << 64
+
+        self.machine = Machine(
+            model=self,
+            states=TestCase.states,
+            transitions=TestCase.transitions,
+            initial="start",
+            auto_transitions=False,
+        )
+
+        self.allocations = []
+
+        self.test_ops = queue.Queue()
+        self.step_ops = [
+            self.gen_insert_op,
+            self.gen_remove_op,
+            self.gen_lookup_found_op,
+            self.gen_lookup_missing_op,
+            self.gen_overlap_insert_op,
+            self.gen_check_op,
+            self.gen_next_node_found_op,
+            self.gen_next_node_missing_op,
+        ]
+
+    def alloc_range(self, r, pos):
+        assert r.node_index is None
+        msb = self.node_bitmap.bit_length() - 1
+        if msb < 0:
+            raise StateException("Node ID bitmap is empty")
+        self.allocations.insert(pos, r)
+        self.node_bitmap = self.node_bitmap & ~(1 << msb)
+        r.node_index = msb
+
+    def free_range(self, r, pos):
+        assert r.node_index is not None
+        assert (self.node_bitmap & (1 << r.node_index)) == 0
+        self.node_bitmap = self.node_bitmap | (1 << r.node_index)
+        r.node_index = None
+        self.allocations.pop(pos)
+
+    def gen_init_op(self):
+        self.node_bitmap = (1 << self.node_count) - 1
+        self.test_ops.put(f"{self.init_op:d} {self.node_count:d}")
+
+    def gen_destroy_op(self):
+        self.test_ops.put("{:d}".format(self.destroy_op))
+
+    def gen_empty_range(self):
+        max_pos = len(self.allocations)
+        pos = random.randint(0, max_pos)
+        lower_bound = (self.allocations[pos - 1].end + 1) if pos else 0
+        upper_bound = self.allocations[pos].base if pos < max_pos else self.top
+        if lower_bound == upper_bound:
+            raise StateException("No gap between allocations")
+        result = sorted((random.randrange(lower_bound, upper_bound)
+                         for i in range(2)))
+        if result[0] == result[1]:
+            raise StateException(
+                f"Random range({lower_bound},{upper_bound}) is empty")
+        return (Range(result[0], result[1]), pos)
+
+    def gen_overlap_range(self, overlap):
+        lower = random.randint(0, overlap.end)
+        upper = random.randint(overlap.base, self.top)
+        if lower == upper:
+            raise StateException("No gap between allocations")
+        return Range(lower, upper) if lower < upper else Range(upper, lower)
+
+    def gen_insert_op(self):
+        r, pos = self.gen_empty_range()
+        self.alloc_range(r, pos)
+        self.test_ops.put("# insert")
+        self.test_ops.put(
+            f"{self.insert_op:d} {r.base:#x} {r.size:#x} {r.node_index:d} 1")
+
+    def gen_remove_op(self):
+        if not self.allocations:
+            raise StateException("Nothing to remove")
+        pos = random.randrange(0, len(self.allocations))
+        r = self.allocations[pos]
+        self.test_ops.put("# remove")
+        self.test_ops.put(f"{self.remove_op:d} {r.node_index:d}")
+        self.free_range(r, pos)
+
+    def gen_lookup_found_op(self):
+        if not self.allocations:
+            raise StateException("Nothing to look up")
+        pos = random.randrange(0, len(self.allocations))
+        r = self.allocations[pos]
+        addr = random.randrange(r.base, r.end)
+        size = r.end - addr + 1
+        self.test_ops.put("# lookup_found")
+        self.test_ops.put(
+            f"{self.lookup_op:d} {addr:#x} {size:#x} {r.node_index:d}")
+
+    def gen_lookup_missing_op(self):
+        max_pos = len(self.allocations)
+        pos = random.randint(0, max_pos)
+        lower_bound = (self.allocations[pos - 1].end + 1) if pos else 0
+        upper_bound = self.allocations[pos].base if pos < max_pos else self.top
+        if lower_bound == upper_bound:
+            raise StateException("No gap between allocations")
+        addr = random.randrange(lower_bound, upper_bound)
+        size = upper_bound - addr
+        self.test_ops.put("# lookup_missing")
+        self.test_ops.put(f"{self.lookup_op:d} {addr:#x} {size:#x} -1")
+
+    def gen_overlap_insert_op(self):
+        if not self.allocations:
+            raise StateException("Nothing to overlap with")
+        r1 = random.choice(self.allocations)
+        r2 = self.gen_overlap_range(r1)
+        msb = self.node_bitmap.bit_length() - 1
+        if msb < 0:
+            raise StateException("Node ID bitmap is empty")
+        self.test_ops.put("# overlap_insert")
+        self.test_ops.put(
+            f"{self.insert_op:d} {r2.base:#x} {r2.size:#x} {msb:d} 0")
+
+    def gen_check_op(self):
+        self.test_ops.put("# check")
+        self.test_ops.put(
+            f"{self.check_op:d} {len(self.allocations):d}")
+
+    def gen_next_node_found_op(self):
+        if not self.allocations:
+            raise StateException("No next node to find")
+        max_pos = len(self.allocations) - 1
+        pos = random.randint(0, max_pos)
+        lower_bound = self.allocations[pos - 1].base + 1 if pos else 0
+        upper_bound = (self.allocations[pos].base if pos <= max_pos else
+                       self.top)
+        if lower_bound == upper_bound:
+            raise StateException("No gap between allocations")
+        addr = random.randrange(lower_bound, upper_bound)
+        next_index = self.allocations[pos].node_index
+        self.test_ops.put("# next_node_found")
+        self.test_ops.put(
+            f"{self.next_node_op:d} {addr:#x} {next_index:d}")
+
+    def gen_next_node_missing_op(self):
+        lower_bound = self.allocations[-1].base + 1 if self.allocations else 0
+        addr = random.randrange(lower_bound, self.top)
+        self.test_ops.put("# next_node_missing")
+        self.test_ops.put(
+            f"{self.next_node_op:d} {addr:#x} -1")
+
+    def gen_step_ops(self):
+        random.choice(self.step_ops)()
+
+    def run(self, max_steps, seed):
+        self.node_count = 1000
+        self.init()
+
+        random.seed(seed)
+        yield "# seed({:d})".format(seed)
+
+        step = 0
+        while step < max_steps:
+            try:
+                self.step()
+                step = step + 1
+                while not self.test_ops.empty():
+                    yield self.test_ops.get()
+            except StateException:
+                pass
+
+        self.destroy()
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-o', '--outfile', default=sys.stdout,
+                        type=argparse.FileType('w'))
+    parser.add_argument('-s', '--seed', type=int,
+                        default=random.randrange(0, 1 << 64))
+    parser.add_argument('-m', '--max-steps', type=int, default=(1 << 20))
+
+    opts = parser.parse_args()
+
+    m = TestCase()
+
+    for op in m.run(opts.max_steps, opts.seed):
+        print(op, file=opts.outfile)
+
+
+if __name__ == "__main__":
+    main()

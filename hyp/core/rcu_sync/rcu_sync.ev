@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -7,7 +7,7 @@ module rcu_sync
 subscribe rcu_update[RCU_UPDATE_CLASS_SYNC_COMPLETE]
 	handler rcu_sync_handle_update(entry)
 
-#if defined(UNITTESTS) && UNITTESTS
+#if defined(UNIT_TESTS) && UNIT_TESTS
 subscribe tests_init
 subscribe tests_start
 	exclude_preempt_disabled

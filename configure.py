@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # coding: utf-8
 #
-# © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -44,9 +44,9 @@ class ClangCompDB(object):
         self.var_subst = var_subst
         self.commands = []
 
-    def add_command(self, command, i, o, **local_env):
+    def add_command(self, command, root_dir, i, o, **local_env):
         self.commands.append({
-            'directory': os.getcwd(),
+            'directory': os.path.abspath(root_dir),
             'command': command,
             'file': i,
             'output': o,
@@ -330,7 +330,8 @@ class AbstractBuildGraph(object):
         cmd = self._rule_commands[rule]
         for compdb in self._rule_compdbs.get(rule, ()):
             for s in sources:
-                compdb.add_command(cmd, s, targets[0], **local_env)
+                compdb.add_command(cmd, self.root_dir, s, targets[0],
+                                   **local_env)
 
     @abc.abstractmethod
     def add_alias(self, alias, targets):
@@ -845,5 +846,5 @@ if __name__ == '__main__':
     build = NinjaBuild(root_dir, arguments=dict(a.split('=', 1)
                                                 for a in sys.argv[1:]))
 
-    import pipes
-    build(gen_cmd=' '.join((pipes.quote(arg) for arg in sys.argv)))
+    import shlex
+    build(gen_cmd=' '.join((shlex.quote(arg) for arg in sys.argv)))

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -12,6 +12,8 @@ subscribe object_deactivate_watchdog
 
 subscribe boot_cold_init
 	handler watchdog_queue_handle_boot_cold_init()
+	// Slightly higher priority to run this before normal handlers
+	priority 1
 
 subscribe boot_hypervisor_start
 

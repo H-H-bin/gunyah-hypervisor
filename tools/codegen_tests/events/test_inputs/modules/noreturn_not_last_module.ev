@@ -1,0 +1,11 @@
+
+module noreturn_not_last_module
+
+/* noreturn handlers should be the last to subscribe */
+subscribe noreturn_not_last_interface_event
+		handler handle_last()
+		priority last
+
+subscribe noreturn_not_last_interface_event
+		handler handle_last() noreturn
+		priority first

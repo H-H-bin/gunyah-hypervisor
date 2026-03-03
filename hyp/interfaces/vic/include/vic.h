@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -111,7 +111,9 @@ vic_bind_private_index(virq_source_t *source, vic_t *vic, index_t index,
 //
 // Any attempt to reuse the source structure for a new vic_bind_*() call is
 // permitted to fail as if this function had not been called, even if an RCU
-// grace period has elapsed.
+// grace period has elapsed. However, once an RCU grace period has elapsed after
+// this function returns, the source may be prepared for reuse with memset() (as
+// if it had been freed and reallocated).
 //
 // If the source has not claimed a VIRQ, or was claimed for a VIC or VCPU that
 // has since been destroyed, this function has no effect.
@@ -127,5 +129,31 @@ vic_unbind(virq_source_t *source);
 // This function may call the scheduler, and therefore must not be called from
 // an RCU read-side critical section or a spinlock.
 void
-vic_unbind_sync(virq_source_t *source)
-	EXCLUDE_RCU_READ EXCLUDE_PREEMPT_DISABLED;
+vic_unbind_sync(virq_source_t *source) EXCLUDE_RCU_READ
+EXCLUDE_PREEMPT_DISABLED;
+
+#if defined(VIC_VIRTUAL_MSI) && VIC_VIRTUAL_MSI
+// Dispatch a message-signalled interrupt sent by a virtual device.
+//
+// The mailbox argument is the address that the virtual device has been
+// programmed to write to. Typically the VIC will require this to be a specific
+// register address, and will return ERROR_ADDR_INVALID if it is anything else.
+//
+// The message argument is the data word that the virtual device has been
+// programmed to write to the mailbox address. Depending on the mailbox
+// semantics, this might be either an IRQ number, an event number that is
+// indirectly mapped to an IRQ number, or ignored.
+//
+// The device_id argument is a platform-specific identifier for the source
+// device, which would be signalled out of band by the bus controller on real
+// hardware. The VIC may either ignore it, or use it along with the message
+// word to map the MSI to an IRQ number.
+//
+// This function returns OK if the VIC has either delivered the MSI as an IRQ,
+// recorded the delivery of the MSI internally, or ignored the MSI to be
+// compatible with the emulated hardware behaviour. It may return any error code
+// if the MSI write should raise a fault.
+error_t
+vic_dispatch_msi(vic_t *vic, vmaddr_t mailbox, uint32_t message,
+		 index_t device_id);
+#endif // VIC_VIRTUAL_MSI

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -23,4 +23,9 @@ define vic_option_flags public bitfield<64> {
 	0	max_msis_valid		bool = 1;
 	1	disable_default_addr	bool = 1;
 	63:2	res0_0			uregister = 0;
+};
+
+define vic_msi_source_config public bitfield<64> {
+	15:0	index		uint16;
+	63:16	res0		uint64(const) = 0;
 };

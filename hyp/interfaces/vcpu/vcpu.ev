@@ -1,18 +1,37 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 interface vcpu
+
+// Save state prior to a context-switch.
+//
+// This event may be called without a following context_switch event - such as
+// for debugging, or if the context-switch is later aborted by an interrupt.
+event vcpu_save_state
+
+// Load vcpu state after a context-switch.
+event vcpu_load_state
+
+// Disable vcpu state after a context-switch.
+//
+// This is needed for some modules to disable EL1 functionality for hypervisor
+// thread when switching to a non-vCPU
+event vcpu_disable_state
 
 // Triggered when a VCPU is initialised by a call to vcpu_poweron().
 //
 // This event is triggered with the scheduler lock for the specified VCPU held
 // by the caller. The VCPU is blocked by the SCHEDULER_BLOCK_VCPU_OFF flag.
 //
+// Don't change any vcpu state in these poweron/poweroff events that is also
+// updated in the thread started and stopped events.
+//
 // The valid returns are OK or ERROR_ARGUMENT_INVALID or errors forwarded
 // from the PSCI SMC cpu_on call.
 setup_event vcpu_poweron
 	param vcpu: thread_t *
+	param power_flags: vcpu_power_req_flags_t
 	return: error_t = OK
 	success: OK
 
@@ -33,6 +52,7 @@ setup_event vcpu_poweroff
 	param current: thread_t *
 	param last_vcpu: bool
 	param force: bool
+	param power_flags: vcpu_power_req_flags_t
 	return: error_t = OK
 	success: OK
 
@@ -163,3 +183,32 @@ selector_event vcpu_unbind_virq
 	selector type: vcpu_virq_type_t
 	param vcpu: thread_t *
 	return: error_t = ERROR_ARGUMENT_INVALID
+
+selector_event vcpu_set_local_virq
+	selector virq_type: vcpu_local_virq_type_t
+	param vcpu: thread_t *
+	param virq: virq_t
+	return: error_t = ERROR_ARGUMENT_INVALID
+
+// Triggered when a VM is requesting to turn off.
+//
+// Handlers can defer the operation by setting defer to true and blocking the
+// current thread. The caller of the event should yield if any handler sets
+// defer to true.
+//
+// This event can trigger consecutively without a vm_on event in between.
+// This event is called with preemption disabled.
+event vcpu_vm_off_request
+	param vcpu: thread_t *
+	param flags: vm_off_flags_t
+	param type: uint64_t
+	param cookie: uint64_t
+	param defer: bool *
+
+// Triggererd when a VM requested to turn off but it failed.
+event vcpu_vm_off_failed
+	param vcpu: thread_t *
+
+// Triggered when a VM turns on.
+event vcpu_vm_on
+	param vcpu: thread_t *

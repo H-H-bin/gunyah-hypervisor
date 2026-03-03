@@ -1,15 +1,16 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier; BSD-3-Clause
 
 #include <assert.h>
 #include <hyptypes.h>
-#include <limits.h>
 
 #include <hypconstants.h>
 #include <hypregisters.h>
 
 #include <addrspace.h>
+#include <pgtable.h>
+#include <pgtable_armv8.h>
 #include <platform_mem.h>
 #include <spinlock.h>
 #include <thread.h>
@@ -33,7 +34,7 @@ addrspace_check_range(addrspace_t *addrspace, vmaddr_t base, size_t size)
 	count_t bits = addrspace->vm_pgtable.control.address_bits;
 	// Ensure that the value used for shift operation is within the limit 0
 	// to sizeof(type) -1
-	assert(bits < (sizeof(vmaddr_t) * (size_t)CHAR_BIT));
+	assert(bits < util_width(vmaddr_t));
 	if (base >= util_bit(bits)) {
 		err = ERROR_ADDR_INVALID;
 	} else if ((size != 0U) && ((base + size - 1U) >= util_bit(bits))) {
@@ -47,7 +48,7 @@ out:
 }
 
 static bool
-addrspace_undergoing_bbm(void)
+addrspace_undergoing_bbm(void) REQUIRE_RCU_READ
 {
 	thread_t *current = thread_get_self();
 	assert(current != NULL);
@@ -57,25 +58,10 @@ addrspace_undergoing_bbm(void)
 
 	bool ret;
 
-	if (addrspace->platform_pgtable) {
+	if (pgtable_vm_is_platform_managed(&addrspace->vm_pgtable)) {
 		ret = platform_pgtable_undergoing_bbm();
 	} else {
-#if (CPU_PGTABLE_BBM_LEVEL == 0) && !defined(PLATFORM_PGTABLE_AVOID_BBM)
-		// We use break-before-make for block splits and merges,
-		// which might affect addresses outside the operation range
-		// and therefore might cause faults that should be hidden.
-		if (!spinlock_trylock(&addrspace->pgtable_lock)) {
-			ret = true;
-		} else {
-			spinlock_release(&addrspace->pgtable_lock);
-			ret = false;
-		}
-#else
-		// Break-before-make is only used when changing the output
-		// address or cache attributes, which shouldn't happen while
-		// the affected pages are being accessed.
-		ret = false;
-#endif
+		ret = pgtable_vm_undergoing_bbm(&addrspace->vm_pgtable);
 	}
 
 	return ret;

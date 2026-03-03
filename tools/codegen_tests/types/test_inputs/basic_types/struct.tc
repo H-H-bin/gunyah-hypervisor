@@ -1,0 +1,57 @@
+// ============================================================================
+// Bitfield Definitions
+// ============================================================================
+
+// Public bitfield with 83 bits demonstrating field packing
+define StructBitField public bitfield<83> {
+	31:0	test	uint32;		// Bits 0-31: 32-bit unsigned integer
+	42:32	test1	uint16;		// Bits 32-42: 16-bit unsigned integer
+	58:51	test5	uint8;		// Bits 51-58: 8-bit unsigned integer
+};
+
+// ============================================================================
+// Structure Definitions - Basic Structures
+// ============================================================================
+
+// Simple public structure with single field
+define DemoSingleField public structure {
+	int_var	uint32;		// 32-bit unsigned integer
+};
+
+// ============================================================================
+// Structure Definitions - Packed Structures
+// ============================================================================
+
+// Packed structure demonstrating mixed field types
+define DemoPacked structure(packed) {
+	int_var		uint8;				// 8-bit integer variable
+	bit_field_var	bitfield StructBitField;	// Embedded bitfield
+	nested_struct	structure DemoSingleField;	// Nested structure
+};
+
+// ============================================================================
+// Structure Definitions - Fixed Offset Structures
+// ============================================================================
+
+// Structure with explicit field offsets for cache-line alignment
+define DemoFixed structure {
+	// before_start_var @ -0x1 uint8;		// Commented: negative offset (invalid)
+	start_var		@ 0x0 uint8;		// Field at offset 0x0
+	cacheline_var		@ 0x40 uint8;		// Field at cache-line boundary (64 bytes)
+	// overlapping_var @ 0x40 uint8;		// Commented: overlapping offset (invalid)
+	// backwards_var @ 0x3f uint8;		// Commented: backwards offset (invalid)
+	// misaligned_var @ 0x41 uint64;		// Commented: misaligned 64-bit field (invalid)
+	next_cacheline_var	@ 0x80 uint64;		// Field at next cache-line (128 bytes)
+};
+
+// ============================================================================
+// Structure Definitions - Container Structures
+// ============================================================================
+
+// Container structure with contained fields (no padding between fields)
+define DemoContainer structure {
+	int_var		uint8(contained);			// Contained 8-bit integer
+	bit_field_var	bitfield StructBitField(contained);	// Contained bitfield
+	nested_struct	structure DemoSingleField(contained);	// Contained nested structure
+	nested_struct2	structure DemoFixed(contained);		// Contained fixed-offset structure
+};

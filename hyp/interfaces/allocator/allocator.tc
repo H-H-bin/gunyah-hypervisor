@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -10,12 +10,13 @@ extend error enumeration {
 define allocator structure {
 };
 
-define allocator_memtype enumeration {
+define allocator_memtype public enumeration {
 	hypervisor = 0;		// Standard hypervisor memory.
 	vm_page_table = 1;	// Guest page table memory.
+	tz_ffi = 2;		// TZ shared memory pool.
 };
 
-define allocator_memattr bitfield<16> {
+define allocator_memattr public bitfield<16> {
 	3:0	type		enumeration allocator_memtype;
 };
 
@@ -29,4 +30,21 @@ define allocator_hint bitfield<32> {
 	// flag informs the allocator to strictly adhere to the hint
 	// and return an error instead.
 	31	strict		bool;
+};
+
+define allocator_stats_info public bitfield<32> {
+	// Version number of the allocator stats structure.
+	7:0	version		uint8(const) = 0x1;
+};
+
+define allocator_stats public structure {
+	info @ 0x0		bitfield allocator_stats_info;
+	// The total amount of memory given to the allocator.
+	total @ 0x8		size;
+	// The amount of memory that has been allocated.
+	allocated @ 0x10	size;
+	// Reserved memory, i.e. for internal metadata.
+	reserved @ 0x18		size;
+	// The largest free chunk available for allocation.
+	largest_free @ 0x20	size;
 };

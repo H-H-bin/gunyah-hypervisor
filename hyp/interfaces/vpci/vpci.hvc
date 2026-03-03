@@ -1,0 +1,26 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define vpci_configure hypercall {
+	call_num	0x6D;
+	vpci		input type cap_id_t;
+	aspace		input type cap_id_t;
+	vic		input type cap_id_t;
+	cam_aperture	input bitfield vpci_aperture;
+	npmem_aperture	input bitfield vpci_aperture;
+	pmem_aperture	input bitfield vpci_aperture;
+	io_aperture	input bitfield vpci_aperture;
+	options		input bitfield vpci_option_flags;
+	error		output enumeration error;
+};
+
+define vpci_attach hypercall {
+	call_num	0x6E;
+	vpci		input type cap_id_t;
+	slot_index	input type index_t;
+	device		input type cap_id_t;
+	res0		input uregister;
+	error		output enumeration error;
+	slot_index	output type index_t;
+};

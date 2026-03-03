@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -93,7 +93,7 @@ rcu_sync_handle_update(rcu_entry_t *entry)
 	return ret;
 }
 
-#if defined(UNITTESTS) && UNITTESTS
+#if defined(UNIT_TESTS) && UNIT_TESTS
 static _Atomic count_t rcu_sync_test_ready_count;
 static _Atomic bool    rcu_sync_test_start_flag;
 static _Atomic bool    rcu_sync_test_success_flag;

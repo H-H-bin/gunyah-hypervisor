@@ -1,4 +1,4 @@
-// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -9,6 +9,9 @@ subscribe range_map_value_add_offset[RANGE_MAP_TYPE_MEMEXTENT_MAPPING]
 
 subscribe range_map_values_equal[RANGE_MAP_TYPE_MEMEXTENT_MAPPING]
 	handler memextent_mappings_equal(x, y)
+
+subscribe range_map_walk_callback[RANGE_MAP_CALLBACK_MEMEXTENT_UNMAP]
+	handler memextent_unmap_range_map_entry(entry, base, size, arg)
 
 subscribe memextent_activate[MEMEXTENT_TYPE_SPARSE]
 	handler memextent_activate_sparse(me)
@@ -45,6 +48,12 @@ subscribe memextent_unmap[MEMEXTENT_TYPE_SPARSE]
 subscribe memextent_unmap_partial[MEMEXTENT_TYPE_SPARSE]
 	handler memextent_unmap_partial_sparse(
 		me, addrspace, vm_base, offset, size, map_flags)
+
+subscribe memextent_unmap_whole_extent[MEMEXTENT_TYPE_SPARSE]
+	handler memextent_unmap_whole_extent_sparse(me, addrspace, map_flags)
+
+subscribe memextent_sync_all[MEMEXTENT_TYPE_SPARSE]
+	handler memextent_sync_all_sparse(me)
 
 subscribe memextent_unmap_all[MEMEXTENT_TYPE_SPARSE]
 	handler memextent_unmap_all_sparse(me)

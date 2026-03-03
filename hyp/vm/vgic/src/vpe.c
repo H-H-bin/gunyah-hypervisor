@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -15,7 +15,7 @@
 #include "gicv3.h"
 #include "internal.h"
 
-#if VGIC_HAS_LPI && GICV3_HAS_VLPI
+#if VGIC_HAS_LPI && defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE
 
 error_t
 vgic_handle_thread_context_switch_pre(void)
@@ -65,7 +65,7 @@ void
 vgic_vpe_schedule_current(void)
 {
 	thread_t *current = thread_get_self();
-	assert(current->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(current));
 
 	assert(current->vgic_vic != NULL);
 
@@ -87,7 +87,7 @@ vgic_vpe_schedule_current(void)
 vcpu_trap_result_t
 vgic_vpe_handle_vcpu_trap_wfi(void)
 {
-	// FIXME:
+	// FIXME: QC Gunyah issue #142
 	return gicv3_vpe_check_wakeup(true) ? VCPU_TRAP_RESULT_RETRY
 					    : VCPU_TRAP_RESULT_UNHANDLED;
 }
@@ -98,4 +98,4 @@ vgic_vpe_handle_vcpu_pending_wakeup(void)
 	return gicv3_vpe_check_wakeup(false);
 }
 
-#endif // VGIC_HAS_LPI && GICV3_HAS_VLPI
+#endif // VGIC_HAS_LPI && defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE

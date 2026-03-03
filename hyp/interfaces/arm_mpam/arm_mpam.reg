@@ -1,0 +1,16 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier; BSD-3-Clause
+
+#include <reg/registers_arm.inc>
+
+#if defined(ARCH_ARM_FEAT_MPAM)
+MPAMIDR_EL1 r
+MPAM0_EL1 wR
+VHE(MPAM1_EL1) wR
+#if defined(ARCH_ARM_FEAT_SME)
+S3_0_C10_C5_3 [MPAMSM_EL1!] wR
+#endif
+MPAM2_EL2 wR
+MPAMHCR_EL2
+#endif

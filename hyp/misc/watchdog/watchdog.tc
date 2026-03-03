@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -59,12 +59,15 @@ extend abort_reason enumeration {
 };
 
 #if defined(UEFITZT)
+// UEFITZT tests invoke long-running operations in TZ, during which the
+// hypervisor bark interrupt might stay pending. Since the hypervisor pats its
+// watchdog in the bark ISR, this can result in a watchdog bite.
+// Give this configuration a bigger bark grace period so there will be more time
+// for the bark interrupt to be delivered to the hypervisor.
 define WATCHDOG_DEFAULT_BARK_GRACE constant type watchdog_milliseconds_t = 10000;
 #else
 define WATCHDOG_DEFAULT_BARK_GRACE constant type watchdog_milliseconds_t = 5000;
 #endif
 
-// Set the hypervisor bark time to five seconds less than the default bite time.
-// This way VMs can have bark times longer than default bite time.
 define WATCHDOG_DEFAULT_HYP_BARK_MS constant type watchdog_milliseconds_t =
 	WATCHDOG_DEFAULT_BITE_MS - WATCHDOG_DEFAULT_BARK_GRACE;

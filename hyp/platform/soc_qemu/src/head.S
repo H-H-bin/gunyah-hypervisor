@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -17,8 +17,10 @@ function __entry_el2, section=nosection
 	str	x0, [x1]
 
 	// Get a 256-bit random seed into x0..x3
-local get_x0:
 	mrs	x0, RNDRRS
+	b.ne	LOCAL(get_x1)
+local get_x0:
+	mrs	x0, RNDR
 	b.eq	LOCAL(get_x0)
 local get_x1:
 	mrs	x1, RNDR
@@ -31,9 +33,6 @@ local get_x3:
 	b.eq	LOCAL(get_x3)
 
 	b	aarch64_init
-local prng_fail:
-	wfe
-	b	LOCAL(prng_fail)
 function_end __entry_el2
 
 function soc_qemu_entry_cold_secondary

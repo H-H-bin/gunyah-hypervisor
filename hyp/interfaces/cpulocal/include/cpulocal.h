@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -43,7 +43,7 @@
 // array.
 #define CPULOCAL_PTR_INDEX(name, ptr)                                          \
 	(assert_safety((ptr) != NULL),                                         \
-	 cpulocal_ptr_check_index((ptr)-cpulocal_##name))
+	 cpulocal_ptr_check_index((ptr) - cpulocal_##name))
 
 // Return true if a CPU index is valid.
 bool

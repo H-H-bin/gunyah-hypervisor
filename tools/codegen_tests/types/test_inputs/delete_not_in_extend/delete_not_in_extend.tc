@@ -1,0 +1,5 @@
+define bitfield_1 bitfield {
+	delete		to_be_deleted_field;
+	15:8		field1 uint16;
+	auto		additional_auto_field uint8;
+};

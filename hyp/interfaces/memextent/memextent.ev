@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -111,6 +111,13 @@ selector_event memextent_unmap
 	param map_flags: addrspace_map_flags_t
 	return: error_t = ERROR_MEMEXTENT_TYPE
 
+selector_event memextent_unmap_whole_extent
+	selector type: memextent_type_t
+	param me: memextent_t *
+	param addrspace: addrspace_t *
+	param map_flags: addrspace_map_flags_t
+	return: error_t = ERROR_MEMEXTENT_TYPE
+
 selector_event memextent_unmap_partial
 	selector type: memextent_type_t
 	param me: memextent_t *
@@ -119,6 +126,11 @@ selector_event memextent_unmap_partial
 	param offset: size_t
 	param size: size_t
 	param map_flags: addrspace_map_flags_t
+	return: error_t = ERROR_MEMEXTENT_TYPE
+
+selector_event memextent_sync_all
+	selector type: memextent_type_t
+	param me: memextent_t *
 	return: error_t = ERROR_MEMEXTENT_TYPE
 
 selector_event memextent_unmap_all
@@ -192,6 +204,11 @@ selector_event memextent_detach
 	selector type: memextent_type_t
 	param me: memextent_t *
 	return: bool = false
+
+selector_event memextent_get_mapped_size
+	selector type: memextent_type_t
+	param me: const memextent_t *
+	return: size_result_t = size_result_error(ERROR_ARGUMENT_INVALID)
 
 selector_event memextent_get_offset_for_pa
 	selector type: memextent_type_t

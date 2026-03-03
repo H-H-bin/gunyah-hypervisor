@@ -1,0 +1,7 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+// FIXME: QC Gunyah issue #64
+// define vgic_device_id_t public newtype type platform_msi_device_id_t;
+define vgic_device_id_t public newtype uint32;

@@ -1,0 +1,417 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+// IOMMU specific feature flags
+// Only list the ones we support, there are many others
+define VIRTIO_IOMMU_F_PROBE constant type index_t = 4;
+define VIRTIO_IOMMU_F_ATTACH_TABLE constant type index_t = 7;
+
+define VIRTIO_IOMMU_NUM_QUEUES constant uint16 = 2;
+define VIRTIO_IOMMU_REQUEST_QUEUE constant uint16 = 0;
+define VIRTIO_IOMMU_EVENT_QUEUE constant uint16 = 1;
+
+// The page granularity. The device MAY set more than one bit in page_size_mask.
+// For the moment we let the driver only do 4k mappings
+// This is the minimum required by the HW to support
+// Cant we get this from the SMMUv3 driver config?
+define VIRTIO_IOMMU_SMMU_MAP_SIZE constant uint32 = 4096;
+
+// Max number of buffers in the virtqueue, must be a power of 2
+// Choose a number that gets the VirtQ memory allocation close to 4k
+// That seems to be the minimum allocation Linux does anyway.
+define VIRTIO_IOMMU_QUEUE_SIZE_MAX constant uint16 = 128;
+
+// Most of these are controlled by some feature flags
+// Only page_size_mask is required
+// All are read-only except for 'bypass' which gets a device default, but can
+// be changed by the OS driver.
+define virtio_iommu_config structure(const) {
+	page_size_mask_low	@ 0x00	uint32(atomic);
+	page_size_mask_high	@ 0x04	uint32(atomic);
+	input_range_start_low	@ 0x08	uint32(atomic);
+	input_range_start_high	@ 0x0C	uint32(atomic);
+	input_range_end_low	@ 0x10	uint32(atomic);
+	input_range_end_high	@ 0x14	uint32(atomic);
+	domain_range_start	@ 0x18	uint32(atomic);
+	domain_range_end	@ 0x1C	uint32(atomic);
+
+	// TODO
+	// The driver uses this to allocate memory for probe properties
+	// Determine the value at build time? How many properties can a device hold
+	// Then set to that? VIRTIO_IOMMU_PROBE_SIZE
+	// This can be a per-endpoint property.. Maybe we just do max size and leave it empty
+	// This is only done at init, so not a big deal
+	probe_size		@ 0x20	uint32(atomic);
+	bypass			@ 0x24	uint8(atomic);
+	reserved		@ 0x25	array(3) uint8;
+};
+
+define virtio_iommu_queue structure {
+	enabled			bool;
+	size			type count_t;
+
+	// Descriptor, device and driver components
+	desc			uint64;
+	dev			uint64;
+	drv			uint64;
+
+	// Track Virtq indexes
+	curr_drv_idx		uint16;
+	curr_dev_idx		uint16;
+
+	// Lock while we are processing/using this queue
+	lock			structure spinlock;
+};
+
+extend virtio_iommu object {
+	lock			structure spinlock;
+	virtio			structure virtio(contained);
+	viommu			structure viommu(contained);
+
+	queues			array(VIRTIO_IOMMU_NUM_QUEUES) structure virtio_iommu_queue;
+
+	// Device configuration
+	page_size_mask		size;
+	probe_size		size;
+	virtq_size		size;
+
+	max_streams		type count_t;
+	num_streams		type count_t;
+
+	// Tree of domains.
+	// Multiple streams can be connected to one domain.
+	// Every stream must be in a domain
+	domain_tree		structure range_tree;
+
+	// The physical iommu that is backing this virtio_iommu interface.
+	iommu			pointer object smmuv3;
+};
+
+extend viommu_type enumeration {
+	virtio;
+};
+
+define virtio_iommu_domain structure {
+	// The Domain ID provided from the Virtio-iommu Guest API call
+	guest_domain_id		uint32;
+
+	// The PCI ATS setting for this domain, needed for invalidations
+	pci_ats			enumeration smmu_v3_ste_eats;
+
+	// Streams attached to this domain
+	// - Used to invalidate all the streams in a Domain
+	// - Used to free the domain if no more streams are attached to it.
+	stream_id_list		structure list;
+
+	tree_node		structure range_tree_node(contained);
+};
+
+extend smmuv3_stream_range structure {
+	// Tree of virtio_iommu_endpoint structures attached within the range.
+	endpoint_tree		structure range_tree;
+};
+
+// Structure to track the attached endpoints and the domains that own them.
+define virtio_iommu_endpoint structure {
+	// Domain and range that are linked to this endpoint. Note that the
+	// domain may change after the endpoint is created.
+	domain			pointer structure virtio_iommu_domain;
+	range			pointer structure smmuv3_stream_range;
+
+	// Node in domain->stream_id_list.
+	domain_list_node	structure list_node(contained);
+
+	// Node in range->endpoint_tree. The base field of this node is the
+	// endpoint / stream ID.
+	tree_node		structure range_tree_node(contained);
+};
+
+extend virtio_backend_type enumeration {
+	iommu;
+};
+
+define virtio_iommu_req_type enumeration(explicit) {
+	NONE		= 0;
+	ATTACH		= 1;
+	DETACH		= 2;
+	MAP		= 3;
+	UNMAP		= 4;
+	PROBE		= 5;
+	ATTACH_TABLE	= 6;
+	INVALIDATE	= 7;
+};
+
+define virtio_iommu_req_status enumeration(explicit) {
+	OK	= 0;
+	IOERR	= 1;
+	UNSUPP	= 2;
+	DEVERR	= 3;
+	INVAL	= 4;
+	RANGE	= 5;
+	NOENT	= 6;
+	FAULT	= 7;
+	NOMEM	= 8;
+};
+
+define virtio_iommu_req_head bitfield<32>(const) {
+	7:0	req		enumeration virtio_iommu_req_type;
+	31:8	unknown=0;
+};
+
+// The device updates this field as part of the request reply
+define virtio_iommu_reply_tail bitfield<32> {
+	7:0	status		enumeration virtio_iommu_req_status;
+	31:8	unknown=0;
+};
+
+// Used to get the request type when parsing
+define virtio_iommu_req_base structure {
+	head		bitfield virtio_iommu_req_head;
+};
+
+// Prepare the reply
+define virtio_iommu_reply_base structure {
+	tail		bitfield virtio_iommu_reply_tail;
+};
+
+// Keep plain attach to support BYPASS domains?
+define virtio_iommu_req_attach_flags bitfield<32>(const) {
+	0	bypass		bool;
+	others	unknown=0;
+};
+
+define virtio_iommu_req_attach structure {
+	// Device-readable
+	head		bitfield virtio_iommu_req_head;
+
+	domain		uint32;
+	endpoint	uint32;
+	flags		bitfield virtio_iommu_req_attach_flags;
+	reserved	array(4) uint8;
+
+	// Device-writeable
+	tail		bitfield virtio_iommu_reply_tail;
+};
+
+define virtio_iommu_req_detach structure {
+	// Device-readable
+	head		bitfield virtio_iommu_req_head;
+	domain		uint32;
+	endpoint	uint32;
+	reserved	array(8) uint8;
+
+	// Device-writeable
+	tail		bitfield virtio_iommu_reply_tail;
+};
+
+define virtio_iommu_req_map_flags bitfield<32>(const) {
+	0	read		bool;
+	1	write		bool;
+	2	mmio		bool;
+	others	unknown=0;
+};
+
+define virtio_iommu_req_map structure {
+	// Device-readable
+	head		bitfield virtio_iommu_req_head;
+	domain		uint32;
+	virt_start	uint64;
+	virt_end	uint64;
+	phys_start	uint64;
+	flags		bitfield virtio_iommu_req_map_flags;
+
+	// Device-writeable
+	tail		bitfield virtio_iommu_reply_tail;
+};
+
+define virtio_iommu_req_unmap structure {
+	// Device-readable
+	head		bitfield virtio_iommu_req_head;
+	domain		uint32;
+	virt_start	uint64;
+	virt_end	uint64;
+	reserved	array(4) uint8;
+
+	// Device-writeable
+	tail		bitfield virtio_iommu_reply_tail;
+};
+
+define virtio_iommu_probe_property_type enumeration(explicit) {
+	NONE		= 0;
+	RESV_MEM	= 1;
+
+	// V1.7 properties
+	HW_ARM_SMMU3	= 2;
+	HW_INTEL_VTD	= 3;
+	HW_RISCV	= 4;
+	HW_AMD		= 5;
+};
+
+// Probe Size depends on the features we support
+// Only support ATTACH_TABLE ARM FORMAT probe request
+define virtio_iommu_probe_property_header bitfield<32> {
+	11:0	type		enumeration virtio_iommu_probe_property_type;
+	15:12	unknown=0;
+	31:16	length		uint16;
+};
+
+define virtio_iommu_probe_hw_arm_smmuv3 structure {
+	head		bitfield virtio_iommu_probe_property_header;
+	reserved1	array(4) uint8;
+
+	idr0		uint64;
+	idr1		uint64;
+	reserved2	uint64;
+	idr3		uint64;
+	reserved3	uint64;
+	idr5		uint64;
+};
+
+define virtio_iommu_reply_probe structure {
+	hw_arm_smmuv3	structure virtio_iommu_probe_hw_arm_smmuv3;
+	tail		bitfield virtio_iommu_reply_tail;
+};
+
+define virtio_iommu_req_probe structure {
+	// Device-readable
+	head		bitfield virtio_iommu_req_head;
+
+	endpoint	uint32;
+	reserved	array(64) uint8;
+
+	// Device-writeable
+	// Probe Properties + tail
+	reply		structure virtio_iommu_reply_probe;
+};
+
+// ARM Virtio-iommu ATTACH_TABLE request - v1.7
+define virtio_iommu_req_attach_table structure {
+	// Device-readable
+	head		bitfield virtio_iommu_req_head;
+
+	domain		uint32;
+	endpoint	uint32;
+	format		uint8;
+	reserved1	array(3) uint8;
+	ste0		uint64;
+	ste1		uint64;
+	reserved2	array(92) uint8;
+
+	// Device-writeable
+	tail		bitfield virtio_iommu_reply_tail;
+};
+
+// Virtio-iommu ATTACH_TABLE Invalidations - v1.7
+define virtio_iommu_invalidate_scope_type enumeration(explicit) {
+	// Invalidates all cached entries for the given domain
+	domain	= 1;
+	// Invalidates all cached entries for the given domain and pasid
+	pasid	= 2;
+	// Invalidates all cached entries for the given domain, pasid and
+	// virtual address range
+	address	= 3;
+};
+
+define virtio_iommu_invalidate_scope bitfield<8> {
+	7:0	type	enumeration virtio_iommu_invalidate_scope_type;
+};
+
+define virtio_iommu_invalidate_caches bitfield<8> {
+	// Invalidate entries cached from the PASID table
+	0	pasid		bool;
+	// Invalidate entries from the TLBs, including device TLBs such as
+	// those implemented with the PCIe ATS extension.
+	1	tlb		bool;
+	others	unknown=0;
+};
+
+define virtio_iommu_invalidate_flags bitfield<16> {
+	// Only invalidate TLB entries cached from leaf table entries
+	0	leaf		bool;
+	// The pasid field is valid
+	1	pasid		bool;
+	// The id field is valid (Architecture ID)
+	2	asid		bool;
+	// In addition to TLB entries targeted by the invalidation, also
+	// invalidate global entries. For example PCIe ATS may create global
+	// entries if the IOMMU sets the Global mapping bit in a Translation
+	// Completion.
+	3	global		bool;
+	others	unknown=0;
+};
+
+define virtio_iommu_req_invalidate structure {
+	// Device-readable
+	head		bitfield virtio_iommu_req_head;
+
+	scope		bitfield virtio_iommu_invalidate_scope;
+	caches		bitfield virtio_iommu_invalidate_caches;
+	flags		bitfield virtio_iommu_invalidate_flags;
+
+	domain		uint32;
+	pasid		uint32;
+	asid		uint64;
+
+	address		uint64;
+	nr_pages	uint64;
+
+	// Page size, in nr of bits, typically 12 for 4k, 30 for 2MB, etc)
+	page_size	uint8;
+	reserved	array(19) uint8;
+
+	// Device-writeable
+	tail		bitfield virtio_iommu_reply_tail;
+};
+
+define virtio_iommu_request union(aligned(8)) {
+	attach		structure virtio_iommu_req_attach;
+	detach		structure virtio_iommu_req_detach;
+	map		structure virtio_iommu_req_map;
+	unmap		structure virtio_iommu_req_unmap;
+	probe		structure virtio_iommu_req_probe;
+	attach_table	structure virtio_iommu_req_attach_table;
+	invalidate	structure virtio_iommu_req_invalidate;
+
+	// Used to read the request type when parsing
+	base		structure virtio_iommu_req_base;
+};
+
+define virtio_iommu_reply union(aligned(8)) {
+	// Probe reply can be larger depending on supported features
+	probe		structure virtio_iommu_reply_probe;
+
+	// The simple status reply in tail.
+	base		structure virtio_iommu_reply_base;
+};
+
+define virtio_iommu_fault_reason enumeration(explicit) {
+	UNKNOWN		= 0;
+	DOMAIN		= 1;
+	MAPPING		= 2;
+};
+
+define virtio_iommu_fault_flags bitfield<32> {
+	0	read		bool;
+	1	write		bool;
+
+	// `execute` is not in the Virtio Spec, Linux added it to their driver
+	// It is in the ATTACH_TABLE proposal
+	2	execute		bool;
+
+	8	address		bool;
+	others	unknown=0;
+};
+
+define virtio_iommu_fault bitfield<192> {
+	7:0	reason		enumeration virtio_iommu_fault_reason;
+	31:8	unknown=0;
+	63:32	flags		bitfield virtio_iommu_fault_flags;
+	95:64	endpoint	uint32;
+	127:96	unknown=0;
+	191:128	address		uint64;
+};
+
+extend range_tree_node_type enumeration {
+	virtio_iommu_stream_range;
+};

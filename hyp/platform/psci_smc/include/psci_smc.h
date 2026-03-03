@@ -1,13 +1,18 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
-
-uint32_t
-psci_smc_psci_version(void);
 
 error_t
 psci_smc_cpu_suspend(register_t power_state, register_t entry_point,
 		     register_t context_id);
+
+#if defined(PLATFORM_ENABLE_SYSTEM_SUSPEND) && PLATFORM_ENABLE_SYSTEM_SUSPEND
+error_t
+psci_smc_system_suspend(paddr_t entry_point, register_t context_id);
+
+psci_ret_affinity_info_result_t
+psci_smc_affinity_info(psci_mpidr_t cpu_id, uint32_t lowest_affinity_level);
+#endif // PLATFORM_ENABLE_SYSTEM_SUSPEND
 
 #if defined(PLATFORM_PSCI_DEFAULT_SUSPEND)
 error_t

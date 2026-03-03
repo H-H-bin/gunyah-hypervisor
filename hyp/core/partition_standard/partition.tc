@@ -1,8 +1,8 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-define PARTITION_NUM_MAPPED_RANGE constant type count_t = 8;
+define PARTITION_MAX_MAPPED_RANGE_COUNT constant type count_t = 64;
 
 extend object_header structure {
 	partition	pointer object partition;
@@ -12,23 +12,32 @@ define partition_mapped_range structure {
 	virt		uintptr;
 	phys		type paddr_t;
 	size		size;
-	// FIXME:
+	// FIXME: QC Gunyah issue #245
 	attr		bitfield allocator_memattr;
+	is_heap		bool;
+	list_node	structure list_node(contained);
+	alloc_range	structure virt_range;
+	rcu_entry	structure rcu_entry(contained);
 };
 
 extend partition object {
 	allocator	structure allocator;
-	mapped_ranges	array(PARTITION_NUM_MAPPED_RANGE)
-				structure partition_mapped_range;
+	mapped_ranges	structure list;
+	mapped_count	type count_t;
 	options		bitfield partition_option_flags;
 };
 
 extend cap_rights_partition bitfield {
 	0	object_create	bool;
 	1	donate		bool;
+	2	query		bool;
 };
 
 define partition_option_flags bitfield<64> {
 	0	privileged	bool = 0;
 	others	unknown = 0;
+};
+
+extend rcu_update_class enumeration {
+	partition_release_mapped_range;
 };

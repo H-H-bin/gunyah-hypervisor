@@ -1,0 +1,53 @@
+# Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+CC=clang
+
+GENERAL_INCLUDES=-I../../../interfaces/range_tree/include
+GENERAL_INCLUDES+=-I$(GUNYAH_BUILD)/include
+GENERAL_INCLUDES+=-I$(GUNYAH_BUILD)/events/include
+GENERAL_INCLUDES+=-I../../../interfaces/base/include
+GENERAL_INCLUDES+=-I../../../interfaces/partition/include
+GENERAL_INCLUDES+=-I../../../interfaces/spinlock/include
+GENERAL_INCLUDES+=-I../../../interfaces/util/include
+GENERAL_INCLUDES+=-I../../../interfaces/platform/include
+GENERAL_INCLUDES+=-I../../../interfaces/rcu/include
+GENERAL_INCLUDES+=-I../../../arch/armv8/include
+GENERAL_INCLUDES+=-I../../../arch/generic/include
+GENERAL_INCLUDES+=-I.
+GENERAL_INCLUDES+=-imacros ../../../interfaces/util/include/attributes.h
+GENERAL_INCLUDES+=-imacros ../../../core/spinlock_ticket/include/spinlock_attrs.h
+GENERAL_INCLUDES+=-imacros ../../../core/preempt/include/preempt_attrs.h
+GENERAL_INCLUDES+=-imacros ../../../interfaces/rcu/include/rcu_attrs.h
+GENERAL_DEFS+=-DHOST_TEST
+GENERAL_DEFS+=-DHYP_STANDALONE_TEST
+GENERAL_DEFS+=-DVERBOSE=1
+
+CFLAGS+=--target=x86_64-linux-gnu
+CFLAGS+=-m64 -mcx16 -std=gnu18 -O1 -g
+CFLAGS+=-Wall -Werror -Wno-gcc-compat -Wno-gnu-alignof-expression
+CFLAGS+=-ffunction-sections -fdata-sections
+CFLAGS+=-fsanitize=address -fno-omit-frame-pointer
+CFLAGS+=$(GENERAL_INCLUDES)
+CFLAGS+=$(GENERAL_DEFS)
+
+LDFLAGS=-lstdc++
+
+ROOTSRC=../src/range_tree_avl.c ./stub.c \
+	$(GUNYAH_BUILD)/autogen/core/base/src/accessors.c \
+	$(GUNYAH_BUILD)/autogen/core/base/src/hypresult.c
+ROOTOBJ=$(patsubst %.c,%.o,$(patsubst %.cpp,%.o,$(ROOTSRC)))
+
+RANDOM_TEST=rt
+RAN_SUBSRC=./random_test.c
+RAN_SUBOBJ=$(RAN_SUBSRC:%.c=%.o)
+
+$(RANDOM_TEST):$(ROOTOBJ) $(RAN_SUBOBJ)
+	$(CC) $(CFLAGS) ${LDFLAGS} $(ROOTOBJ) $(RAN_SUBOBJ) -o $@
+
+.c.o:
+	$(CC) $(CFLAGS) -c $< -o $@
+
+clean:
+	rm -f *.o $(BIN) $(ROOTOBJ) $(SUBOBJ) ${RANDOM_TEST}

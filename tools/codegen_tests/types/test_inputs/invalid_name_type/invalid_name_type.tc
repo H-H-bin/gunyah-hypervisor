@@ -1,0 +1,2 @@
+// new type names must have "_t" postfix
+define invalid_name newtype uint32;

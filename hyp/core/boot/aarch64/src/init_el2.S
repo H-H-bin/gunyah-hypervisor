@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -121,7 +121,7 @@ function aarch64_init, section=nosection
 	cbnz	x23, 1b
 
 	// Load the PAC keys into registers
-	kernel_pauth_entry x0, x1, x2
+	kernel_pauth_full x0, x1, x2
 
 	// Enable PAC
 	mrs	x9, SCTLR_EL2
@@ -200,7 +200,7 @@ function aarch64_secondary_init, section=nosection
 
 #if defined(ARCH_ARM_FEAT_PAuth)
 	// Load the PAC keys into registers
-	kernel_pauth_entry x0, x1, x2
+	kernel_pauth_full x0, x1, x2
 
 	// Enable PAC
 	mrs	x9, SCTLR_EL2
@@ -223,7 +223,7 @@ function_end aarch64_secondary_init
 // or restart after hotplug of any CPU, with MMU and caches disabled.
 //
 // Input arguments:
-//    x0: Virtual pointer to the CPU's idle thread.
+//    x0: Virtual pointer to the CPU's current thread.
 
 function aarch64_warm_init, section=nosection
 	// Disable debug, aborts and interrupts.
@@ -249,7 +249,7 @@ function aarch64_warm_init, section=nosection
 	mov	x2, 0
 	bl	aarch64_init_address_space
 
-	// Load the idle thread's stack pointer
+	// Load the thread's stack pointer
 	ldr	x0, [x19, OFS_THREAD_CONTEXT_SP]
 	msr	SPSel, 1
 	mov	sp, x0
@@ -271,7 +271,7 @@ function aarch64_warm_init, section=nosection
 
 #if defined(ARCH_ARM_FEAT_PAuth)
 	// Load the PAC keys into registers
-	kernel_pauth_entry x0, x1, x2
+	kernel_pauth_full x0, x1, x2
 
 	// Enable PAC
 	mrs	x9, SCTLR_EL2

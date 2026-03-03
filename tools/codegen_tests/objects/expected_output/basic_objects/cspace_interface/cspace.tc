@@ -1,0 +1,69 @@
+// Automatically generated. Do not modify.
+
+// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+// Capability space interface types.
+
+extend error enumeration {
+	CSPACE_CAP_NULL	= 50;
+	CSPACE_CAP_REVOKED = 51;
+	CSPACE_WRONG_OBJECT_TYPE = 52;
+	CSPACE_INSUFFICIENT_RIGHTS = 53;
+	CSPACE_FULL = 54;
+};
+
+define cap_id_t public newtype uint64;
+
+define CSPACE_CAP_INVALID public constant type cap_id_t = -1;
+
+define cap_rights_t public newtype uint32;
+
+define cap_rights_generic public bitfield<32> {
+	others unknown=0;
+};
+
+extend thread object module cspace {
+	cspace pointer object cspace;
+};
+
+define cap_rights_addrspace public bitfield<32> {
+	others	unknown=0;
+};
+define cap_rights_cspace public bitfield<32> {
+	others	unknown=0;
+};
+define cap_rights_doorbell public bitfield<32> {
+	others	unknown=0;
+};
+define cap_rights_gicv3_its public bitfield<32> {
+	others	unknown=0;
+};
+define cap_rights_hwirq public bitfield<32> {
+	others	unknown=0;
+};
+define cap_rights_memextent public bitfield<32> {
+	others	unknown=0;
+};
+define cap_rights_msgqueue public bitfield<32> {
+	others	unknown=0;
+};
+define cap_rights_partition public bitfield<32> {
+	others	unknown=0;
+};
+define cap_rights_thread public bitfield<32> {
+	others	unknown=0;
+};
+define cap_rights_vic public bitfield<32> {
+	others	unknown=0;
+};
+define cap_rights_virtio_backend public bitfield<32> {
+	others	unknown=0;
+};
+define cap_rights_vpm_group public bitfield<32> {
+	others	unknown=0;
+};
+define cap_rights_vrtc public bitfield<32> {
+	others	unknown=0;
+};

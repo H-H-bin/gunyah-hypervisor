@@ -1,13 +1,17 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 interface object
 
-// FIXME:
+// FIXME: QC Gunyah issue #14
 // Add rollback handlers
 #for obj in $object_list
 #set o = str(obj)
+
+event object_init_$o
+	param ${o}_create: ${o}_create_t
+	param parent: partition_t *
 
 setup_event object_create_$o
 	param ${o}_create: ${o}_create_t

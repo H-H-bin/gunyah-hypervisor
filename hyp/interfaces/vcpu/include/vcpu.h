@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -21,7 +21,8 @@ vcpu_configure(thread_t *thread, vcpu_option_flags_t vcpu_options);
 // this function is called on it.
 bool_result_t
 vcpu_poweron(thread_t *vcpu, vmaddr_result_t entry_point,
-	     register_result_t context) REQUIRE_SCHEDULER_LOCK(vcpu);
+	     register_result_t context, vcpu_power_req_flags_t power_flags)
+	REQUIRE_SCHEDULER_LOCK(vcpu);
 
 // Halt execution of the current VCPU and tear down its execution state.
 //
@@ -36,15 +37,19 @@ vcpu_poweron(thread_t *vcpu, vmaddr_result_t entry_point,
 // If the last_vcpu argument is not correct, this call may return ERROR_DENIED.
 // This check is not performed if the force argument is true.
 error_t
-vcpu_poweroff(bool last_vcpu, bool force);
+vcpu_poweroff(bool last_vcpu, bool force, vcpu_power_req_flags_t power_flags);
 
 // Halt the current thread's VCPU execution state.
 //
 // This function will raise the VCPU's halt VIRQ, notifying its handler VM
 // that the VCPU has halted. It can be called by any module that has
 // already blocked a VCPU in a way that might need handling by RM.
+//
+// This should be called with preemption disabled, because the caller will have
+// set a block flag which will prevent the VCPU running again if it is preempted
+// before the halt VIRQ is sent.
 noreturn void
-vcpu_halted(void);
+vcpu_halted(void) REQUIRE_PREEMPT_DISABLED;
 
 // Suspend a VCPU.
 //
@@ -158,10 +163,35 @@ vcpu_gpr_read(thread_t *thread, uint8_t reg_num);
 void
 vcpu_gpr_write(thread_t *thread, uint8_t reg_num, register_t value);
 
+// Bind a virtual IRQ to a VCPU for a specific purpose.
+//
+// This function binds a virtual interrupt to the specified VCPU based on the
+// virq_type parameter, typically this is allow VCPU events to assert a VIRQ.
+//
+// The function triggers an event that allows the appropriate module to handle
+// the binding based on the virq_type.
 error_t
 vcpu_bind_virq(thread_t *vcpu, vic_t *vic, virq_t virq,
 	       vcpu_virq_type_t virq_type);
 
+// Unbind a virtual IRQ from a VCPU.
+//
+// The function triggers an event that allows the appropriate module to handle
+// the unbinding based on the virq_type.
 error_t
 vcpu_unbind_virq(thread_t *vcpu, vcpu_virq_type_t virq_type)
 	EXCLUDE_PREEMPT_DISABLED;
+
+// Check whether the specified thread is a vcpu
+static inline bool
+vcpu_is_vcpu(const thread_t *thread)
+{
+	return thread_is_kind(thread, THREAD_KIND_VCPU);
+}
+
+// Check the current thread is a vcpu
+static inline bool
+vcpu_is_vcpu_self(void)
+{
+	return thread_is_kind_self(THREAD_KIND_VCPU);
+}

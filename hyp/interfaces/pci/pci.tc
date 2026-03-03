@@ -1,0 +1,254 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+// Definitions derived from the PCI and PCIe specifications.
+//
+// These are currently only used by the vPCI implementation, but in principle
+// they could also be used by platform modules that access physical PCI buses.
+
+// All multi-byte fields in PCI configuration space are little-endian, but we
+// don't yet have a way to annotate them as such to force byte swaps on big
+// endian targets.
+#if !ARCH_ENDIAN_LITTLE
+#error Unimplemented
+#endif
+
+define pci_responder_id bitfield<16> {
+	2:0		function		type index_t;
+	7:3		slot			type index_t;
+	15:8		bus			type index_t;
+};
+
+// Type 0 Configuration Header
+define pci_config_header structure {
+	vendor_id @ 0x00	uint16;
+	product_id @ 0x02	uint16;
+	command @ 0x04		bitfield pci_function_command;
+	status @ 0x06		bitfield pci_function_status;
+	device_revision @ 0x08	uint8;
+	device_interface @ 0x09	uint8;
+	device_subclass @ 0x0a	uint8;
+	device_class @ 0x0b	uint8;
+	cacheline_size @ 0x0c	uint8;
+	latency_timer @ 0x0d	uint8;
+	header_type @ 0x0e	uint8;
+	bist @ 0x0f		uint8;
+	bars @ 0x10		array(6) uint32;
+	cardbus_cis_ptr @ 0x28	uint32;
+	subsys_vendor_id @ 0x2c	uint16;
+	subsys_id @ 0x02e	uint16;
+	exp_rom_base @ 0x30	uint32;
+	capability_ptr @ 0x34	uint8;
+	interrupt_line @ 0x3c	uint8;
+	interrupt_pin @ 0x3d	uint8;
+	min_gnt @ 0x3e		uint8;
+	max_lat @ 0x3f		uint8;
+};
+
+define pci_function_command bitfield<16> {
+	0		io_space		bool;
+	1		mem_space		bool;
+	2		bus_master		bool; // Note: affects MSI-X
+	3		special_cycles		bool; // RAZ/WI for PCIe
+	4		write_invalidate	bool; // RAZ/WI for PCIe
+	5		vga_palette		bool; // RAZ/WI for PCIe
+	6		parity_errors		bool;
+	7		idsel_stepping		bool(const) = 0;
+	8		serr_enabled		bool;
+	9		fast_back_to_back	bool; // RAZ/WI for PCIe
+	10		int_disabled		bool;
+	15:11		res0_11			uint16(const) = 0;
+};
+
+define pci_function_status bitfield<16>(set_ops) {
+	2:0		res0_0			uint16(const) = 0;
+	3		int_state		bool;
+	4		capabilities		bool;
+	5		supports_66MHz		bool(const) = 0;
+	6		res0_6			bool(const) = 0;
+	7		supports_fbb		bool(const) = 0;
+	8		master_data_parity_err	bool; // W1C
+	10:9		devsel_timing		uint16; // RAZ/WI for PCIe
+	11		signalled_target_abort	bool; // W1C
+	12		received_target_abort	bool; // W1C; only for bridges
+	13		received_master_abort	bool; // W1C; only for bridges
+	14		serr_asserted		bool; // W1C
+	15		parity_error		bool; // W1C
+};
+
+define pci_capability_id enumeration(explicit) {
+	msi = 0x05;
+	vendor = 0x09;
+	pcie = 0x10;
+	msix = 0x11;
+};
+
+define pci_interrupt_pin enumeration(explicit) {
+	none = 0;
+	IRQA = 1;
+	IRQB = 2;
+	IRQC = 3;
+	IRQD = 4;
+};
+
+define pci_capability structure {
+	cap_id @ 0		uint8;
+	next @ 1		uint8;
+};
+
+define pci_vendor_capability structure {
+	base @ 0		structure pci_capability;
+	size @ 2		uint8;
+};
+
+define pci_msix_capability structure {
+	header @ 0		structure pci_capability;
+	msg_control @ 2		bitfield pci_msix_message_control;
+	table @ 4		bitfield pci_msix_offset;
+	pba @ 8			bitfield pci_msix_offset;
+};
+
+define pci_msix_message_control bitfield<16>(set_ops) {
+	10:0		table_size	type index_t;
+	13:11		unknown = 0;
+	14		function_mask	bool;
+	15		msix_enable	bool;
+};
+
+define pci_msix_offset bitfield<32> {
+	2:0		bir		type index_t;
+	31:3		offset		size;
+};
+
+define pci_msix_vector structure {
+	addr @ 0x0	uint64;
+	data @ 0x8	uint32;
+	control @ 0xc	bitfield pci_msix_vector_control;
+};
+
+define pci_msix_vector_control bitfield<32> {
+	0		mask		bool;
+	31:1		unknown = 0;
+};
+
+define pci_express_capability structure {
+	header @ 0x0		structure pci_capability;
+	pcie_caps @ 0x2		bitfield pci_express_capabilities;
+	device_caps @ 0x4	bitfield pci_express_device_capabilities;
+	device_control @ 0x8	bitfield pci_express_device_control;
+	device_status @ 0xa	bitfield pci_express_device_status;
+	link_caps @ 0xc		uint32;
+	link_control @ 0x10	uint16;
+	link_status @ 0x12	uint16;
+	slot_caps @ 0x14	uint32;
+	slot_control @ 0x18	uint16;
+	slot_status @ 0x1a	uint16;
+	root_control @ 0x1c	uint16;
+	root_caps @ 0x1e	uint16;
+	root_status @ 0x20	uint32;
+	device_caps_2 @ 0x24	uint32;
+	device_control_2 @ 0x28	uint16;
+	device_status_2 @ 0x2a	uint16;
+	link_caps_2 @ 0x2c	uint32;
+	link_control_2 @ 0x30	uint16;
+	link_status_2 @ 0x32	uint16;
+	slot_caps_2 @ 0x34	uint32;
+	slot_control_2 @ 0x38	uint16;
+	slot_status_2 @ 0x3a	uint16;
+};
+
+define pci_express_capabilities bitfield<16> {
+	3:0		version		uint16 = 2;
+	7:4		type		enumeration pci_express_device_type;
+	8		has_slot	bool;
+	13:9		status_msi	uint16;
+	others		unknown = 0;
+};
+
+define pci_express_device_type enumeration(explicit) {
+	ENDPOINT = 0b0000;
+	LEGACY_ENDPOINT = 0b0001;
+	ROOT_PORT = 0b0100;
+	UPSTREAM_PORT = 0b0101;
+	DOWNSTREAM_PORT = 0b0110;
+	PCIE_PCI_BRIDGE = 0b0111;
+	PCI_PCIE_BRIDGE = 0b1000;
+	RCIE = 0b1001; // Root Complex Integrated Endpoint
+	RCEC = 0b1010; // Root Complex Event Collector
+};
+
+define pci_express_device_capabilities bitfield<32> {
+	2:0	max_payload		type index_t; // 1B << (N + 7)
+	4:3	phantom_function_bits	type index_t;
+	5	extended_tag		bool;
+	8:6	l0s_latency		type index_t = ~0; // 64ns << N
+	11:9	l1_latency		type index_t = ~0; // 1µs << N
+	14	role_based_error	bool = 1;
+	25:18	slot_power_limit	type index_t; // W * slot_power_scale
+	27:26	slot_power_scale	type index_t; // 10 ^ -N
+	28	function_reset		bool;
+	others				unknown = 0;
+};
+
+define pci_express_device_control bitfield<16> {
+	0	correctable_errors	bool;
+	1	nonfatal_errors		bool;
+	2	fatal_errors		bool;
+	3	unsupported_requests	bool;
+	4	relaxed_ordering	bool = 1;
+	7:5	max_payload		type index_t; // 1B << (N + 7)
+	8	extended_tag		bool;
+	9	phantom_functions	bool;
+	10	aux_power		bool;
+	11	no_snoop		bool;
+	14:12	max_read_request	type index_t; // 1B << (N + 7)
+	15	function_reset		bool;
+};
+
+define pci_express_device_status bitfield<16> {
+	0	correctable_error	bool;
+	1	nonfatal_error		bool;
+	2	fatal_error		bool;
+	3	unsupported_request	bool;
+	4	aux_power		bool;
+	5	transactions_pending	bool;
+	others				unknown = 0;
+};
+
+define PCI_DEVICE_CLASS_MASS_STORAGE	constant uint8 = 0x01;
+define PCI_DEVICE_CLASS_NETWORK		constant uint8 = 0x02;
+define PCI_DEVICE_CLASS_DISPLAY		constant uint8 = 0x03;
+define PCI_DEVICE_CLASS_MEMORY		constant uint8 = 0x05;
+define PCI_DEVICE_CLASS_BRIDGE		constant uint8 = 0x06;
+define PCI_DEVICE_CLASS_CONSOLE		constant uint8 = 0x07;
+define PCI_DEVICE_CLASS_SYSTEM		constant uint8 = 0x08;
+define PCI_DEVICE_CLASS_INPUT		constant uint8 = 0x09;
+define PCI_DEVICE_CLASS_OTHER		constant uint8 = 0xff;
+
+// PCI_DEVICE_CLASS_MASS_STORAGE
+define PCI_DEVICE_SUBCLASS_MASS_STORAGE_OTHER constant uint8 = 0x80;
+
+// PCI_DEVICE_CLASS_NETWORK
+define PCI_DEVICE_SUBCLASS_NETWORK_ETHERNET	constant uint8 = 0x0;
+define PCI_DEVICE_SUBCLASS_NETWORK_OTHER	constant uint8 = 0x80;
+
+// PCI_DEVICE_CLASS_DISPLAY
+define PCI_DEVICE_SUBCLASS_DISPLAY_3D constant uint8 = 0x2;
+
+// PCI_DEVICE_CLASS_MEMORY
+define PCI_DEVICE_SUBCLASS_MEMORY_RAM constant uint8 = 0x0;
+
+// PCI_DEVICE_CLASS_BRIDGE
+define PCI_DEVICE_SUBCLASS_BRIDGE_HOST constant uint8 = 0x0;
+
+// PCI_DEVICE_CLASS_CONSOLE
+define PCI_DEVICE_SUBCLASS_CONSOLE_OTHER constant uint8 = 0x80;
+
+// PCI_DEVICE_CLASS_SYSTEM
+define PCI_DEVICE_SUBCLASS_SYSTEM_IOMMU constant uint8 = 0x06;
+
+// PCI_DEVICE_CLASS_INPUT
+define PCI_DEVICE_SUBCLASS_INPUT_OTHER constant uint8 = 0x80;
+
+define PCI_VENDOR_ID_QUALCOMM constant uint16 = 0x17cb;

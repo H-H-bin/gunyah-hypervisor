@@ -1,10 +1,15 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 error_t
 watchdog_configure(watchdog_t		  *watchdog,
 		   watchdog_option_flags_t watchdog_options);
+
+// Re-program the HW watchdog with the head of the queue. Must be called when
+// resuming from a system suspend state where the watchdog was powered off.
+void
+watchdog_restore(void);
 
 void
 watchdog_control(watchdog_t *wdt, bool enable);

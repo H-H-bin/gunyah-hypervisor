@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -26,11 +26,14 @@ arm_vm_timer_handle_object_create_thread(thread_create_t thread_create)
 	thread_t *thread = thread_create.thread;
 	assert(thread != NULL);
 
-	if (thread->kind == THREAD_KIND_VCPU) {
+	if (vcpu_is_vcpu(thread)) {
 		timer_init_object(&thread->virtual_timer,
 				  TIMER_ACTION_VIRTUAL_TIMER);
 		timer_init_object(&thread->physical_timer,
 				  TIMER_ACTION_PHYSICAL_TIMER);
+		thread->virtual_timer_virq = PLATFORM_VM_ARCH_VIRTUAL_TIMER_IRQ;
+		thread->physical_timer_virq =
+			PLATFORM_VM_ARCH_PHYSICAL_TIMER_IRQ;
 	}
 
 	return OK;
@@ -41,15 +44,14 @@ arm_vm_timer_handle_object_activate_thread(thread_t *thread)
 {
 	error_t ret = OK;
 
-	if (thread->kind == THREAD_KIND_VCPU) {
+	if (vcpu_is_vcpu(thread)) {
 		ret = vic_bind_private_vcpu(&thread->virtual_timer_virq_src,
-					    thread,
-					    PLATFORM_VM_ARCH_VIRTUAL_TIMER_IRQ,
+					    thread, thread->virtual_timer_virq,
 					    VIRQ_TRIGGER_VIRTUAL_TIMER);
 		if (ret == OK) {
 			ret = vic_bind_private_vcpu(
 				&thread->physical_timer_virq_src, thread,
-				PLATFORM_VM_ARCH_PHYSICAL_TIMER_IRQ,
+				thread->physical_timer_virq,
 				VIRQ_TRIGGER_PHYSICAL_TIMER);
 
 			if (ret != OK) {
@@ -64,7 +66,7 @@ arm_vm_timer_handle_object_activate_thread(thread_t *thread)
 void
 arm_vm_timer_handle_object_deactivate_thread(thread_t *thread)
 {
-	if (thread->kind == THREAD_KIND_VCPU) {
+	if (vcpu_is_vcpu(thread)) {
 		vic_unbind(&thread->virtual_timer_virq_src);
 		timer_dequeue(&thread->virtual_timer);
 
@@ -80,7 +82,7 @@ arm_vm_timer_handle_thread_context_switch_pre(void)
 
 	// Enqueue thread's timeout if it is enabled, not already queued, and is
 	// capable of waking the VCPU
-	if ((compiler_expected(thread->kind == THREAD_KIND_VCPU) &&
+	if ((compiler_expected(vcpu_is_vcpu(thread)) &&
 	     vcpu_expects_wakeup(thread))) {
 		if (arm_vm_timer_is_irq_enabled_thread(
 			    thread, ARM_VM_TIMER_TYPE_VIRTUAL)) {
@@ -103,29 +105,32 @@ arm_vm_timer_handle_thread_context_switch_pre(void)
 }
 
 void
-arm_vm_timer_handle_thread_context_switch_post(void)
+arm_vm_timer_handle_vcpu_disable_state(void)
+{
+	// Disable the timer and its IRQ
+	arm_vm_timer_cancel_timeout(ARM_VM_TIMER_TYPE_VIRTUAL);
+	arm_vm_timer_cancel_timeout(ARM_VM_TIMER_TYPE_PHYSICAL);
+}
+
+void
+arm_vm_timer_handle_vcpu_load_state(void)
 {
 	thread_t *thread = thread_get_self();
-	if (compiler_expected(thread->kind == THREAD_KIND_VCPU)) {
-		arm_vm_timer_load_state(thread);
 
-		bool_result_t asserted;
+	arm_vm_timer_load_state(thread);
 
-		asserted = virq_query(&thread->virtual_timer_virq_src);
-		if ((asserted.e == OK) && !asserted.r) {
-			arm_vm_timer_arch_timer_hw_irq_deactivate(
-				ARM_VM_TIMER_TYPE_VIRTUAL);
-		}
+	bool_result_t asserted;
 
-		asserted = virq_query(&thread->physical_timer_virq_src);
-		if ((asserted.e == OK) && !asserted.r) {
-			arm_vm_timer_arch_timer_hw_irq_deactivate(
-				ARM_VM_TIMER_TYPE_PHYSICAL);
-		}
-	} else {
-		// Disable the timer and its IRQ
-		arm_vm_timer_cancel_timeout(ARM_VM_TIMER_TYPE_VIRTUAL);
-		arm_vm_timer_cancel_timeout(ARM_VM_TIMER_TYPE_PHYSICAL);
+	asserted = virq_query(&thread->virtual_timer_virq_src);
+	if ((asserted.e == OK) && !asserted.r) {
+		arm_vm_timer_arch_timer_hw_irq_deactivate(
+			ARM_VM_TIMER_TYPE_VIRTUAL);
+	}
+
+	asserted = virq_query(&thread->physical_timer_virq_src);
+	if ((asserted.e == OK) && !asserted.r) {
+		arm_vm_timer_arch_timer_hw_irq_deactivate(
+			ARM_VM_TIMER_TYPE_PHYSICAL);
 	}
 }
 

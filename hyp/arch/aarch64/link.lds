@@ -1,5 +1,5 @@
 /*
- * © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
@@ -34,7 +34,8 @@ SECTIONS
 	.text : AT (PLATFORM_LMA_BASE) {
 		*(.text.boot)
 		*(.text.boot.*)
-		*(SORT_BY_ALIGNMENT(.text .text.*))
+		*(SORT_BY_ALIGNMENT(SORT_BY_NAME(.text.*)))
+		*(.text)
 		KEEP(*(.text.debug));
 	} : text
 
@@ -42,6 +43,7 @@ SECTIONS
 	rodata_base = .;
 	.rodata : {
 		*(SORT_BY_ALIGNMENT(.rodata .rodata.*))
+		KEEP(*(.rodata.debug));
 	} : rodata
 
 	. = ALIGN(8);

@@ -1,14 +1,14 @@
-# © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
 CC=clang
 
 INCLUDE=-I../../../interfaces/range_map/include
-INCLUDE+=-I../../../../build/qemu/unittests-qemu/debug/include
-INCLUDE+=-I../../../../build/qemu/unittests-qemu/debug/events/include
-INCLUDE+=-I../../../../build/qemu/unittests-qemu/debug/events/range_map_gpt/include
-INCLUDE+=-I../../../../build/qemu/unittests-qemu/debug/objects/include
+INCLUDE+=-I$(GUNYAH_BUILD)/include
+INCLUDE+=-I$(GUNYAH_BUILD)/events/include
+INCLUDE+=-I$(GUNYAH_BUILD)/events/range_map_gpt/include
+INCLUDE+=-I$(GUNYAH_BUILD)/objects/include
 INCLUDE+=-I../../../interfaces/cpulocal/include
 INCLUDE+=-I../../../interfaces/log/include
 INCLUDE+=-I../../../interfaces/object/include
@@ -41,9 +41,8 @@ LDFLAGS+=-Wl,--gc-sections
 SRC=../src/gpt.c ../src/gpt_tests.c host_tests.c
 SRC+=../../../core/util/src/bitmap.c
 SRC+=../../../misc/log_standard/src/string_util.c
-SRC+=../../../core/util/src/string_util.c
-SRC+=../../../../build/qemu/unittests-qemu/debug/hyp/core/base/accessors.c
-SRC+=../../../../build/qemu/unittests-qemu/debug/hyp/core/base/hypresult.c
+SRC+=$(GUNYAH_BUILD)/autogen/core/base/src/accessors.c
+SRC+=$(GUNYAH_BUILD)/autogen/core/base/src/hypresult.c
 
 OBJ=$(patsubst %.c,%.o,$(SRC))
 

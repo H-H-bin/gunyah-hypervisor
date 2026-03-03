@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -12,6 +12,7 @@
 #include <compiler.h>
 #include <log.h>
 #include <preempt.h>
+#include <qcbor.h>
 #include <scheduler.h>
 #include <thread.h>
 #include <trace.h>
@@ -115,6 +116,11 @@ arch_vcpu_el2_registers_init(vcpu_el2_registers_t *el2_regs)
 	CPTR_EL2_E2H0_set_TFP(&el2_regs->cptr_el2, 0);
 #endif
 
+#if defined(ARCH_ARM_FEAT_FGT)
+	HFGRTR_EL2_init(&el2_regs->hfgrtr_el2);
+	HFGWTR_EL2_init(&el2_regs->hfgwtr_el2);
+#endif
+
 	HCR_EL2_init(&el2_regs->hcr_el2);
 	HCR_EL2_set_VM(&el2_regs->hcr_el2, true);
 	HCR_EL2_set_SWIO(&el2_regs->hcr_el2, true);
@@ -148,6 +154,11 @@ arch_vcpu_el2_registers_init(vcpu_el2_registers_t *el2_regs)
 	HCR_EL2_set_RW(&el2_regs->hcr_el2, true);
 	HCR_EL2_set_CD(&el2_regs->hcr_el2, false);
 	HCR_EL2_set_ID(&el2_regs->hcr_el2, false);
+
+#if defined(ARCH_ARM_FEAT_TWED)
+	HCR_EL2_set_TWEDEn(&el2_regs->hcr_el2, false);
+	HCR_EL2_set_TWEDEL(&el2_regs->hcr_el2, 0U);
+#endif
 
 	// We allow the guest to set its own inner and outer cacheability,
 	// regardless of whether this may mean that memory accessed by another
@@ -239,7 +250,7 @@ vcpu_arch_handle_object_create_thread(thread_create_t thread_create)
 	thread_t *thread = thread_create.thread;
 	assert(thread != NULL);
 
-	if (thread->kind == THREAD_KIND_VCPU) {
+	if (vcpu_is_vcpu(thread)) {
 		// Set up nonzero init values for EL2 registers
 		arch_vcpu_el2_registers_init(&thread->vcpu_regs_el2);
 
@@ -265,7 +276,7 @@ vcpu_arch_handle_thread_start(void)
 {
 	thread_t *thread = thread_get_self();
 
-	if (thread->kind == THREAD_KIND_VCPU) {
+	if (vcpu_is_vcpu(thread)) {
 		if (vcpu_option_flags_get_pinned(&thread->vcpu_options)) {
 			// The VCPU won't migrate, so expose the real MIDR.
 			thread->vcpu_regs_midr_el1 = register_MIDR_EL1_read();
@@ -317,7 +328,7 @@ vcpu_thread_entry(uintptr_t unused_param) EXCLUDE_PREEMPT_DISABLED
 thread_func_t
 vcpu_handle_thread_get_entry_fn(void)
 {
-	assert(thread_get_self()->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu_self());
 
 	return vcpu_thread_entry;
 }
@@ -328,7 +339,7 @@ vcpu_configure(thread_t *thread, vcpu_option_flags_t vcpu_options)
 	error_t ret = OK;
 
 	assert(thread != NULL);
-	assert(thread->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(thread));
 
 	thread->vcpu_options = vcpu_options;
 
@@ -338,7 +349,7 @@ vcpu_configure(thread_t *thread, vcpu_option_flags_t vcpu_options)
 static void
 vcpu_reset_execution_context(thread_t *vcpu)
 {
-	assert((vcpu != NULL) && (vcpu->kind == THREAD_KIND_VCPU));
+	assert((vcpu != NULL) && (vcpu_is_vcpu(vcpu)));
 	assert((thread_get_self() == vcpu) ||
 	       scheduler_is_blocked(vcpu, SCHEDULER_BLOCK_VCPU_OFF));
 
@@ -357,21 +368,24 @@ vcpu_reset_execution_context(thread_t *vcpu)
 
 bool_result_t
 vcpu_poweron(thread_t *vcpu, vmaddr_result_t entry_point,
-	     register_result_t context)
+	     register_result_t context, vcpu_power_req_flags_t power_flags)
 {
-	error_t err = OK;
+	error_t err;
 	bool	ret = false;
 
 	assert(vcpu != NULL);
-	assert(vcpu->kind == THREAD_KIND_VCPU);
-	assert(scheduler_is_blocked(vcpu, SCHEDULER_BLOCK_VCPU_OFF));
+	assert(vcpu_is_vcpu(vcpu));
 
 	if (thread_is_dying(vcpu) || thread_has_exited(vcpu)) {
 		err = ERROR_FAILURE;
+	} else if (!scheduler_is_blocked(vcpu, SCHEDULER_BLOCK_VCPU_OFF)) {
+		err = ERROR_RETRY;
+	} else {
+		err = OK;
 	}
 
 	if (err == OK) {
-		err = trigger_vcpu_poweron_event(vcpu);
+		err = trigger_vcpu_poweron_event(vcpu, power_flags);
 	}
 
 	if (err == OK) {
@@ -397,20 +411,27 @@ vcpu_poweron(thread_t *vcpu, vmaddr_result_t entry_point,
 }
 
 error_t
-vcpu_poweroff(bool last_vcpu, bool force)
+vcpu_poweroff(bool last_vcpu, bool force, vcpu_power_req_flags_t power_flags)
 {
+	error_t ret;
+
 	thread_t *current = thread_get_self();
-	assert(current->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(current));
 
 	scheduler_lock(current);
 
-	error_t ret = trigger_vcpu_poweroff_event(current, last_vcpu, force);
+	if (thread_is_dying(current)) {
+		ret = ERROR_FAILURE;
+		goto out;
+	}
+
+	ret = trigger_vcpu_poweroff_event(current, last_vcpu, force,
+					  power_flags);
 	if (ret == OK) {
 		scheduler_block(current, SCHEDULER_BLOCK_VCPU_OFF);
 		scheduler_unlock_nopreempt(current);
 
 		if (force) {
-			preempt_enable();
 			vcpu_halted();
 			// not reached
 		} else {
@@ -425,6 +446,7 @@ vcpu_poweroff(bool last_vcpu, bool force)
 		}
 	}
 
+out:
 	scheduler_unlock(current);
 	return ret;
 }
@@ -453,7 +475,7 @@ vcpu_suspend(void)
 {
 	error_t	  ret	  = OK;
 	thread_t *current = thread_get_self();
-	assert(current->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(current));
 
 	// Disable preemption so we don't try to deliver interrupts to the
 	// current thread while it is suspended. We could handle that case in
@@ -485,7 +507,7 @@ void
 vcpu_resume(thread_t *vcpu)
 {
 	assert(vcpu != NULL);
-	assert(vcpu->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(vcpu));
 	assert(scheduler_is_blocked(vcpu, SCHEDULER_BLOCK_VCPU_SUSPEND));
 
 	if (scheduler_unblock(vcpu, SCHEDULER_BLOCK_VCPU_SUSPEND)) {
@@ -498,7 +520,7 @@ vcpu_warm_reset(paddr_t entry_point, register_t context)
 {
 	thread_t *vcpu = thread_get_self();
 
-	assert(vcpu->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(vcpu));
 
 	// Inform any other modules of the warm reset
 	trigger_vcpu_warm_reset_event(vcpu);
@@ -517,9 +539,7 @@ vcpu_halted(void)
 {
 	thread_t *current = thread_get_self();
 
-	assert(current->kind == THREAD_KIND_VCPU);
-
-	preempt_disable();
+	assert(vcpu_is_vcpu(current));
 
 	trigger_vcpu_stopped_event();
 

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -10,6 +10,12 @@ typedef error_t (*memdb_fnptr)(paddr_t base, size_t size, void *arg);
 //
 // The partition argument is the partition to use for memdb node allocations,
 // and must always be the hypervisor private partition.
+//
+// Address range requirements:
+// - start_addr must be aligned to (1 << MEMDB_MIN_BITS) bytes
+// - end_addr + 1 must be aligned to (1 << MEMDB_MIN_BITS) bytes
+// - start_addr must be less than end_addr
+// - end_addr must be less than (1 << MEMDB_MAX_BITS)
 error_t
 memdb_insert(partition_t *partition, paddr_t start_addr, paddr_t end_addr,
 	     uintptr_t object, memdb_type_t obj_type);
@@ -20,6 +26,12 @@ memdb_insert(partition_t *partition, paddr_t start_addr, paddr_t end_addr,
 //
 // The partition argument is the partition to use for memdb node allocations,
 // and must always be the hypervisor private partition.
+//
+// Address range requirements:
+// - start_addr must be aligned to (1 << MEMDB_MIN_BITS) bytes
+// - end_addr + 1 must be aligned to (1 << MEMDB_MIN_BITS) bytes
+// - start_addr must be less than end_addr
+// - end_addr must be less than (1 << MEMDB_MAX_BITS)
 error_t
 memdb_update(partition_t *partition, paddr_t start_addr, paddr_t end_addr,
 	     uintptr_t object, memdb_type_t obj_type, uintptr_t prev_object,

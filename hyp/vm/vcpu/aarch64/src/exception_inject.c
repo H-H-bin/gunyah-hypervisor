@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -12,6 +12,7 @@
 #include <compiler.h>
 #include <log.h>
 #include <panic.h>
+#include <qcbor.h>
 #include <scheduler.h>
 #include <thread.h>
 #include <trace.h>
@@ -38,7 +39,6 @@ exception_inject(ESR_EL1_t esr_el1)
 
 	SPSR_EL2_A64_t spsr_el2 = thread->vcpu_regs_gpr.spsr_el2.a64;
 	// Adjust the vector based on the mode we came from
-	// FIXME:
 	spsr_64bit_mode_t spsr_m = SPSR_EL2_A64_get_M(&spsr_el2);
 	switch (spsr_m) {
 	case SPSR_64BIT_MODE_EL0T:
@@ -124,7 +124,7 @@ inject_inst_data_abort(ESR_EL2_t esr_el2, esr_ec_t ec, iss_da_ia_fsc_t fsc,
 	SPSR_EL2_A64_t spsr_el2 = thread->vcpu_regs_gpr.spsr_el2.a64;
 	gvaddr_t       va	= FAR_EL2_get_VirtualAddress(&far);
 
-	assert(thread->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(thread));
 	assert(thread->addrspace != NULL);
 
 	// Assert EC is instruction/data abort from lower levels
@@ -169,7 +169,7 @@ inject_inst_data_abort(ESR_EL2_t esr_el2, esr_ec_t ec, iss_da_ia_fsc_t fsc,
 				scheduler_lock(thread);
 				scheduler_block(thread,
 						SCHEDULER_BLOCK_VCPU_FAULT);
-				scheduler_unlock(thread);
+				scheduler_unlock_nopreempt(thread);
 				vcpu_halted();
 			}
 		}
@@ -276,7 +276,7 @@ inject_inst_data_abort(ESR_EL2_t esr_el2, esr_ec_t ec, iss_da_ia_fsc_t fsc,
 			// halt the VCPU without revealing any fault state.
 			scheduler_lock(thread);
 			scheduler_block(thread, SCHEDULER_BLOCK_VCPU_FAULT);
-			scheduler_unlock(thread);
+			scheduler_unlock_nopreempt(thread);
 			vcpu_halted();
 		}
 	}

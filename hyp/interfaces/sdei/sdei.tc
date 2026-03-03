@@ -1,0 +1,140 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define sdei_function enumeration(explicit) {
+	VERSION = 0x20;
+	EVENT_REGISTER = 0x21;
+	EVENT_ENABLE = 0x22;
+	EVENT_DISABLE = 0x23;
+	EVENT_CONTEXT = 0x24;
+	EVENT_COMPLETE = 0x25;
+	EVENT_COMPLETE_AND_RESUME = 0x26;
+	EVENT_UNREGISTER = 0x27;
+	EVENT_STATUS = 0x28;
+	EVENT_GET_INFO = 0x29;
+	EVENT_ROUTING_SET = 0x2A;
+	PE_MASK = 0x2B;
+	PE_UNMASK = 0x2C;
+	INTERRUPT_BIND = 0x2D;
+	INTERRUPT_RELEASE = 0x2E;
+	EVENT_SIGNAL = 0x2F;
+	FEATURES = 0x30;
+	PRIVATE_RESET = 0x31;
+	SHARED_RESET = 0x32;
+};
+
+define sdei_ret enumeration(explicit) {
+	SUCCESS = 0;
+	NOT_SUPPORTED = -1;
+	INVALID_PARAMETERS = -2;
+	DENIED = -3;
+	PENDING = -5;
+	OUT_OF_RESOURCE = -10;
+};
+
+define sdei_standard_event enumeration(explicit) {
+	SOFTWARE_SIGNALED = 0x0;
+};
+
+define sdei_vendor_event enumeration(explicit) {
+	ERROR = 0x40000000;
+};
+
+define sdei_event_number bitfield<32> {
+	23:0	event		uint32;
+	29:24	res0		uint8(const) = 0;
+	30	vendor		bool;
+	31	mbz		bool(const) = 0;
+};
+
+define sdei_version bitfield<64> {
+	31:0	vendor		uint32;
+	47:32	minor		uint16;
+	62:48	major		uint16;
+	63	mbz		bool(const) = 0;
+};
+
+define sdei_event_register_flags bitfield<64> {
+	0	routing_mode	bool;
+	1	relative_mode	bool;
+	others	unknown=0;
+};
+
+define sdei_mpidr bitfield<64> {
+	7:0	Aff0		uint8;
+	15:8	Aff1		uint8;
+	23:16	Aff2		uint8;
+	39:32	Aff3		uint8;
+	others	unknown=0;
+};
+
+define sdei_event_complete_status_code enumeration(explicit) {
+	EV_HANDLED = 0;
+	EV_FAILED = 1;
+};
+
+define sdei_event_state enumeration(explicit) {
+	HANDLER_UNREGISTERED = 0x0;
+	HANDLER_UNREGISTER_PENDING = 0x4;
+	HANDLER_REGISTERED = 0x1;
+	HANDLER_REGISTERED_AND_RUNNING = 0x5;
+	HANDLER_ENABLED = 0x3;
+	HANDLER_ENABLED_AND_RUNNING = 0x7;
+};
+
+define sdei_event_get_info_info enumeration(explicit) {
+	EV_TYPE = 0;
+	EV_SIGNALED = 1;
+	EV_PRIORITY = 2;
+	EV_ROUTING_MODE = 3;
+	EV_ROUTING_AFF = 4;
+};
+
+define sdei_ev_type enumeration(explicit) {
+	PRIVATE = 0;
+	SHARED = 1;
+};
+
+define sdei_ev_signaled enumeration(explicit) {
+	YES = 0;
+	NO = 1;
+};
+
+define sdei_ev_priority enumeration(explicit) {
+	NORMAL = 0;
+	CRITICAL = 1;
+};
+
+define sdei_ev_routing_mode enumeration(explicit) {
+	RM_ANY = 0;
+	RM_PE = 1;
+};
+
+define sdei_event_routing_set_routing_mode bitfield<64> {
+	0	routing_mode	bool;
+	63:1	res0		uint64(const) = 0;
+};
+
+define sdei_features_feature enumeration(explicit) {
+	BIND_SLOTS = 0;
+	RELATIVE_MODE = 1;
+};
+
+define sdei_num_bind_slots bitfield<64> {
+	15:0	private		uint16;
+	31:16	shared		uint16;
+	63:32	mbz		uint32(const) = 0;
+};
+
+define sdei_error_flags public bitfield<64> {
+	31:0	reason		enumeration sdei_error_reason;
+	62:32	res0		uint32(const) = 0;
+	63	system_error	bool;
+};
+
+define sdei_error_reason public enumeration(explicit) {
+	UNKNOWN = 0;
+	SENT_BY_USER = 1;
+	VIRTUAL_WATCHDOG_BITE = 2;
+};

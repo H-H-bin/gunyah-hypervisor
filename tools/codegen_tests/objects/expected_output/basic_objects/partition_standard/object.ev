@@ -1,0 +1,73 @@
+// Automatically generated. Do not modify.
+
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+module partition_standard
+
+subscribe rcu_update[RCU_UPDATE_CLASS_ADDRSPACE_DESTROY]
+	handler partition_destroy_addrspace(entry)
+
+subscribe object_init_addrspace
+	priority first
+subscribe rcu_update[RCU_UPDATE_CLASS_CSPACE_DESTROY]
+	handler partition_destroy_cspace(entry)
+
+subscribe object_init_cspace
+	priority first
+subscribe rcu_update[RCU_UPDATE_CLASS_DOORBELL_DESTROY]
+	handler partition_destroy_doorbell(entry)
+
+subscribe object_init_doorbell
+	priority first
+subscribe rcu_update[RCU_UPDATE_CLASS_GICV3_ITS_DESTROY]
+	handler partition_destroy_gicv3_its(entry)
+
+subscribe object_init_gicv3_its
+	priority first
+subscribe rcu_update[RCU_UPDATE_CLASS_HWIRQ_DESTROY]
+	handler partition_destroy_hwirq(entry)
+
+subscribe object_init_hwirq
+	priority first
+subscribe rcu_update[RCU_UPDATE_CLASS_MEMEXTENT_DESTROY]
+	handler partition_destroy_memextent(entry)
+
+subscribe object_init_memextent
+	priority first
+subscribe rcu_update[RCU_UPDATE_CLASS_MSGQUEUE_DESTROY]
+	handler partition_destroy_msgqueue(entry)
+
+subscribe object_init_msgqueue
+	priority first
+subscribe rcu_update[RCU_UPDATE_CLASS_PARTITION_DESTROY]
+	handler partition_destroy_partition(entry)
+
+subscribe object_init_partition
+	priority first
+subscribe rcu_update[RCU_UPDATE_CLASS_THREAD_DESTROY]
+	handler partition_destroy_thread(entry)
+
+subscribe object_init_thread
+	priority first
+subscribe rcu_update[RCU_UPDATE_CLASS_VIC_DESTROY]
+	handler partition_destroy_vic(entry)
+
+subscribe object_init_vic
+	priority first
+subscribe rcu_update[RCU_UPDATE_CLASS_VIRTIO_BACKEND_DESTROY]
+	handler partition_destroy_virtio_backend(entry)
+
+subscribe object_init_virtio_backend
+	priority first
+subscribe rcu_update[RCU_UPDATE_CLASS_VPM_GROUP_DESTROY]
+	handler partition_destroy_vpm_group(entry)
+
+subscribe object_init_vpm_group
+	priority first
+subscribe rcu_update[RCU_UPDATE_CLASS_VRTC_DESTROY]
+	handler partition_destroy_vrtc(entry)
+
+subscribe object_init_vrtc
+	priority first

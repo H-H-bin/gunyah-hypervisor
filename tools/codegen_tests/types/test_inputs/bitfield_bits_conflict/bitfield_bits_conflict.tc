@@ -1,0 +1,6 @@
+define bitfield1 bitfield<64> {
+	3:0		field1 uint16;
+	7:4		conflicting_field1 uint16;
+	9:6		conflicting_field2 uint16;
+		others		unknown=0;
+};

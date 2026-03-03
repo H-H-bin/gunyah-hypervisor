@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -8,15 +8,13 @@ subscribe virtio_startup[VIRTIO_TRANSPORT_TYPE_MMIO](virtio)
 
 subscribe virtio_shutdown[VIRTIO_TRANSPORT_TYPE_MMIO](virtio)
 
-subscribe virtio_ack_features_ok[VIRTIO_TRANSPORT_TYPE_MMIO](virtio)
-
 subscribe virtio_config_update_begin[VIRTIO_TRANSPORT_TYPE_MMIO](virtio)
 
 subscribe virtio_config_update_end[VIRTIO_TRANSPORT_TYPE_MMIO](virtio)
 
 subscribe virtio_queue_ready[VIRTIO_TRANSPORT_TYPE_MMIO](virtio, vq)
 
-subscribe virtio_reset_complete[VIRTIO_TRANSPORT_TYPE_MMIO](virtio)
+subscribe virtio_status_updated[VIRTIO_TRANSPORT_TYPE_MMIO](virtio, new_status)
 	require_spinlock(virtio->status_lock)
 
 subscribe virq_check_pending[VIRQ_TRIGGER_VIRTIO_MMIO_FRONTEND]
@@ -25,5 +23,5 @@ subscribe virq_check_pending[VIRQ_TRIGGER_VIRTIO_MMIO_FRONTEND]
 subscribe vdevice_access[VDEVICE_TYPE_VIRTIO_MMIO](
 		vdevice, offset, access_size, value, is_write)
 	// This should be release_rcu_read.
-	// FIXME:
+	// FIXME: QC Gunyah issue #252
 	require_rcu_read

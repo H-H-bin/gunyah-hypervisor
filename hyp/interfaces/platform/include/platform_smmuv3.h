@@ -1,0 +1,6 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+error_t
+platform_smmuv3_init(void);

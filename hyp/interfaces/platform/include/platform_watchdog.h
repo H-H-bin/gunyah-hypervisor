@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -22,6 +22,11 @@ platform_watchdog_is_frozen(void);
 
 void
 platform_watchdog_pat(void);
+
+// After power on, reset watchdog registers to a known state.
+// Leaves the watchdog disabled.
+void
+platform_watchdog_init(void);
 
 void
 platform_watchdog_reset(void);

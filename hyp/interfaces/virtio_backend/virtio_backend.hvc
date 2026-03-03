@@ -1,6 +1,17 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
+
+define virtio_backend_configure hypercall {
+	call_num	0x49;
+	virtio_backend	input type cap_id_t;
+	memextent	input type cap_id_t;
+	vqs_num		input type count_t;
+	flags		input bitfield virtio_backend_option_flags;
+	type		input bitfield virtio_backend_interface_type;
+	me_layout	input bitfield virtio_backend_memextent_layout;
+	error		output enumeration error;
+};
 
 define virtio_backend_bind_virq hypercall {
 	call_num	0x4c;
@@ -21,8 +32,8 @@ define virtio_backend_unbind_virq hypercall {
 define virtio_backend_notify hypercall {
 	call_num		0x4e;
 	virtio_backend		input type cap_id_t;
-	interrupt_status	input uint32;
-	res0			input uregister;
+	interrupt_status	input union virtio_backend_notify_status;
+	flags			input bitfield virtio_backend_notify_flags;
 	error			output enumeration error;
 };
 

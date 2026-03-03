@@ -1,9 +1,11 @@
 // Automatically generated. Do not modify.
 //
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
+\#ifndef HYPRESULT_H_
+\#define HYPRESULT_H_
 // _result_t type definitions and accessors
 
 #def declare_result(name, type_name=None)
@@ -76,3 +78,6 @@ $declare_result(d.type_name, d.c_type_name)
 $declare_result_ptr('void', 'void')
 
 \#pragma clang diagnostic pop
+\#else
+\#error HYPRESULT_H_ multiple include
+\#endif

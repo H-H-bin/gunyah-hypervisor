@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -32,6 +32,7 @@
 #if !defined(HOST_TEST)
 #include <hypregisters.h>
 
+#include <atomic.h>
 #include <log.h>
 #include <memclear.h>
 #include <preempt.h>
@@ -42,10 +43,13 @@
 #endif
 
 #include <compiler.h>
+#include <cpulocal.h>
+#include <globals.h>
 #include <hyp_aspace.h>
 #include <panic.h>
 #include <partition.h>
 #include <pgtable.h>
+#include <pgtable_armv8.h>
 #include <spinlock.h>
 #include <util.h>
 
@@ -85,8 +89,6 @@ static const pgtable_entry_types_t VMSA_ENTRY_TYPE_LEAF =
 #if defined(HOST_TEST)
 // Definitions for host test
 
-bool pgtable_op = true;
-
 #define LOG(...) LOG_I(__VA_ARGS__, 5, 4, 3, 2, 1, 0, _unspecified_id)
 #define LOG_I(tclass, log_level, fmt, a0, a1, a2, a3, a4, n, ...)              \
 	LOG_##n((fmt), (a0), (a1), (a2), (a3), (a4), __VA_ARGS__)
@@ -110,13 +112,6 @@ bool pgtable_op = true;
 	(PGTABLE_TRANSLATION_TABLE_WALK_EVENT__MAX + 1)
 #else
 // For target HW
-
-#if defined(NDEBUG)
-// pgtable_op is not actually defined for NDEBUG
-extern bool pgtable_op;
-#else
-static _Thread_local bool pgtable_op;
-#endif
 
 extern vmsa_general_entry_t aarch64_pt_ttbr_level1;
 
@@ -146,6 +141,11 @@ typedef struct {
 #if defined(PLATFORM_PGTABLE_4K_GRANULE)
 // Statically support only 4k granule size for now
 #define level_conf info_4k_granules
+
+static_assert(PGTABLE_HYP_PAGE_SIZE == 4096,
+	      "PGTABLE_HYP_PAGE_SIZE config mismatch");
+static_assert(PGTABLE_VM_PAGE_SIZE == 4096,
+	      "PGTABLE_VM_PAGE_SIZE config mismatch");
 
 static const pgtable_level_info_t info_4k_granules[PGTABLE_LEVEL_NUM] = {
 	// level 0
@@ -213,6 +213,11 @@ static const pgtable_level_info_t info_4k_granules[PGTABLE_LEVEL_NUM] = {
 
 #elif defined(PLATFORM_PGTABLE_16K_GRANULE)
 #define level_conf info_16k_granules
+
+static_assert(PGTABLE_HYP_PAGE_SIZE == 16384,
+	      "PGTABLE_HYP_PAGE_SIZE config mismatch");
+static_assert(PGTABLE_VM_PAGE_SIZE == 16384,
+	      "PGTABLE_VM_PAGE_SIZE config mismatch");
 
 // FIXME: temporarily disable it, enable it for run time configuration
 static const pgtable_level_info_t info_16k_granules[PGTABLE_LEVEL_NUM] = {
@@ -282,6 +287,11 @@ static const pgtable_level_info_t info_16k_granules[PGTABLE_LEVEL_NUM] = {
 
 #elif defined(PLATFORM_PGTABLE_64K_GRANULE)
 #define level_conf info_64k_granules
+
+static_assert(PGTABLE_HYP_PAGE_SIZE == 65536,
+	      "PGTABLE_HYP_PAGE_SIZE config mismatch");
+static_assert(PGTABLE_VM_PAGE_SIZE == 65536,
+	      "PGTABLE_VM_PAGE_SIZE config mismatch");
 
 // NOTE: check page 2416, table D5-20 properties of the address lookup levels
 // 64kb granule size
@@ -375,6 +385,43 @@ pgtable_vm_ext(pgtable_vm_t *pgtable, vmaddr_t virtual_address, size_t size,
 	       pgtable_entry_types_t entry_types, ext_func_t func, void *data);
 #endif // defined(HOST_TEST)
 
+static bool
+pgtable_dvm_enabled(pgtable_vm_t *pgtable)
+{
+#if defined(ARCH_ARM_FEAT_TLBIOS)
+	return atomic_load_relaxed(&pgtable->dvm_enable) != 0U;
+#else
+	(void)pgtable;
+	return false;
+#endif
+}
+
+error_t
+pgtable_vm_enable_coherent_iommu(pgtable_vm_t *vm_pgtable)
+{
+#if defined(ARCH_ARM_FEAT_TLBIOS)
+	count_t old_count = atomic_fetch_add_explicit(&vm_pgtable->dvm_enable,
+						      1U, memory_order_relaxed);
+	assert_safety(!util_add_overflows(old_count, 1U));
+	return OK;
+#else
+	(void)vm_pgtable;
+	return ERROR_UNIMPLEMENTED;
+#endif
+}
+
+void
+pgtable_vm_disable_coherent_iommu(pgtable_vm_t *vm_pgtable)
+{
+#if defined(ARCH_ARM_FEAT_TLBIOS)
+	count_t old_count = atomic_fetch_sub_explicit(&vm_pgtable->dvm_enable,
+						      1U, memory_order_relaxed);
+	assert_safety(old_count >= 1U);
+#else
+	(void)vm_pgtable;
+#endif
+}
+
 static void
 hyp_tlbi_va(vmaddr_t virtual_address)
 {
@@ -452,27 +499,34 @@ hyp_tlbi_range_get_tg(count_t granule_shift)
 // Returns false if the requested size is bigger than the maximum possible range
 // size (8GB for 4K granules) after alignment.
 static bool
-hyp_tlbi_range_find_scale_num(uint64_t size, count_t granule_shift,
-			      uint8_t *scale, uint8_t *num)
+tlbi_range_find_scale_num(uint64_t size, count_t granule_shift, uint8_t *scale,
+			  uint8_t *num)
 {
-	uint8_t	 calc_scale;
-	uint64_t granules = size >> granule_shift;
+	bool success;
+	// size must be at least two granule_shift pages
+	assert_debug(size >= util_bit(granule_shift + 1U));
 
-	for (calc_scale = 0U; calc_scale <= TLBI_RANGE_SCALE_MAX;
-	     calc_scale++) {
-		count_t	 scale_shift = (5U * (count_t)calc_scale) + 1U;
-		uint64_t aligned_granules =
-			util_p2align_up(granules, scale_shift);
-		uint64_t calc_num = (aligned_granules >> scale_shift) - 1U;
-		if (calc_num <= TLBI_RANGE_NUM_MAX) {
-			// Found a pair of scale, num
-			*scale = calc_scale;
-			*num   = (uint8_t)calc_num;
-			break;
-		}
+	// Find the most significant bit set in (size-1)
+	count_t msb = compiler_msb(size - 1U);
+
+	count_t scale_bits = msb - granule_shift;
+	count_t scale_calc = (scale_bits == 0U) ? 0U : ((scale_bits - 1U) / 5U);
+
+	if (compiler_unexpected(scale_calc > TLBI_RANGE_SCALE_MAX)) {
+		success = false;
+	} else {
+		*scale = (uint8_t)scale_calc;
+		uint8_t shift =
+			(uint8_t)((5U * scale_calc) + 1U + granule_shift);
+
+		*num = (uint8_t)(util_balign_up(size, util_bit(shift)) >>
+				 shift) -
+		       1U;
+
+		success = true;
 	}
 
-	return calc_scale <= TLBI_RANGE_SCALE_MAX;
+	return success;
 }
 
 static void
@@ -480,8 +534,7 @@ hyp_tlbi_va_range(vmaddr_t va_start_addr, size_t size, count_t granule_shift)
 {
 	uint8_t num, scale;
 
-	bool ret = hyp_tlbi_range_find_scale_num(size, granule_shift, &scale,
-						 &num);
+	bool ret = tlbi_range_find_scale_num(size, granule_shift, &scale, &num);
 
 	if (ret) {
 		vmsa_tlbi_va_range_input_t input;
@@ -511,8 +564,7 @@ vm_tlbi_ipa_range(vmaddr_t ipa_start, size_t size, count_t granule_shift,
 {
 	uint8_t num, scale;
 
-	bool ret = hyp_tlbi_range_find_scale_num(size, granule_shift, &scale,
-						 &num);
+	bool ret = tlbi_range_find_scale_num(size, granule_shift, &scale, &num);
 	if (ret) {
 		vmsa_tlbi_ipa_range_input_t input;
 		vmsa_tlbi_ipa_range_input_init(&input);
@@ -625,12 +677,22 @@ tlbi_range_onestage(vmaddr_t start_address, size_t size, size_t addr_size,
 
 #if defined(ARCH_ARM_FEAT_TLBIRANGE)
 	(void)addr_size;
+	size_t page_size = util_bit(pgt->granule_shift);
 
 	if (stage == PGTABLE_HYP_STAGE_1) {
-		hyp_tlbi_va_range(start_address, size, pgt->granule_shift);
+		if (size == page_size) {
+			hyp_tlbi_va(start_address);
+		} else {
+			hyp_tlbi_va_range(start_address, size,
+					  pgt->granule_shift);
+		}
 	} else {
-		vm_tlbi_ipa_range(start_address, size, pgt->granule_shift,
-				  outer_shareable);
+		if (size == page_size) {
+			vm_tlbi_ipa(start_address, outer_shareable);
+		} else {
+			vm_tlbi_ipa_range(start_address, size,
+					  pgt->granule_shift, outer_shareable);
+		}
 		pgt->s1_inval_needed = true;
 	}
 #else
@@ -644,7 +706,6 @@ tlbi_range_onestage(vmaddr_t start_address, size_t size, size_t addr_size,
 			pgt->s1_inval_needed = true;
 		}
 	}
-
 #endif
 }
 
@@ -659,7 +720,7 @@ tlbi_range_sync(vmaddr_t start_address, size_t size, size_t addr_size,
 
 	if (start_stage != PGTABLE_HYP_STAGE_1) {
 		// The full stage-1 flushing below is really sub-optimal.
-		// FIXME:
+		// FIXME: QC Gunyah issue #69
 		dsb(outer_shareable);
 		vm_tlbi_vmalle1(outer_shareable);
 		pgt->s1_inval_needed = false;
@@ -1286,16 +1347,15 @@ map_stg2_access_to_attrs(pgtable_access_t	  kernel_access,
 	vmsa_stg2_upper_attrs_set_PXNxorUXN(upper_attrs,
 					    kernel_exec != user_exec);
 #else
-	vmsa_stg2_upper_attrs_set_XN(upper_attrs, !kernel_exec || !user_exec);
+	assert(kernel_exec == user_exec);
+	vmsa_stg2_upper_attrs_set_XN(upper_attrs, !kernel_exec);
 #endif
 
 	// set AP
 	// kernel access and user access (RW) should be the same
 	vmsa_s2ap_t ap;
-	static_assert((uint32_t)PGTABLE_ACCESS_X == 1U,
-		      "expect PGTABLE_ACCESS_X is bit 0");
-	assert((((uint32_t)kernel_access ^ (uint32_t)user_access) >> 1U) == 0U);
-	assert(!pgtable_access_is_equal(kernel_access, PGTABLE_ACCESS_X));
+	assert((((uint32_t)kernel_access ^ (uint32_t)user_access) &
+		~(uint32_t)PGTABLE_ACCESS_X) == 0U);
 
 	switch (kernel_access) {
 	case PGTABLE_ACCESS_R:
@@ -1758,14 +1818,14 @@ pgtable_add_table_entry(pgtable_t *pgt, pgtable_map_modifier_args_t *margs,
 {
 	error_t		    ret;
 	paddr_t		    new_pgtable_paddr;
-	vmsa_level_table_t *new_pgt	 = NULL;
-	index_t		    level	 = cur_level;
-	size_t		    pgtable_size = util_bit(pgt->granule_shift);
+	vmsa_level_table_t *new_pgt    = NULL;
+	index_t		    level      = cur_level;
+	size_t		    table_size = util_bit(pgt->granule_shift);
 
 	// allocate page and fill right value first, then update entry
 	// to existing table
-	ret = alloc_level_table(margs->partition, margs->stage, pgtable_size,
-				pgtable_size, &new_pgtable_paddr, &new_pgt,
+	ret = alloc_level_table(margs->partition, margs->stage, table_size,
+				table_size, &new_pgtable_paddr, &new_pgt,
 				false);
 	if (ret != OK) {
 		LOG(ERROR, WARN, "Failed to alloc page table level.\n");
@@ -1859,7 +1919,7 @@ pgtable_split_block(pgtable_t *pgt, vmaddr_t virtual_address, size_t size,
 		dsb_st(margs->outer_shareable);
 		vm_tlbi_ipa(entry_virtual_address, margs->outer_shareable);
 		// The full stage-1 flushing below is really sub-optimal.
-		// FIXME:
+		// FIXME: QC Gunyah issue #69
 		dsb(margs->outer_shareable);
 		vm_tlbi_vmalle1(margs->outer_shareable);
 		pgt->s1_inval_needed = false;
@@ -2072,12 +2132,15 @@ pgtable_maybe_merge_block(pgtable_t *pgt, vmaddr_t virtual_address, size_t size,
 			    (other_entries > 0U) ||
 			    (margs->try_map && (table_refcount > 0U)));
 
+	size_t table_size = util_bit(pgt->granule_shift);
+
 	if (need_search) {
 		// It's possible that the level to be merged contains entries
 		// that will prevent the merge. Map the level to be merged.
+
 		vmsa_level_table_t *next_table =
 			(vmsa_level_table_t *)partition_phys_map(
-				next_table_paddr, util_bit(pgt->granule_shift));
+				next_table_paddr, table_size);
 		if (next_table == NULL) {
 			LOG(ERROR, WARN,
 			    "Failed to map table (pa {:#x}, level {:d}) for merge\n",
@@ -2140,8 +2203,7 @@ pgtable_maybe_merge_block(pgtable_t *pgt, vmaddr_t virtual_address, size_t size,
 			next_level_addr += next_level_info->addr_size;
 		}
 
-		partition_phys_unmap(next_table, next_table_paddr,
-				     util_bit(pgt->granule_shift));
+		partition_phys_unmap(next_table, next_table_paddr, table_size);
 
 		if (next_level_idx < next_level_info->entry_cnt) {
 			// We exited the next-level table check early, which
@@ -2199,8 +2261,7 @@ pgtable_maybe_merge_block(pgtable_t *pgt, vmaddr_t virtual_address, size_t size,
 #endif
 
 	// Release the page table memory
-	partition_free_phys(margs->partition, next_table_paddr,
-			    util_bit(pgt->granule_shift));
+	partition_free_phys(margs->partition, next_table_paddr, table_size);
 
 	// Ensure that translation_table_walk revisits the entry we just
 	// replaced, instead of traversing into the now-freed table. We don't
@@ -2273,6 +2334,8 @@ pgtable_modify_mapping(pgtable_t *pgt, vmaddr_t virtual_address, size_t size,
 		margs2.preserved_size	    = PGTABLE_HYP_UNMAP_PRESERVE_NONE;
 		margs2.stage		    = margs->stage;
 		margs2.unprotected	    = margs->unprotected;
+		margs2.sanitise_count	    = margs->sanitise_count;
+		margs2.sanitise_limit	    = margs->sanitise_limit;
 
 		vret = unmap_modifier(pgt, virtual_address, addr_size, idx,
 				      cur_level, type, stack, &margs2,
@@ -2281,6 +2344,8 @@ pgtable_modify_mapping(pgtable_t *pgt, vmaddr_t virtual_address, size_t size,
 		if (vret == PGTABLE_MODIFIER_RET_ERROR) {
 			margs->error = margs2.error;
 		}
+
+		margs->sanitise_count = margs2.sanitise_count;
 
 		if (margs->stage == PGTABLE_VM_STAGE_2) {
 			// flush entire stage 1 tlb
@@ -2433,7 +2498,7 @@ pgtable_maybe_map_cont(pgtable_t *pgt, vmaddr_t virtual_address, size_t size,
 	// We can't map with the contiguous bit set for protected mappings,
 	// because the automatic re-locking on access flag faults will only
 	// touch a single PTE.
-	// FIXME:
+	// FIXME: QC Gunyah issue #226
 	if (!margs->unprotected) {
 		goto out;
 	}
@@ -2765,12 +2830,12 @@ failed_map:
 	// free all pages if something wrong
 	if ((vret == PGTABLE_MODIFIER_RET_ERROR) &&
 	    (margs->new_page_start_level != PGTABLE_INVALID_LEVEL)) {
-		size_t pgtable_size = util_bit(pgt->granule_shift);
+		size_t table_size = util_bit(pgt->granule_shift);
 		while (margs->new_page_start_level < level) {
 			// all new table level, no need to unmap
 			assert(!(*stack)[level].need_unmap);
 			partition_free(margs->partition, (*stack)[level].table,
-				       pgtable_size);
+				       table_size);
 			(*stack)[level].paddr  = 0U;
 			(*stack)[level].table  = NULL;
 			(*stack)[level].mapped = false;
@@ -2931,6 +2996,8 @@ check_refcount(pgtable_t *pgt, partition_t *partition, vmaddr_t virtual_address,
 		}
 	}
 
+	size_t table_size = util_bit(pgt->granule_shift);
+
 	while (free_idx > 0U) {
 		free_idx--;
 
@@ -2938,12 +3005,12 @@ check_refcount(pgtable_t *pgt, partition_t *partition, vmaddr_t virtual_address,
 			// Only used by unmap, should always need unmap
 			partition_phys_unmap(free_list[free_idx]->table,
 					     free_list[free_idx]->paddr,
-					     util_bit(pgt->granule_shift));
+					     table_size);
 			free_list[free_idx]->need_unmap = false;
 		}
 
 		partition_free_phys(partition, free_list[free_idx]->paddr,
-				    util_bit(pgt->granule_shift));
+				    table_size);
 		free_list[free_idx]->table  = NULL;
 		free_list[free_idx]->paddr  = 0U;
 		free_list[free_idx]->mapped = false;
@@ -3100,6 +3167,55 @@ unmap_clear_cont_bit(pgtable_t *pgt, vmsa_level_table_t *table,
 #endif
 }
 
+static bool
+unmap_do_sanitise(vmsa_entry_t			 cur_entry,
+		  const pgtable_level_info_t	*cur_level_info,
+		  pgtable_unmap_modifier_args_t *margs)
+{
+	bool need_retry = false;
+
+	vmsa_page_and_block_attrs_entry_t attr_entry =
+		vmsa_page_and_block_attrs_entry_cast(
+			vmsa_general_entry_raw(cur_entry.base));
+	vmsa_stg2_upper_attrs_t upper_attrs = vmsa_stg2_upper_attrs_cast(
+		vmsa_page_and_block_attrs_entry_get_upper_attrs(&attr_entry));
+	bool need_sanitise =
+		!vmsa_stg2_upper_attrs_get_unsanitised(&upper_attrs);
+
+	if (compiler_unexpected(need_sanitise)) {
+		pgtable_entry_types_t cur_type =
+			get_entry_type(&cur_entry, cur_level_info);
+		paddr_t phys_addr;
+		get_entry_paddr(cur_level_info, &cur_entry, cur_type,
+				&phys_addr);
+		size_t addr_size = cur_level_info->addr_size;
+
+		void *addr = partition_phys_map(phys_addr, addr_size);
+		partition_phys_access_enable(addr);
+
+		memclear_and_clean(addr, addr_size);
+
+		partition_phys_access_disable(addr);
+		partition_phys_unmap(addr, phys_addr, addr_size);
+
+		// Check for a pending preemption, and interrupt the operation
+		// if necessary. It's important that we only do this after
+		// actually unmapping and sanitising a page; this guarantees
+		// progress in case of frequent interrupts.
+		//
+		// To avoid making progress too slowly, we require a threshold
+		// of sanitised area to be reached before checking for
+		// preemption.
+		margs->sanitise_count += addr_size;
+		if (margs->sanitise_count >= margs->sanitise_limit) {
+			margs->sanitise_count = 0U;
+			need_retry	      = preempt_check();
+		}
+	}
+
+	return need_retry;
+}
+
 // @brief Unmap the current entry if possible.
 //
 // This modifier will try to:
@@ -3246,16 +3362,15 @@ unmap_modifier(pgtable_t *pgt, vmaddr_t virtual_address, size_t size,
 		}
 	}
 
-	// No need to decrease entry count in upper page table level by default,
-	// for INVALID entry.
-	bool need_dec = false;
+	// Decrement the parent's reference count if there is a valid entry.
+	bool need_dec;
+	bool need_retry;
 
 	if (pgtable_entry_types_get_block(&type) ||
 	    pgtable_entry_types_get_page(&type)) {
-		set_invalid_entry(cur_table, idx);
-
-		// need to decrease entry count for this table level
 		need_dec = true;
+
+		set_invalid_entry(cur_table, idx);
 
 		if (margs->stage == PGTABLE_HYP_STAGE_1) {
 			dsb_st(false);
@@ -3265,14 +3380,28 @@ unmap_modifier(pgtable_t *pgt, vmaddr_t virtual_address, size_t size,
 			vm_tlbi_ipa(virtual_address, margs->outer_shareable);
 			pgt->s1_inval_needed = true;
 		}
+
+		if (margs->stage == PGTABLE_VM_STAGE_2) {
+			need_retry = unmap_do_sanitise(cur_entry,
+						       cur_level_info, margs);
+		} else {
+			need_retry = false;
+		}
 	} else {
 		assert(pgtable_entry_types_get_invalid(&type));
+		need_dec   = false;
+		need_retry = false;
 	}
 
 	if (level != pgt->start_level) {
 		check_refcount(pgt, margs->partition, virtual_address, size,
 			       level - 1U, stack, need_dec, margs, next_level,
 			       next_virtual_address, next_size);
+	}
+
+	if (need_retry) {
+		margs->error = ERROR_RETRY;
+		vret	     = PGTABLE_MODIFIER_RET_ERROR;
 	}
 
 out:
@@ -3332,11 +3461,12 @@ prealloc_modifier(pgtable_t *pgt, vmaddr_t virtual_address, size_t size,
 		// go to next entry at the same level
 		goto out;
 	} else {
+		size_t table_size = util_bit(pgt->granule_shift);
+
 		// if (addr_size > level_size)
 		ret = alloc_level_table(margs->partition, margs->stage,
-					util_bit(pgt->granule_shift),
-					util_bit(pgt->granule_shift),
-					&new_pgt_paddr, &new_pgt, false);
+					table_size, table_size, &new_pgt_paddr,
+					&new_pgt, false);
 		if (ret != OK) {
 			LOG(ERROR, WARN, "Failed to allocate page.\n");
 			vret	     = PGTABLE_MODIFIER_RET_ERROR;
@@ -3398,14 +3528,17 @@ modify_protected_modifier(pgtable_t *pgt, vmaddr_t virtual_address, size_t size,
 	assert(pgtable_entry_types_get_block(&type) ||
 	       pgtable_entry_types_get_page(&type));
 
+	assert(margs->unlock);
+
 	// Determine whether unlock will have any effect on this entry.
 	vmsa_stg2_lower_attrs_t lower_attrs =
 		vmsa_stg2_lower_attrs_cast(get_lower_attr(cur_entry));
 	vmsa_stg2_upper_attrs_t upper_attrs =
 		vmsa_stg2_upper_attrs_cast(get_upper_attr(cur_entry));
+
 	if (vmsa_stg2_upper_attrs_get_unprotected(&upper_attrs) ||
 	    !vmsa_stg2_lower_attrs_get_AF(&lower_attrs)) {
-		// Unprotected or already unlocked
+		// No effect on unprotected or unlocked pages
 		goto out;
 	}
 
@@ -3414,11 +3547,8 @@ modify_protected_modifier(pgtable_t *pgt, vmaddr_t virtual_address, size_t size,
 
 	// Split the block if necessary.
 	if (pgtable_entry_types_get_block(&type) &&
-	    (((virtual_address != entry_virtual_address) ||
-	      (size < addr_size)) ||
-	     (margs->sanitise && (addr_size > margs->sanitise_limit)))) {
-		// Partial unlock, or sanitise of too large an area; split the
-		// block into smaller pages.
+	    ((virtual_address != entry_virtual_address) ||
+	     (size < addr_size))) {
 		pgtable_map_modifier_args_t mremap_args = { 0 };
 		mremap_args.phys			= entry_phys;
 		mremap_args.partition			= margs->partition;
@@ -3441,53 +3571,35 @@ modify_protected_modifier(pgtable_t *pgt, vmaddr_t virtual_address, size_t size,
 		goto out;
 	}
 
-	if (margs->unlock) {
-		// Clear the access flag and invalidate the S2 TLB
-		vmsa_stg2_lower_attrs_set_AF(&lower_attrs, false);
-		vmsa_page_and_block_attrs_entry_set_lower_attrs(
+	// Clear the access flag and invalidate the S2 TLB
+	vmsa_stg2_lower_attrs_set_AF(&lower_attrs, false);
+	vmsa_page_and_block_attrs_entry_set_lower_attrs(
+		&cur_entry.attrs, vmsa_stg2_lower_attrs_raw(lower_attrs));
+	if (!margs->sanitise) {
+		vmsa_stg2_upper_attrs_set_unsanitised(&upper_attrs, true);
+		vmsa_page_and_block_attrs_entry_set_upper_attrs(
 			&cur_entry.attrs,
-			vmsa_stg2_lower_attrs_raw(lower_attrs));
-		partition_phys_access_enable(&cur_table[idx]);
-		atomic_store_explicit(&cur_table[idx], cur_entry.base,
-				      memory_order_relaxed);
-		partition_phys_access_disable(&cur_table[idx]);
-
-		dsb_st(margs->outer_shareable);
-		vm_tlbi_ipa(virtual_address, margs->outer_shareable);
-
-		// Note: no S1 TLB invalidation is done at this time. If the
-		// VM has requested it, it will be triggered by the caller.
+			vmsa_stg2_upper_attrs_raw(upper_attrs));
 	}
+	partition_phys_access_enable(&cur_table[idx]);
+	atomic_store_explicit(&cur_table[idx], cur_entry.base,
+			      memory_order_relaxed);
+	partition_phys_access_disable(&cur_table[idx]);
 
-	if (margs->sanitise) {
-		assert(addr_size <= margs->sanitise_limit);
-		void *addr = partition_phys_map(entry_phys, addr_size);
-		partition_phys_access_enable(addr);
+	dsb_st(margs->outer_shareable);
+	vm_tlbi_ipa(virtual_address, margs->outer_shareable);
 
-		// This sanitisation is not synchronised with concurrent
-		// accesses to the unlocked page from the protected VM: there is
-		// no synchronisation of the above TLBI before the memset,
-		// no stage 1 TLBI until after this function returns, and no RCU
-		// sync to complete in-hypervisor accesses.
-		//
-		// If the caller is the VM itself, it is responsible for
-		// removing any stage 1 mappings and completing outstanding
-		// accesses (including hypercalls) before calling this API. If
-		// the caller is RM, the protected VM is being reset and its
-		// VCPUs should have already been killed during VM exit, so
-		// there should be no concurrent accesses.
-		memclear_and_clean(addr, addr_size);
+	// Note: no S1 TLB invalidation is done at this time. If the VM has
+	// requested it, it will be triggered by the caller.
 
-		partition_phys_access_disable(addr);
-		partition_phys_unmap(addr, entry_phys, addr_size);
-
-		margs->sanitise_limit -= addr_size;
-
-		if (margs->sanitise_limit < PGTABLE_VM_PAGE_SIZE) {
-			margs->error	     = ERROR_RETRY;
-			margs->modified_size = margs->orig_size - *next_size;
-			vret		     = PGTABLE_MODIFIER_RET_ERROR;
-		}
+	// Increment the count of unlocked PTEs, and return early if it reaches
+	// a threshold value. This is done to limit the hypercall latency, since
+	// this hypercall is routinely called for an entire address space.
+	margs->unlock_count++;
+	if (margs->unlock_count >= PGTABLE_MODIFY_UNLOCK_LIMIT) {
+		margs->modified_size = margs->orig_size - *next_size;
+		margs->error	     = ERROR_RETRY;
+		vret		     = PGTABLE_MODIFIER_RET_ERROR;
 	}
 
 out:
@@ -3519,15 +3631,19 @@ access_protected_modifier(pgtable_t *pgt, vmsa_entry_t cur_entry, index_t idx,
 
 	if (vmsa_stg2_upper_attrs_get_unprotected(&upper_attrs)) {
 		// Unprotected
-		margs->error = ERROR_ADDR_INVALID;
-	} else if (vmsa_stg2_lower_attrs_get_AF(&lower_attrs)) {
-		// Already locked
 		margs->error = ERROR_DENIED;
+	} else if (vmsa_stg2_lower_attrs_get_AF(&lower_attrs)) {
+		// Already unlocked; fault should not have occurred
+		margs->error = OK;
 	} else {
 		vmsa_stg2_lower_attrs_set_AF(&lower_attrs, true);
 		vmsa_page_and_block_attrs_entry_set_lower_attrs(
 			&cur_entry.attrs,
 			vmsa_stg2_lower_attrs_raw(lower_attrs));
+		vmsa_stg2_upper_attrs_set_unsanitised(&upper_attrs, false);
+		vmsa_page_and_block_attrs_entry_set_upper_attrs(
+			&cur_entry.attrs,
+			vmsa_stg2_upper_attrs_raw(upper_attrs));
 		vmsa_level_table_t *cur_table = (*stack)[level].table;
 
 		partition_phys_access_enable(&cur_table[idx]);
@@ -4257,12 +4373,18 @@ pgtable_hyp_lookup(uintptr_t virtual_address, paddr_t *mapped_base,
 
 	pgtable_entry_types_set_block(&entry_types, true);
 	pgtable_entry_types_set_page(&entry_types, true);
+
+	// Take the lock to prevent levels being freed while we access them.
+	spinlock_acquire(&hyp_pgtable.lock);
+
 	// just try to lookup a page, but if it's a block, the modifier will
 	// stop the walk and return success
 	walk_ret = translation_table_walk(
 		pgt, virtual_address, util_bit(pgt->granule_shift),
 		PGTABLE_TRANSLATION_TABLE_WALK_EVENT_LOOKUP, entry_types,
 		&margs);
+
+	spinlock_release(&hyp_pgtable.lock);
 
 	if (margs.size == 0U) {
 		// Return error (not-mapped) if lookup found no pages.
@@ -4326,10 +4448,16 @@ pgtable_hyp_preallocate(partition_t *partition, uintptr_t virtual_address,
 	margs.stage		   = PGTABLE_HYP_STAGE_1;
 
 	pgtable_entry_types_set_invalid(&entry_types, true);
+
+	// Take the lock to prevent levels being freed while we access them.
+	spinlock_acquire(&hyp_pgtable.lock);
+
 	bool walk_ret = translation_table_walk(
 		pgt, virtual_address, size,
 		PGTABLE_TRANSLATION_TABLE_WALK_EVENT_PREALLOC, entry_types,
 		&margs);
+
+	spinlock_release(&hyp_pgtable.lock);
 
 	if (!walk_ret && (margs.error == OK)) {
 		margs.error = ERROR_FAILURE;
@@ -4355,8 +4483,6 @@ pgtable_do_hyp_map(partition_t *partition, uintptr_t virtual_address,
 	vmsa_stg1_lower_attrs_t	    l;
 	vmsa_stg1_upper_attrs_t	    u;
 	pgtable_t		   *pgt = NULL;
-
-	assert(pgtable_op);
 
 	assert(partition != NULL);
 
@@ -4476,8 +4602,6 @@ pgtable_hyp_unmap(partition_t *partition, uintptr_t virtual_address,
 	pgtable_unmap_modifier_args_t margs = { 0 };
 	pgtable_t		     *pgt   = NULL;
 
-	assert(pgtable_op);
-
 	assert(partition != NULL);
 	assert(util_is_p2_or_zero(preserved_prealloc));
 
@@ -4530,10 +4654,6 @@ pgtable_hyp_start(void) LOCK_IMPL
 	// The pgtable_hyp code has to run with a lock and preempt disabled to
 	// ensure forward progress and because the code is not thread safe.
 	spinlock_acquire(&hyp_pgtable.lock);
-#if !defined(NDEBUG)
-	assert(!pgtable_op);
-	pgtable_op = true;
-#endif
 }
 
 void
@@ -4547,8 +4667,6 @@ pgtable_hyp_commit(void) LOCK_IMPL
 	asm_context_sync_fence();
 #endif
 #if !defined(NDEBUG)
-	assert(pgtable_op);
-	pgtable_op = false;
 	assert(!hyp_pgtable.bottom_control.s1_inval_needed);
 #if defined(ARCH_ARM_FEAT_VHE)
 	assert(!hyp_pgtable.top_control.s1_inval_needed);
@@ -4828,10 +4946,115 @@ pgtable_vm_init_regs(pgtable_vm_t *vm_pgtable)
 void
 pgtable_vm_load_regs(pgtable_vm_t *vm_pgtable)
 {
+#if defined(CPU_ERRATUM_44898) && CPU_ERRATUM_44898
+	global_cpu_options_t options = globals_get_cpu_options();
+	if (compiler_unexpected(
+		    global_cpu_options_get_cpu_erratum_44898(&options))) {
+		asm_ordering_dummy_t wa_order;
+		asm_context_sync_ordered(&wa_order);
+		register_VTCR_EL2_write_ordered(vm_pgtable->vtcr_el2,
+						&wa_order);
+		register_VTTBR_EL2_write_ordered(vm_pgtable->vttbr_el2,
+						 &wa_order);
+		asm_context_sync_ordered(&wa_order);
+	} else {
+		register_VTCR_EL2_write(vm_pgtable->vtcr_el2);
+		register_VTTBR_EL2_write(vm_pgtable->vttbr_el2);
+	}
+#else
 	register_VTCR_EL2_write(vm_pgtable->vtcr_el2);
 	register_VTTBR_EL2_write(vm_pgtable->vttbr_el2);
+#endif
 }
 #endif
+
+#if defined(PGTABLE_VM_PLATFORM_MANAGED) && PGTABLE_VM_PLATFORM_MANAGED
+
+static count_t
+vtcr_tg0_code_get_granule_shift(tcr_tg0_t tg0)
+{
+	count_t granule_shift;
+
+	switch (tg0) {
+	case TCR_TG0_GRANULE_SIZE_4KB:
+		granule_shift = SHIFT_4K;
+		break;
+	case TCR_TG0_GRANULE_SIZE_16KB:
+		granule_shift = SHIFT_16K;
+		break;
+	case TCR_TG0_GRANULE_SIZE_64KB:
+		granule_shift = SHIFT_64K;
+		break;
+	default:
+		panic("Invalid tg0 code");
+	}
+
+	return granule_shift;
+}
+
+error_t
+pgtable_vm_platform_init(partition_t *partition, pgtable_vm_t *pgtable,
+			 vmid_t vmid, VTTBR_EL2_t vttbr, VTCR_EL2_t vtcr)
+{
+	error_t ret = OK;
+
+	pgtable->vtcr_el2  = vtcr;
+	pgtable->vttbr_el2 = vttbr;
+
+	pgtable->control.vmid		  = vmid;
+	pgtable->control.platform_pgtable = true;
+
+	count_t granule_shift =
+		vtcr_tg0_code_get_granule_shift(VTCR_EL2_get_TG0(&vtcr));
+	pgtable->control.granule_shift = granule_shift;
+
+	pgtable->control.root_pgtable = VTTBR_EL2_get_BADDR(&vttbr);
+
+	// Ensure addrspace activate handler ordering is correct
+	assert(pgtable->control.root == NULL);
+
+	uint8_t t0sz		      = VTCR_EL2_get_T0SZ(&vtcr);
+	pgtable->control.address_bits = (count_t)((uint8_t)(64U - t0sz));
+
+	index_t msb = pgtable->control.address_bits - 1U;
+
+	get_start_level_info_ret_t info =
+		get_start_level_info(level_conf, msb, true);
+	pgtable->control.start_level	  = info.level;
+	pgtable->control.start_level_size = info.size;
+
+	size_t map_size = util_max(info.size, PGTABLE_HYP_PAGE_SIZE);
+	assert(util_is_baligned(pgtable->control.root_pgtable, map_size));
+
+	// setup hyp root partition to a specific location
+	virt_range_result_t range = hyp_aspace_allocate(map_size);
+	if (range.e != OK) {
+		panic("pgtable: Address allocation failed");
+	}
+
+	pgtable_hyp_start();
+
+	ret = pgtable_hyp_map(partition, (uintptr_t)range.r.base, map_size,
+			      pgtable->control.root_pgtable,
+			      PGTABLE_HYP_MEMTYPE_WRITEBACK, PGTABLE_ACCESS_RW,
+			      VMSA_SHAREABILITY_NON_SHAREABLE);
+	if (ret != OK) {
+		panic("pgtable: Mapping of HLOS pgtable failed");
+	}
+
+	pgtable_hyp_commit();
+
+	pgtable->control.root = (vmsa_level_table_t *)range.r.base;
+
+	return ret;
+}
+#endif
+
+bool
+pgtable_vm_is_platform_managed(pgtable_vm_t *pgtable)
+{
+	return pgtable->control.platform_pgtable;
+}
 
 error_t
 pgtable_vm_init(partition_t *partition, pgtable_vm_t *pgtable, vmid_t vmid)
@@ -4845,7 +5068,9 @@ pgtable_vm_init(partition_t *partition, pgtable_vm_t *pgtable, vmid_t vmid)
 		goto out;
 	}
 
-	// FIXME:
+	spinlock_init(&pgtable->lock);
+
+	// FIXME: QC Gunyah issue #60
 	// FIXME: refine with more configurable code
 #if PGTABLE_VM_PAGE_SIZE == 4096
 	pgtable->control.granule_shift = SHIFT_4K;
@@ -4855,12 +5080,15 @@ pgtable_vm_init(partition_t *partition, pgtable_vm_t *pgtable, vmid_t vmid)
 	pgtable->control.address_bits = PLATFORM_VM_ADDRESS_SPACE_BITS;
 	msb		      = (index_t)PLATFORM_VM_ADDRESS_SPACE_BITS - 1U;
 	pgtable->control.vmid = vmid;
+	pgtable->control.platform_pgtable = false;
 
 	get_start_level_info_ret_t info =
 		get_start_level_info(level_conf, msb, true);
 	pgtable->control.start_level	  = info.level;
 	pgtable->control.start_level_size = info.size;
-	pgtable->issue_dvm_cmd		  = false;
+#if defined(ARCH_ARM_FEAT_TLBIOS)
+	atomic_init(&pgtable->dvm_enable, 0U);
+#endif
 
 	// allocate the level 0 page table
 	ret = alloc_level_table(partition, PGTABLE_VM_STAGE_2, info.size,
@@ -4894,12 +5122,15 @@ pgtable_vm_destroy(partition_t *partition, pgtable_vm_t *pgtable)
 	size		= util_bit(pgtable->control.address_bits);
 	// we should unmap everything
 	pgtable_vm_start(pgtable);
-	error_t err =
-		pgtable_vm_unmap(partition, pgtable, virtual_address, size);
+	error_t err;
+	do {
+		err = pgtable_vm_unmap(partition, pgtable, virtual_address,
+				       size);
+	} while (err == ERROR_RETRY);
 	if (err != OK) {
 		panic("pgtable_vm_destroy(): failed to unmap");
 	}
-	pgtable_vm_commit(pgtable);
+	pgtable_vm_commit(pgtable, false);
 
 	// free top level page table
 	partition_free(partition, pgtable->control.root,
@@ -4937,6 +5168,9 @@ pgtable_vm_lookup(pgtable_vm_t *pgtable, vmaddr_t virtual_address,
 	pgtable_entry_types_set_block(&entry_types, true);
 	pgtable_entry_types_set_page(&entry_types, true);
 
+	// Take the lock to prevent levels being freed while we access them.
+	spinlock_acquire(&pgtable->lock);
+
 	// just try to lookup a page, but if it's a block, the modifier will
 	// stop the walk and return success
 	walk_ret = translation_table_walk(
@@ -4944,6 +5178,8 @@ pgtable_vm_lookup(pgtable_vm_t *pgtable, vmaddr_t virtual_address,
 		util_bit(pgtable->control.granule_shift),
 		PGTABLE_TRANSLATION_TABLE_WALK_EVENT_LOOKUP, entry_types,
 		&margs);
+
+	spinlock_release(&pgtable->lock);
 
 	if (margs.size == 0U) {
 		// Return error (not-mapped) if lookup found no pages.
@@ -4986,8 +5222,6 @@ pgtable_vm_map(partition_t *partition, pgtable_vm_t *pgtable,
 {
 	pgtable_map_modifier_args_t margs = { 0 };
 
-	assert(pgtable_op);
-
 	assert(pgtable != NULL);
 	assert(partition != NULL);
 
@@ -5004,7 +5238,7 @@ pgtable_vm_map(partition_t *partition, pgtable_vm_t *pgtable,
 		goto fail;
 	}
 
-	// FIXME:
+	// FIXME: QC Gunyah issue #60
 	// Supporting different granule sizes will need support and additional
 	// checking to be added to memextent code.
 	if (!util_is_p2aligned(virtual_address,
@@ -5024,6 +5258,7 @@ pgtable_vm_map(partition_t *partition, pgtable_vm_t *pgtable,
 
 	if (!protected) {
 		vmsa_stg2_upper_attrs_set_unprotected(&u, true);
+		vmsa_stg2_upper_attrs_set_unsanitised(&u, true);
 		margs.unprotected = true;
 	}
 
@@ -5037,7 +5272,7 @@ pgtable_vm_map(partition_t *partition, pgtable_vm_t *pgtable,
 	margs.error		   = OK;
 	margs.try_map		   = try_map;
 	margs.stage		   = PGTABLE_VM_STAGE_2;
-	margs.outer_shareable	   = pgtable->issue_dvm_cmd;
+	margs.outer_shareable	   = pgtable_dvm_enabled(pgtable);
 #if (CPU_PGTABLE_BBM_LEVEL > 0) || !defined(PLATFORM_PGTABLE_AVOID_BBM)
 	// We can either trigger TLB conflicts safely because they will be
 	// delivered to EL2, or else can use BBM. If the caller permits merges,
@@ -5056,6 +5291,7 @@ pgtable_vm_map(partition_t *partition, pgtable_vm_t *pgtable,
 	(void)allow_merge;
 	margs.merge_limit = 0U;
 #endif
+	margs.sanitise_limit = PGTABLE_UNMAP_SANITISE_LIMIT;
 
 	// FIXME: try to unify the level number, just use one kind of level
 	pgtable_entry_types_t entry_types = VMSA_ENTRY_TYPE_LEAF;
@@ -5088,8 +5324,6 @@ pgtable_vm_unmap(partition_t *partition, pgtable_vm_t *pgtable,
 	pgtable_unmap_modifier_args_t margs = { 0 };
 	error_t			      ret   = OK;
 
-	assert(pgtable_op);
-
 	assert(pgtable != NULL);
 	assert(partition != NULL);
 
@@ -5116,8 +5350,9 @@ pgtable_vm_unmap(partition_t *partition, pgtable_vm_t *pgtable,
 	// no need to preserve table levels here
 	margs.preserved_size  = PGTABLE_HYP_UNMAP_PRESERVE_NONE;
 	margs.stage	      = PGTABLE_VM_STAGE_2;
-	margs.outer_shareable = pgtable->issue_dvm_cmd;
+	margs.outer_shareable = pgtable_dvm_enabled(pgtable);
 	margs.unprotected     = true;
+	margs.sanitise_limit  = PGTABLE_UNMAP_SANITISE_LIMIT;
 
 	bool walk_ret = translation_table_walk(
 		&pgtable->control, virtual_address, size,
@@ -5137,8 +5372,6 @@ pgtable_vm_unmap_matching(partition_t *partition, pgtable_vm_t *pgtable,
 {
 	pgtable_unmap_modifier_args_t margs = { 0 };
 	error_t			      ret   = OK;
-
-	assert(pgtable_op);
 
 	assert(pgtable != NULL);
 	assert(partition != NULL);
@@ -5162,8 +5395,9 @@ pgtable_vm_unmap_matching(partition_t *partition, pgtable_vm_t *pgtable,
 	margs.stage	      = PGTABLE_VM_STAGE_2;
 	margs.phys	      = phys;
 	margs.size	      = size;
-	margs.outer_shareable = pgtable->issue_dvm_cmd;
+	margs.outer_shareable = pgtable_dvm_enabled(pgtable);
 	margs.unprotected     = !protected;
+	margs.sanitise_limit  = PGTABLE_UNMAP_SANITISE_LIMIT;
 
 	bool walk_ret = translation_table_walk(
 		&pgtable->control, virtual_address, size,
@@ -5184,8 +5418,6 @@ pgtable_vm_modify_protected(partition_t *partition, pgtable_vm_t *pgtable,
 	pgtable_modify_protected_modifier_args_t margs = { 0 };
 	size_result_t				 ret;
 
-	assert(pgtable_op);
-
 	assert(pgtable != NULL);
 	assert(partition != NULL);
 
@@ -5195,7 +5427,7 @@ pgtable_vm_modify_protected(partition_t *partition, pgtable_vm_t *pgtable,
 		goto out;
 	}
 
-	if (size == 0U) {
+	if ((size == 0U) || !unlock) {
 		// No page table updates needed; just sync if necessary
 		ret = size_result_ok(size);
 		goto out_sync;
@@ -5214,12 +5446,12 @@ pgtable_vm_modify_protected(partition_t *partition, pgtable_vm_t *pgtable,
 
 	margs.partition	      = partition;
 	margs.orig_size	      = size;
-	margs.outer_shareable = pgtable->issue_dvm_cmd;
+	margs.outer_shareable = pgtable_dvm_enabled(pgtable);
 	margs.unlock	      = unlock;
 	margs.sanitise	      = sanitise;
-	margs.sanitise_limit  = sanitise ? (PGTABLE_VM_PAGE_SIZE * 16U) : 0U;
 	margs.modified_size   = 0U;
 	margs.error	      = OK;
+	margs.unlock_count    = 0U;
 
 	bool walk_ret = translation_table_walk(
 		&pgtable->control, virtual_address, size,
@@ -5262,7 +5494,11 @@ pgtable_vm_access_protected(pgtable_vm_t *pgtable, vmaddr_t virtual_address,
 	pgtable_entry_types_set_block(&entry_types, true);
 	pgtable_entry_types_set_page(&entry_types, true);
 
-	pgtable_access_protected_modifier_args_t margs = { .write = write };
+	// We use AF to trap both read and write accesses to sanitised pages, so
+	// we don't need to know whether this was a write access.
+	(void)write;
+
+	pgtable_access_protected_modifier_args_t margs = { 0 };
 
 	bool walk_ret = translation_table_walk(
 		&pgtable->control, virtual_address,
@@ -5276,20 +5512,44 @@ out:
 	return err;
 }
 
+bool
+pgtable_vm_access_validate(pgtable_access_t vm_kernel_access,
+			   pgtable_access_t vm_user_access)
+{
+	bool ret;
+
+	switch (vm_kernel_access) {
+	case PGTABLE_ACCESS_NONE:
+	case PGTABLE_ACCESS_X:
+	case PGTABLE_ACCESS_W:
+	case PGTABLE_ACCESS_R:
+	case PGTABLE_ACCESS_RX:
+	case PGTABLE_ACCESS_RW:
+	case PGTABLE_ACCESS_RWX:
+#if defined(ARCH_ARM_FEAT_XNX)
+		// RW bits of kernel and user access must be equal.
+		ret = ((((uint32_t)vm_kernel_access ^ (uint32_t)vm_user_access) &
+			~(uint32_t)PGTABLE_ACCESS_X) == 0U);
+#else
+		// Kernel and user access must be equal.
+		ret = (vm_kernel_access == vm_user_access);
+#endif
+		break;
+	default:
+		// Invalid access type.
+		ret = false;
+		break;
+	}
+
+	return ret;
+}
+
 void
 pgtable_vm_start(pgtable_vm_t *pgtable) LOCK_IMPL
 {
 	assert(pgtable != NULL);
+	spinlock_acquire(&pgtable->lock);
 #ifndef HOST_TEST
-	// FIXME:
-	// We need to to run VM pagetable code with preempt disable due to
-	// TLB flushes.
-	preempt_disable();
-#if !defined(NDEBUG)
-	assert(!pgtable_op);
-	pgtable_op = true;
-#endif
-
 	thread_t *thread = thread_get_self();
 
 	// Since the pagetable code may need to flush the target VMID, we need
@@ -5305,26 +5565,24 @@ pgtable_vm_start(pgtable_vm_t *pgtable) LOCK_IMPL
 		asm_context_sync_ordered(&asm_ordering);
 	}
 #endif
-
-	assert(!pgtable->control.s1_inval_needed);
 }
 
 void
-pgtable_vm_commit(pgtable_vm_t *pgtable) LOCK_IMPL
+pgtable_vm_commit(pgtable_vm_t *pgtable, bool no_sync_unmap) LOCK_IMPL
 {
 #ifndef HOST_TEST
-#if !defined(NDEBUG)
-	assert(pgtable_op);
-	pgtable_op = false;
-#endif
+	bool outer_shareable = pgtable_dvm_enabled(pgtable);
+	dsb(outer_shareable);
 
-	dsb(pgtable->issue_dvm_cmd);
-
-	if (pgtable->control.s1_inval_needed) {
-		// There was at least one S2 TLBI that was synchronised by
-		// the above DSB. Invalidate all stage 1+2 TLB entries.
-		vm_tlbi_vmalle1(pgtable->issue_dvm_cmd);
-		dsb(pgtable->issue_dvm_cmd);
+	if (!no_sync_unmap && pgtable->control.s1_inval_needed) {
+		// There was at least one S2 TLBI that was synchronised by the
+		// above DSB. Invalidate all stage 1+2 TLB entries. Note that
+		// s1_inval_needed will only be set by a simple unmap operation;
+		// any replacement of an existing mapping will have done this
+		// invalidation during a BBM sequence (and cleared
+		// s1_inval_needed if it was set).
+		vm_tlbi_vmalle1(outer_shareable);
+		dsb(outer_shareable);
 		pgtable->control.s1_inval_needed = false;
 	}
 
@@ -5339,7 +5597,34 @@ pgtable_vm_commit(pgtable_vm_t *pgtable) LOCK_IMPL
 			thread->addrspace->vm_pgtable.vttbr_el2, &asm_ordering);
 	}
 
-	preempt_enable();
 	trigger_pgtable_vm_commit_event(pgtable);
+	spinlock_release(&pgtable->lock);
 #endif // !HOST_TEST
+}
+
+bool
+pgtable_vm_undergoing_bbm(pgtable_vm_t *pgtable)
+{
+	bool ret;
+
+#if (CPU_PGTABLE_BBM_LEVEL == 0) && !defined(PLATFORM_PGTABLE_AVOID_BBM)
+	// We use break-before-make for block splits and merges, which might
+	// affect addresses outside the operation range and therefore might
+	// cause faults that should be hidden.
+	if (!spinlock_trylock(&pgtable->lock)) {
+		ret = true;
+	} else {
+		spinlock_release(&pgtable->lock);
+		ret = false;
+	}
+#else
+	(void)pgtable;
+
+	// Break-before-make is only used when changing the output address or
+	// cache attributes, which shouldn't happen while the affected pages are
+	// being accessed.
+	ret = false;
+#endif
+
+	return ret;
 }

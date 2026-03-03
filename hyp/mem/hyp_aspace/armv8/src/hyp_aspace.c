@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier; BSD-3-Clause
 
@@ -30,10 +30,10 @@
 #include "event_handlers.h"
 
 #define HYP_ASPACE_ALLOCATE_BITS (25U)
-#define HYP_ASPACE_ALLOCATE_SIZE (size_t) util_bit(HYP_ASPACE_ALLOCATE_BITS)
+#define HYP_ASPACE_ALLOCATE_SIZE (size_t)util_bit(HYP_ASPACE_ALLOCATE_BITS)
 
 #define BITS_2MiB 21
-#define SIZE_2MiB (size_t) util_bit(BITS_2MiB)
+#define SIZE_2MiB (size_t)util_bit(BITS_2MiB)
 
 static spinlock_t      hyp_aspace_direct_lock;
 static const uintptr_t hyp_aspace_direct_end =
@@ -139,6 +139,16 @@ hyp_aspace_handle_boot_cold_init(void)
 	assert((virt_start >= hyp_aspace_alloc_base) &&
 	       (virt_end <= hyp_aspace_alloc_end));
 
+#if defined(ARCH_ARM_FEAT_VHE)
+	// Dynamic allocators must avoid allocating ranges ending at
+	// ~(uintptr_t)0, to comply with C18 § 6.5.6, 7-8. Therefore,
+	// reserve the last region before the end of the address space.
+	if (hyp_aspace_alloc_end == ~(uint64_t)0U) {
+		bitmap_atomic_set(hyp_aspace_regions,
+				  (index_t)hyp_aspace_num_regions - 1U,
+				  memory_order_relaxed);
+	}
+#endif
 	// Reserve the already mapped hypervisor memory in the bitmap.
 	index_t start_bit = (index_t)((virt_start - hyp_aspace_alloc_base) >>
 				      HYP_ASPACE_ALLOCATE_BITS);
@@ -357,7 +367,7 @@ hyp_aspace_allocate(size_t min_size)
 			virt_range_t vr = { .base = (virt + offset),
 					    .size = HYP_ASPACE_ALLOCATE_SIZE };
 			spinlock_release(&hyp_aspace_alloc_lock);
-			hyp_aspace_deallocate(hyp_partition, vr);
+			hyp_aspace_unmap_and_deallocate(hyp_partition, vr);
 			goto out;
 		}
 	}
@@ -368,7 +378,7 @@ out:
 }
 
 void
-hyp_aspace_deallocate(partition_t *partition, virt_range_t virt_range)
+hyp_aspace_unmap_and_deallocate(partition_t *partition, virt_range_t virt_range)
 {
 	uintptr_t virt = virt_range.base;
 	size_t	  size = virt_range.size;
@@ -388,8 +398,6 @@ hyp_aspace_deallocate(partition_t *partition, virt_range_t virt_range)
 	assert(end_bit < hyp_aspace_num_regions);
 
 	spinlock_acquire(&hyp_aspace_alloc_lock);
-	// FIXME: Rather than unmap, this should check that no
-	// page tables owned by the given partition remain.
 	pgtable_hyp_start();
 	pgtable_hyp_unmap(partition, virt, size, size);
 	pgtable_hyp_unmap(partition_get_private(), virt, size,
@@ -510,7 +518,7 @@ hyp_aspace_handle_vectors_trap_data_abort_el2(ESR_EL2_t esr)
 		goto out;
 	}
 
-	// Only handle faults that are in the direct access region
+	// Only handle faults that are in the direct access region.
 	if (addr > (hyp_aspace_physaccess_offset +
 		    util_bit(HYP_ASPACE_MAP_DIRECT_BITS) - 1)) {
 		goto out;

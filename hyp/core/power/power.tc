@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -19,6 +19,15 @@ define power_voting structure {
 extend timer_action enumeration {
 	power_cpu_on_retry;
 };
+
+#if defined(PLATFORM_ENABLE_SYSTEM_SUSPEND) && PLATFORM_ENABLE_SYSTEM_SUSPEND
+extend ipi_reason enumeration {
+	secondary_cpu_off;
+};
+
+define POWER_CPU_OFF_RETRY_DELAY_NS constant type nanoseconds_t = 50000; // 50 us delay
+define MAX_CPU_OFF_RETRIES constant type count_t = 50;
+#endif //PLATFORM_ENABLE_SYSTEM_SUSPEND
 
 define POWER_CPU_ON_RETRY_DELAY_NS constant type nanoseconds_t = 100000;
 define MAX_CPU_ON_RETRIES constant type count_t = 2;

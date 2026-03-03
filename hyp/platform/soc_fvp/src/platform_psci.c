@@ -13,59 +13,71 @@
 #include "event_handlers.h"
 
 bool
-platform_psci_is_cpu_active(psci_cpu_state_t cpu_state)
+platform_psci_is_node_active(index_t lpm_state, index_t level)
 {
-	return (cpu_state == PSCI_CPU_STATE_ACTIVE);
+	bool flag = true;
+	if (level == 0U) {
+		flag = (lpm_state == 0U);
+	}
+
+	return flag;
 }
 
 bool
-platform_psci_is_cpu_poweroff(psci_cpu_state_t cpu_state)
+platform_psci_is_node_poweroff(index_t lpm_state, index_t level)
 {
-	(void)cpu_state;
+	(void)level;
+	(void)lpm_state;
+
+	// Powerdown not supported in fvp, it always goes into WFI
 	return false;
 }
 
-psci_cpu_state_t
-platform_psci_get_cpu_state(psci_suspend_powerstate_t suspend_state)
+index_t
+platform_psci_get_lpm_state(psci_suspend_powerstate_t suspend_state,
+			    index_t		      level)
 {
-	psci_cpu_state_t stateid =
-		psci_suspend_powerstate_get_StateID(&suspend_state);
+	(void)level;
+	(void)suspend_state;
 
-	return stateid;
+	return 1U;
 }
 
 void
-platform_psci_set_cpu_state(psci_suspend_powerstate_t *suspend_state,
-			    psci_cpu_state_t	       cpu_state)
+platform_psci_set_lpm_state(psci_suspend_powerstate_t *suspend_state,
+			    index_t lpm_state, index_t level)
 {
-	psci_suspend_powerstate_set_StateID(suspend_state, cpu_state);
+	(void)level;
+	(void)lpm_state;
+	(void)suspend_state;
 }
 
-psci_cpu_state_t
-platform_psci_shallowest_cpu_state(psci_cpu_state_t state1,
-				   psci_cpu_state_t state2)
+index_t
+platform_psci_shallowest_lpm_state(index_t state1, index_t state2)
 {
-	return (psci_cpu_state_t)(util_min(state1, state2));
+	return util_min(state1, state2);
 }
 
-psci_cpu_state_t
-platform_psci_deepest_cpu_state(cpu_index_t cpu)
+index_t
+platform_psci_deepest_lpm_state(index_t cpu, index_t level)
 {
 	(void)cpu;
+	(void)level;
+
+	// Since FVP does not care about cpu suspend states, we will use 0 as
+	// active and non-zero as suspended.
 	return PSCI_CPU_STATE_WFI;
 }
 
 psci_suspend_powerstate_stateid_t
-platform_psci_deepest_cpu_level_stateid(cpu_index_t cpu)
+platform_psci_deepest_level_stateid(cpu_index_t cpu, index_t level)
 {
-	return platform_psci_deepest_cpu_state(cpu);
-}
+	(void)cpu;
+	(void)level;
 
-psci_suspend_powerstate_stateid_t
-platform_psci_deepest_cluster_level_stateid(cpu_index_t cpu, uint8_t max_depth)
-{
-	(void)max_depth;
-	return platform_psci_deepest_cpu_level_stateid(cpu);
+	// Since FVP does not care about cpu suspend states, we'll use 0 as
+	// active and non-zero as suspended.
+	return platform_psci_deepest_lpm_state(cpu, level);
 }
 
 psci_ret_t
@@ -76,26 +88,29 @@ platform_psci_suspend_state_validation(psci_suspend_powerstate_t suspend_state,
 	(void)cpu;
 	(void)psci_mode;
 
-	// XXX
+	// FVP does not care about suspend states since it only goes to WFI.
 	return PSCI_RET_SUCCESS;
+}
+
+// Returns the cluster indices
+uint32_t
+platform_psci_get_level_index(cpu_index_t cpu, index_t level)
+{
+	(void)cpu;
+	(void)level;
+	return 0U;
 }
 
 error_t
 platform_psci_get_index_by_level(cpu_index_t cpu, uint32_t *start_idx,
 				 uint32_t *children_counts, uint32_t level)
 {
-	error_t ret;
+	(void)cpu;
+	(void)level;
+	*start_idx	 = 0U;
+	*children_counts = PLATFORM_MAX_CORES;
 
-	if (level == 0) {
-		(void)cpu;
-		*start_idx	 = 0U;
-		*children_counts = PLATFORM_MAX_CORES;
-		ret		 = OK;
-	} else {
-		ret = ERROR_UNIMPLEMENTED;
-	}
-
-	return ret;
+	return OK;
 }
 
 #endif

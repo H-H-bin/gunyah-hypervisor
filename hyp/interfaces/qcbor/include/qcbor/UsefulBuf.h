@@ -298,10 +298,7 @@ typedef struct q_useful_buf {
  * compilers so they are not used.
  */
 #ifdef __cplusplus
-#define NULLUsefulBufC                                                         \
-	{                                                                      \
-		NULL, 0                                                        \
-	}
+#define NULLUsefulBufC { NULL, 0 }
 #else
 #define NULLUsefulBufC ((UsefulBufC){ NULL, 0 })
 #endif
@@ -311,10 +308,7 @@ typedef struct q_useful_buf {
  * way @c NULL points to nothing. It does not matter what @c len is.
  **/
 #ifdef __cplusplus
-#define NULLUsefulBuf                                                          \
-	{                                                                      \
-		NULL, 0                                                        \
-	}
+#define NULLUsefulBuf { NULL, 0 }
 #else
 #define NULLUsefulBuf ((UsefulBuf){ NULL, 0 })
 #endif
@@ -422,7 +416,7 @@ UsefulBuf_Unconst(const UsefulBufC UBC);
 /**
  * Maximum supported string length, including \0 terminator.
  */
-#define UsefulBuf_StringLenMax 512U
+#define UsefulBuf_StringLenMax 8192U
 
 /**
  * Convert a literal string to a @ref UsefulBufC.
@@ -434,10 +428,7 @@ UsefulBuf_Unconst(const UsefulBufC UBC);
  * The terminating \0 (NULL) is NOT included in the length!
  */
 #ifdef __cplusplus
-#define UsefulBuf_FROM_SZ_LITERAL(szString)                                    \
-	{                                                                      \
-		(szString), sizeof(szString) - 1                               \
-	}
+#define UsefulBuf_FROM_SZ_LITERAL(szString) { (szString), sizeof(szString) - 1 }
 #else
 #define UsefulBuf_FROM_SZ_LITERAL(szString)                                    \
 	((UsefulBufC){ (szString), sizeof(szString) - 1 })
@@ -450,10 +441,7 @@ UsefulBuf_Unconst(const UsefulBufC UBC);
  * will not work on non-literal arrays.
  */
 #ifdef __cplusplus
-#define UsefulBuf_FROM_BYTE_ARRAY_LITERAL(pBytes)                              \
-	{                                                                      \
-		(pBytes), sizeof(pBytes)                                       \
-	}
+#define UsefulBuf_FROM_BYTE_ARRAY_LITERAL(pBytes) { (pBytes), sizeof(pBytes) }
 #else
 #define UsefulBuf_FROM_BYTE_ARRAY_LITERAL(pBytes)                              \
 	((UsefulBufC){ (pBytes), sizeof(pBytes) })
@@ -473,10 +461,7 @@ UsefulBuf_Unconst(const UsefulBufC UBC);
  * UsefulBuf_MAKE_STACK_UB.
  */
 #ifdef __cplusplus
-#define UsefulBuf_FROM_BYTE_ARRAY(pBytes)                                      \
-	{                                                                      \
-		(pBytes), sizeof(pBytes)                                       \
-	}
+#define UsefulBuf_FROM_BYTE_ARRAY(pBytes) { (pBytes), sizeof(pBytes) }
 #else
 #define UsefulBuf_FROM_BYTE_ARRAY(pBytes)                                      \
 	((UsefulBuf){ (pBytes), sizeof(pBytes) })
@@ -854,10 +839,7 @@ typedef struct useful_out_buf {
  * The NULL pointer tells UsefulOutputBuf to not copy any data.
  */
 #ifdef __cplusplus
-#define SizeCalculateUsefulBuf                                                 \
-	{                                                                      \
-		NULL, SIZE_MAX                                                 \
-	}
+#define SizeCalculateUsefulBuf { NULL, SIZE_MAX }
 #else
 #define SizeCalculateUsefulBuf ((UsefulBuf){ NULL, SIZE_MAX })
 #endif
@@ -1764,7 +1746,7 @@ UsefulBuf_Copy(UsefulBuf Dest, const UsefulBufC Src)
 static inline UsefulBufC
 UsefulBuf_Set(UsefulBuf Dest, uint8_t value)
 {
-	(void)memset(Dest.ptr, value, Dest.len);
+	(void)memset_s(Dest.ptr, Dest.len, value, Dest.len);
 
 	UsefulBufC UBC;
 	UBC.ptr = Dest.ptr;

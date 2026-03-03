@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // 2019 Cog Systems Pty Ltd.
 //
@@ -21,7 +21,7 @@ ${sep}${p.type}${space}${p.name}#slurp
 void#slurp
 #end if
 )#slurp
-#for l in $e.lock_opts
+#for l in sorted($e.lock_opts, key=lambda x: x.lock)
  ${l.action.upper()}_${l.kind.upper()}(${l.lock})#slurp
 #end for
 ;

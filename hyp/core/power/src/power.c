@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -9,16 +9,20 @@
 
 #include <atomic.h>
 #include <bitmap.h>
+#include <compiler.h>
 #include <cpulocal.h>
 #include <ipi.h>
+#include <log.h>
 #include <panic.h>
 #include <platform_cpu.h>
 #include <power.h>
 #include <preempt.h>
+#include <qcbor.h>
 #include <rcu.h>
 #include <scheduler.h>
 #include <spinlock.h>
 #include <timer_queue.h>
+#include <trace.h>
 #include <util.h>
 
 #include <events/power.h>
@@ -27,14 +31,49 @@
 
 #include "event_handlers.h"
 
+#if defined(MODULE_VM_ROOTVM)
+#include <cspace.h>
+#include <object.h>
+#include <partition.h>
+#include <partition_alloc.h>
+#endif
+
+#if defined(PLATFORM_ENABLE_SYSTEM_SUSPEND) && PLATFORM_ENABLE_SYSTEM_SUSPEND
+#define ROOTVM_INIT 1U
+#include <list.h>
+#include <partition_init.h>
+#include <platform_psci.h>
+#include <platform_timer.h>
+#include <thread.h>
+
+#include <asm/barrier.h>
+
+static _Atomic bool power_suspend_in_progress;
+static spinlock_t   power_system_cores_lock;
+
+// power off all the other cores than current core
+static void
+power_send_other_cores_power_off(void) REQUIRE_PREEMPT_DISABLED;
+#endif // PLATFORM_ENABLE_SYSTEM_SUSPEND
+
+// Trigger cpu suspend event for current cpu when entering
+// an explicitly requested system or CPU level suspend state
+static error_t
+power_current_cpu_suspend(psci_suspend_powerstate_t pstate)
+	REQUIRE_PREEMPT_DISABLED;
+// Trigger cpu resume event for current cpu when exiting
+// System Suspend or CPU level suspend state
+static void
+power_current_cpu_resume(bool was_poweroff) REQUIRE_PREEMPT_DISABLED;
+
 static ticks_t power_cpu_on_retry_delay_ticks;
 
 static spinlock_t power_system_lock;
 static BITMAP_DECLARE(PLATFORM_MAX_CORES, power_system_running_cpus)
 	PROTECTED_BY(power_system_lock);
-static _Atomic count_t power_system_online_cpus;
-static platform_power_state_t
-	power_system_suspend_state PROTECTED_BY(power_system_lock);
+static _Atomic count_t	      power_system_online_cpus;
+static platform_power_state_t power_system_suspend_state
+	PROTECTED_BY(power_system_lock);
 
 CPULOCAL_DECLARE_STATIC(power_voting_t, power_voting);
 
@@ -82,7 +121,11 @@ power_handle_boot_cold_init(cpu_index_t boot_cpu_index)
 
 	spinlock_init(&power_system_lock);
 
-	// FIXME:
+#if defined(PLATFORM_ENABLE_SYSTEM_SUSPEND) && PLATFORM_ENABLE_SYSTEM_SUSPEND
+	spinlock_init(&power_system_cores_lock);
+#endif // PLATFORM_ENABLE_SYSTEM_SUSPEND
+
+	// FIXME: QC Gunyah issue #130
 	spinlock_acquire_nopreempt(&power_system_lock);
 	bitmap_set(power_system_running_cpus, (index_t)boot_cpu_index);
 	spinlock_release_nopreempt(&power_system_lock);
@@ -112,6 +155,7 @@ power_handle_boot_cpu_warm_init(void)
 
 		(void)atomic_fetch_add_explicit(&power_system_online_cpus, 1U,
 						memory_order_release);
+		asm_event_wake_updated();
 
 #if defined(DISABLE_PSCI_CPU_OFF) && DISABLE_PSCI_CPU_OFF
 		power_voting_t *voting = &CPULOCAL(power_voting);
@@ -120,14 +164,15 @@ power_handle_boot_cpu_warm_init(void)
 	}
 	spinlock_release_nopreempt(&CPULOCAL(power_voting).lock);
 
-	// FIXME:
+	// FIXME: QC Gunyah issue #130
 	spinlock_acquire_nopreempt(&power_system_lock);
 	if (bitmap_empty(power_system_running_cpus, PLATFORM_MAX_CORES)) {
 		// CPU_POWER_STATE_STARTED could be seen due to a
 		// last-cpu-suspend/cpu_on race.
 		assert((state == CPU_POWER_STATE_STARTED) ||
 		       (state == CPU_POWER_STATE_SUSPEND));
-		trigger_power_system_resume_event(power_system_suspend_state);
+		trigger_power_system_idle_exit_event(
+			power_system_suspend_state);
 	}
 	bitmap_set(power_system_running_cpus, (index_t)cpulocal_get_index());
 	spinlock_release_nopreempt(&power_system_lock);
@@ -139,12 +184,12 @@ power_handle_power_cpu_suspend(platform_power_state_t state)
 	error_t	    err	   = OK;
 	cpu_index_t cpu_id = cpulocal_get_index();
 
-	// FIXME:
+	// FIXME: QC Gunyah issue #130
 	spinlock_acquire_nopreempt(&power_system_lock);
 	bitmap_clear(power_system_running_cpus, (index_t)cpu_id);
 	if (bitmap_empty(power_system_running_cpus, PLATFORM_MAX_CORES)) {
 		power_system_suspend_state = state;
-		err = trigger_power_system_suspend_event(state);
+		err = trigger_power_system_idle_enter_event(state);
 		if (err != OK) {
 			bitmap_set(power_system_running_cpus, (index_t)cpu_id);
 		}
@@ -172,11 +217,11 @@ power_handle_power_cpu_resume(bool was_poweroff)
 		CPULOCAL(power_state) = CPU_POWER_STATE_ONLINE;
 		spinlock_release_nopreempt(&CPULOCAL(power_voting).lock);
 
-		// FIXME:
+		// FIXME: QC Gunyah issue #130
 		spinlock_acquire_nopreempt(&power_system_lock);
 		if (bitmap_empty(power_system_running_cpus,
 				 PLATFORM_MAX_CORES)) {
-			trigger_power_system_resume_event(
+			trigger_power_system_idle_exit_event(
 				power_system_suspend_state);
 		}
 		bitmap_set(power_system_running_cpus,
@@ -194,7 +239,7 @@ power_handle_power_cpu_resume(bool was_poweroff)
 
 static error_t
 power_try_cpu_on(power_voting_t *voting, cpu_index_t cpu)
-	REQUIRE_LOCK(voting->lock)
+	REQUIRE_LOCK(voting -> lock)
 {
 	error_t ret;
 
@@ -328,7 +373,7 @@ power_handle_idle_yield(bool in_idle_thread)
 				 PLATFORM_MAX_CORES)) {
 			power_system_suspend_state =
 				(platform_power_state_t){ 0 };
-			err = trigger_power_system_suspend_event(
+			err = trigger_power_system_idle_enter_event(
 				power_system_suspend_state);
 			if (err != OK) {
 				bitmap_set(power_system_running_cpus,
@@ -340,7 +385,9 @@ power_handle_idle_yield(bool in_idle_thread)
 		if (err == OK) {
 			assert(CPULOCAL(power_state) == CPU_POWER_STATE_ONLINE);
 
-			(void)atomic_fetch_sub(&power_system_online_cpus, 1U);
+			(void)atomic_fetch_sub_explicit(
+				&power_system_online_cpus, 1U,
+				memory_order_relaxed);
 
 			while (asm_event_load_before_wait(
 				       &power_system_online_cpus) == 0U) {
@@ -358,8 +405,6 @@ power_handle_idle_yield(bool in_idle_thread)
 			spinlock_release_nopreempt(&voting->lock);
 
 			platform_cpu_off();
-
-			(void)atomic_fetch_add(&power_system_online_cpus, 1U);
 
 			idle_state = IDLE_STATE_WAKEUP;
 		} else {
@@ -398,6 +443,51 @@ power_handle_timer_action(timer_t *timer)
 }
 
 #if defined(MODULE_VM_ROOTVM)
+void
+power_handle_rootvm_init(cspace_t	  *root_cspace,
+			 qcbor_enc_ctxt_t *qcbor_enc_ctxt)
+{
+	cap_id_result_t capid_ret;
+	power_create_t	params = { 0U };
+
+	// create system power object
+	power_ptr_result_t result =
+		partition_allocate_power(partition_get_private(), params);
+	if (result.e != OK) {
+		LOG(ERROR, WARN, "create power object failed: {:d}",
+		    (register_t)result.e);
+		goto fail;
+	}
+	error_t err = object_activate_power(result.r);
+	if (err != OK) {
+		panic("Failed to activate power object");
+	}
+
+	object_ptr_t obj_ptr = { .power = result.r };
+
+	capid_ret = cspace_create_master_cap(root_cspace, obj_ptr,
+					     OBJECT_TYPE_POWER);
+	if (capid_ret.e != OK) {
+		object_put_power(obj_ptr.power);
+		goto fail;
+	}
+	cap_id_t sys_power_cap = capid_ret.r;
+
+	QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt, "system_power_capid",
+				   sys_power_cap);
+
+#if defined(PLATFORM_ENABLE_SYSTEM_SUSPEND) && PLATFORM_ENABLE_SYSTEM_SUSPEND
+	QCBOREncode_AddBoolToMap(qcbor_enc_ctxt, "system_suspend", true);
+
+#endif
+	goto out;
+
+fail:
+	panic("failed to create power object");
+out:
+	return;
+}
+
 // The Boot CPU power count is initialised to 1. Decrement the count after the
 // root VM initialization.
 void
@@ -441,3 +531,272 @@ power_handle_boot_hypervisor_start(void)
 	}
 }
 #endif
+
+#if defined(PLATFORM_ENABLE_SYSTEM_SUSPEND) && PLATFORM_ENABLE_SYSTEM_SUSPEND
+static void
+power_send_other_cores_power_off(void)
+{
+	TRACE_LOCAL(DEBUG, INFO, "power_send_other_cores_power_off");
+	assert_preempt_disabled();
+
+	ipi_others(IPI_REASON_SECONDARY_CPU_OFF);
+}
+
+static void
+power_resume_other_cores(void) REQUIRE_PREEMPT_DISABLED
+{
+	cpu_index_t current_cpu = cpulocal_get_index();
+	TRACE_LOCAL(DEBUG, INFO, "power_resume_other_cores");
+	assert_preempt_disabled();
+
+	for (cpu_index_t cpu = 0U; cpu < PLATFORM_MAX_CORES; cpu++) {
+		if ((cpu == current_cpu) || (!platform_cpu_functional(cpu))) {
+			continue;
+		}
+
+		power_voting_t *voting = &CPULOCAL_BY_INDEX(power_voting, cpu);
+
+		spinlock_acquire_nopreempt(&voting->lock);
+		if (voting->vote_count != 0U) {
+			cpu_power_state_t *state =
+				&CPULOCAL_BY_INDEX(power_state, cpu);
+			*state	    = CPU_POWER_STATE_STARTED;
+			error_t ret = platform_cpu_on(cpu);
+			if (ret != OK) {
+				TRACE_AND_LOG(
+					ERROR, WARN,
+					"power_resume_other_cores: failed cpu {:d}",
+					cpu);
+			}
+		}
+		spinlock_release_nopreempt(&voting->lock);
+	}
+}
+
+bool
+power_handle_ipi_received_secondary_cpu_off(void) REQUIRE_PREEMPT_DISABLED
+{
+	TRACE_LOCAL(DEBUG, INFO, "power_handle_ipi_received_secondary_cpu_off");
+
+	// power off core only in case of system suspend in progress
+	if (atomic_load_relaxed(&power_suspend_in_progress)) {
+		power_voting_t *voting = &CPULOCAL(power_voting);
+		spinlock_acquire_nopreempt(&voting->lock);
+		assert(CPULOCAL(power_state) == CPU_POWER_STATE_ONLINE);
+		CPULOCAL(power_state) = CPU_POWER_STATE_OFFLINE;
+		spinlock_release_nopreempt(&voting->lock);
+
+		platform_cpu_off();
+	}
+
+	// Always reschedule after resuming
+	return true;
+}
+
+static error_t
+power_poll_cores_state_off(void) REQUIRE_PREEMPT_DISABLED
+{
+	error_t	    ret;
+	cpu_index_t current_cpu = cpulocal_get_index();
+
+	// Retry count is for all CPUs. Since we broadcast the CPU_OFF request
+	// we expect the cores to power-off in parallel, so if there is a delay
+	// waiting for one core, the next core should not get a new timeout.
+	count_t retry_count = 0;
+
+	// checking/polling all cores power OFF except current core
+	for (cpu_index_t cpu = 0U; cpu < PLATFORM_MAX_CORES; cpu++) {
+		// check for current cpu or non-functional cpu
+		if ((cpu == current_cpu) || (!platform_cpu_functional(cpu))) {
+			continue;
+		}
+
+		do {
+			bool_result_t off_ret = platform_cpu_powered_off(cpu);
+			if (off_ret.e != OK) {
+				TRACE_AND_LOG(
+					ERROR, WARN,
+					"platform_cpu_powered_off error: {:d}",
+					(register_t)off_ret.e);
+				ret = off_ret.e;
+				goto out;
+			}
+			if (off_ret.r) {
+				// core is off
+				break;
+			}
+			retry_count++;
+			if (retry_count == MAX_CPU_OFF_RETRIES) {
+				TRACE_AND_LOG(
+					ERROR, WARN,
+					"power_poll_cores_state_off: timeout");
+				ret = ERROR_FAILURE;
+				goto out;
+			}
+			platform_timer_ndelay(POWER_CPU_OFF_RETRY_DELAY_NS);
+		} while (true);
+	}
+
+	ret = OK;
+
+out:
+	return ret;
+}
+
+// Implements the System Suspend sequence
+static error_t
+power_enter_system_suspend(void) REQUIRE_PREEMPT_DISABLED
+{
+	error_t ret;
+
+	TRACE_LOCAL(DEBUG, INFO, "power_enter_system_suspend");
+
+	// Indicate that we are going to suspend, so the IPI handler should
+	// honor the power-off request.
+	atomic_store_relaxed(&power_suspend_in_progress, true);
+	atomic_thread_fence(memory_order_seq_cst);
+
+	// Power off all other online cores
+	power_send_other_cores_power_off();
+
+	// Poll all cores to be off
+	error_t poll_ret = power_poll_cores_state_off();
+	if (poll_ret != OK) {
+		// We can't return an error here, it introduces a very
+		// difficult to solve race where we might timeout and at the
+		// same time a CPU does happen to notice the power-off IPI.
+		panic("failed to power off all cores");
+	}
+
+	psci_suspend_powerstate_t pstate = psci_suspend_powerstate_default();
+	error_t cpu_suspend_result	 = power_current_cpu_suspend(pstate);
+	if (cpu_suspend_result != OK) {
+		ret = cpu_suspend_result;
+		goto out;
+	}
+
+	TRACE_LOCAL(DEBUG, INFO, "calling platform_system_suspend()");
+
+	// Trigger power_system_suspend event before calling platform code
+	error_t suspend_err = trigger_power_system_suspend_event();
+	if (suspend_err != OK) {
+		TRACE_AND_LOG(ERROR, WARN,
+			      "power_system_suspend event failed: {:d}",
+			      (register_t)suspend_err);
+		ret = suspend_err;
+		goto resume_cores;
+	}
+
+	// Request the platform to enter system suspend
+	bool_result_t res = platform_system_suspend();
+	if (res.e != OK) {
+		// Platform returned, error or denied the system suspend.
+		TRACE_AND_LOG(ERROR, WARN,
+			      "power_enter_system_suspend: err {:d}",
+			      (register_t)res.e);
+		ret = ERROR_DENIED;
+	} else {
+		ret = OK;
+	}
+
+	// Trigger power_system_resume event after platform code returns
+	trigger_power_system_resume_event((res.e == OK) && res.r);
+
+resume_cores:
+	// We have ensured that all cores were powered off above. In case of an
+	// error to power-off, we resume all cores below. We clear the
+	// power_suspend_in_progress flag prior to turning on any cores in case
+	// a pending IPI remains in the interrupt controller.
+	atomic_store_explicit(&power_suspend_in_progress, false,
+			      memory_order_release);
+	// Prevent any compiler re-ordering
+	atomic_thread_fence(memory_order_seq_cst);
+
+	TRACE_LOCAL(DEBUG, INFO, "power_exit_system_suspend");
+
+	// trigger cpu resume event
+	power_current_cpu_resume(true);
+
+	// Resume power to all saved cores
+	power_resume_other_cores();
+
+out:
+	return ret;
+}
+
+error_t
+power_system_suspend(void)
+{
+	error_t ret;
+
+	preempt_disable();
+
+	// Prevent concurrent system suspend calls
+	if (!spinlock_trylock_nopreempt(&power_system_cores_lock)) {
+		ret = ERROR_BUSY;
+		goto out;
+	}
+
+	// Try enter system suspend state
+	ret = power_enter_system_suspend();
+	// Once here, we were woken up or suspend returned an error
+
+	spinlock_release_nopreempt(&power_system_cores_lock);
+
+out:
+	preempt_enable();
+	return ret;
+}
+#endif // PLATFORM_ENABLE_SYSTEM_SUSPEND
+
+static error_t
+power_current_cpu_suspend(psci_suspend_powerstate_t pstate)
+	REQUIRE_PREEMPT_DISABLED
+{
+	psci_suspend_powerstate_set_StateType(
+		&pstate, PSCI_SUSPEND_POWERSTATE_TYPE_POWERDOWN);
+	error_t suspend_result = trigger_power_cpu_suspend_event(pstate, true);
+
+	return suspend_result;
+}
+
+static void
+power_current_cpu_resume(bool was_poweroff) REQUIRE_PREEMPT_DISABLED
+{
+	bool first_cpu = true;
+
+	trigger_power_cpu_resume_event(was_poweroff, first_cpu);
+}
+
+error_t
+power_cpu_suspend(psci_suspend_powerstate_t power_state)
+{
+	error_t ret;
+
+	TRACE_AND_LOG(DEBUG, INFO, "power_cpu_suspend entry");
+	preempt_disable();
+
+	error_t cpu_suspend_result = power_current_cpu_suspend(power_state);
+	if (cpu_suspend_result != OK) {
+		ret = cpu_suspend_result;
+		goto out;
+	}
+
+	TRACE_AND_LOG(DEBUG, INFO, "calling platform_cpu_suspend()");
+
+	// Request the platform to enter cpu suspend
+	bool_result_t res = platform_cpu_suspend(power_state);
+	ret		  = res.e;
+
+	// Platform returned, success or denied the cpu suspend.
+	// Returning same return/error code to caller
+	TRACE_AND_LOG(DEBUG, INFO, "power_cpu_suspend exit: ret {:d}",
+		      (register_t)ret);
+
+	// trigger cpu resume event
+	power_current_cpu_resume(false);
+
+out:
+	preempt_enable();
+	return ret;
+}

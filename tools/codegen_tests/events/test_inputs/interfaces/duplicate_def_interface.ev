@@ -1,0 +1,7 @@
+
+interface duplicate_def_interface
+
+
+/* Error Duplicate definition of an event */
+event duplicate_def_interface_event
+event duplicate_def_interface_event

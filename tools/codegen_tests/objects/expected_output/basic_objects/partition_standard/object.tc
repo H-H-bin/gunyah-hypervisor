@@ -1,0 +1,21 @@
+// Automatically generated. Do not modify.
+
+// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+extend rcu_update_class enumeration {
+	addrspace_destroy;
+	cspace_destroy;
+	doorbell_destroy;
+	gicv3_its_destroy;
+	hwirq_destroy;
+	memextent_destroy;
+	msgqueue_destroy;
+	partition_destroy;
+	thread_destroy;
+	vic_destroy;
+	virtio_backend_destroy;
+	vpm_group_destroy;
+	vrtc_destroy;
+};

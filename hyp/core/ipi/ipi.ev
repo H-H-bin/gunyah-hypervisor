@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -26,8 +26,13 @@ subscribe idle_yield
 subscribe power_cpu_suspend()
 	require_preempt_disabled
 
-subscribe optional preempt_interrupt
+#if !defined(PREEMPT_NULL)
+subscribe preempt_interrupt
 	require_preempt_disabled
+
+subscribe preempt_check
+	require_preempt_disabled
+#endif
 
 // Other handlers might clear IPIs, so this has low priority to avoid
 // processing those IPIs prematurely.

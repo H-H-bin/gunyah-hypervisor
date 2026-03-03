@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -11,16 +11,17 @@
 #include <compiler.h>
 #include <cspace.h>
 #include <cspace_lookup.h>
+#include <doorbell.h>
 #include <object.h>
 #include <thread.h>
 
-#include "doorbell.h"
+#include "doorbell_internal.h"
 
 error_t
 hypercall_doorbell_bind_virq(cap_id_t doorbell_cap, cap_id_t vic_cap,
 			     virq_t virq)
 {
-	error_t	  err	 = OK;
+	error_t	  err;
 	cspace_t *cspace = cspace_get_self();
 
 	doorbell_ptr_result_t p = cspace_lookup_doorbell(
@@ -51,7 +52,7 @@ out:
 error_t
 hypercall_doorbell_unbind_virq(cap_id_t doorbell_cap)
 {
-	error_t	  err	 = OK;
+	error_t	  err;
 	cspace_t *cspace = cspace_get_self();
 
 	doorbell_ptr_result_t p = cspace_lookup_doorbell(
@@ -63,6 +64,7 @@ hypercall_doorbell_unbind_virq(cap_id_t doorbell_cap)
 	doorbell_t *doorbell = p.r;
 
 	doorbell_unbind(doorbell);
+	err = OK;
 
 	object_put_doorbell(doorbell);
 out:

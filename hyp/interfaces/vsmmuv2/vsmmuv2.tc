@@ -1,0 +1,8 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+extend cap_rights_vsmmuv2 bitfield {
+	0	manage_streams	bool;
+	1	attach_addrspace bool;
+};

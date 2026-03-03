@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -78,14 +78,14 @@ subscribe virq_set_enabled[VIRQ_TRIGGER_VGIC_FORWARDED_SPI]
 subscribe virq_set_mode[VIRQ_TRIGGER_VGIC_FORWARDED_SPI]
 	handler vgic_handle_virq_set_mode_hwirq_spi(source, mode)
 
-subscribe thread_save_state
+subscribe vcpu_save_state()
 
 subscribe thread_context_switch_post(prev)
 	// Lowered priority so default priority handlers can restore state
 	// that affects virq_check_pending handlers
 	priority -100
 
-subscribe thread_load_state()
+subscribe vcpu_load_state()
 
 subscribe scheduler_affinity_changed(thread, next_cpu)
 
@@ -116,7 +116,7 @@ subscribe vcpu_pending_wakeup
 
 subscribe vcpu_stopped()
 
-#if VGIC_HAS_LPI && GICV3_HAS_VLPI
+#if VGIC_HAS_LPI && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 
 // When switching away from a VCPU, deschedule it in the GICR.
 subscribe thread_context_switch_pre()
@@ -126,7 +126,7 @@ subscribe thread_context_switch_pre()
 	require_preempt_disabled
 
 // When switching to a VCPU, schedule it in the GICR.
-subscribe thread_load_state
+subscribe vcpu_load_state
 	handler vgic_handle_thread_load_state_vpe()
 	// Run early, to give vPE scheduling time to complete before we return
 	// to userspace.
@@ -157,4 +157,30 @@ subscribe vcpu_trap_wfi
 	// repeatedly.
 	priority 200
 
-#endif // VGIC_HAS_LPI && GICV3_HAS_VLPI
+#endif // VGIC_HAS_LPI && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
+
+#if VGIC_HAS_LPI && !(defined(GICV3_USE_VLPI) && GICV3_USE_VLPI)
+subscribe irq_dispatch[IRQ_RANGE_TYPE_VGIC_LPI]
+		handler vgic_lpi_handle_irq_dispatch(irq, range, offset)
+		require_rcu_read
+		require_preempt_disabled
+
+subscribe vgic_lpi_received
+	handler vgic_handle_lpi_received
+
+subscribe range_tree_release_node[RANGE_TREE_NODE_TYPE_VLPI_RANGE]
+	handler vgic_release_vlpi_range(node)
+
+subscribe rcu_update[RCU_UPDATE_CLASS_VLPI_RELEASE_RANGE]
+	handler vgic_free_vlpi_range(entry)
+
+subscribe rcu_update[RCU_UPDATE_CLASS_LPI_RELEASE_RANGE]
+	handler vgic_free_lpi_range(entry)
+
+subscribe object_activate_thread
+	handler vgic_vlpi_handle_object_activate_thread
+	unwinder vgic_vlpi_unwind_object_activate_thread(thread)
+
+subscribe object_deactivate_thread
+	handler vgic_vlpi_handle_object_deactivate_thread
+#endif // VGIC_HAS_LPI && !(defined(GICV3_USE_VLPI) && GICV3_USE_VLPI)

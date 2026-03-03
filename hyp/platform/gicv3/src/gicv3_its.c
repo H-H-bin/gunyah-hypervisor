@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -12,13 +12,17 @@
 #include <bitmap.h>
 #include <compiler.h>
 #include <cpulocal.h>
+#include <cspace.h>
+#include <cspace_lookup.h>
 #include <irq.h>
 #include <log.h>
 #include <object.h>
 #include <panic.h>
 #include <partition.h>
+#include <partition_alloc.h>
 #include <platform_cpu.h>
 #include <platform_irq.h>
+#include <qcbor.h>
 #include <scheduler.h>
 #include <spinlock.h>
 #include <thread.h>
@@ -77,7 +81,7 @@ static spinlock_t gits_vpe_lock;
 static BITMAP_DECLARE(GICV3_ITS_VPES, gits_vpe_bitmap)
 	PROTECTED_BY(gits_vpe_lock);
 
-#if GICV3_HAS_VLPI_V4_1
+#if GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 
 // Table of RCU-protected VCPU pointers for allocated VPE IDs.
 static thread_t *_Atomic gicv3_its_vpe_table[GICV3_ITS_VPES];
@@ -86,7 +90,7 @@ static thread_t *_Atomic gicv3_its_vpe_table[GICV3_ITS_VPES];
 static irq_range_t gicv3_its_vpe_doorbell_range;
 static irq_t	   gicv3_its_vpe_doorbell_base;
 
-#endif // GICV3_HAS_VLPI_V4_1
+#endif // GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 
 #endif // defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE
 
@@ -122,7 +126,7 @@ gic_its_cmd_get_tail(platform_msi_controller_id_t its)
 		// for the caller, since an error here is caused by a previous
 		// command, not the one the caller is trying to submit; it may
 		// be better to just panic.
-		// FIXME:
+		// FIXME: QC Gunyah issue #140
 		ret = count_result_error(ERROR_IDLE);
 	} else {
 		const count_t head	 = gits[its].cmd_queue_head;
@@ -343,7 +347,7 @@ gicv3_its_alloc_table(GITS_BASER_t *baser, count_t entries,
 		*table_size =
 			entries_l1 * (sizeof(GITS_BASER_Indirect_entry_t) + 1U);
 		*table_size = util_p2align_up(*table_size, page_bits);
-		assert(page_bits < sizeof(*table_size) * 8U);
+		assert(page_bits < util_width(*table_size));
 		*page_count = (count_t)(*table_size >> page_bits);
 
 		// Record the table dimensions
@@ -403,11 +407,13 @@ gicv3_its_select_table_type(GITS_TYPER_t		 typer,
 			}
 		}
 		break;
-#if GICV3_HAS_VLPI_V4_1
 	case GITS_BASER_TYPE_VPES:
+#if GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 		*entries = GICV3_ITS_VPES;
 		break;
-#endif // GICV3_HAS_VLPI_V4_1
+#else
+		// Fall through to unimplemented case.
+#endif // GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 	case GITS_BASER_TYPE_UNIMPLEMENTED:
 	default:
 		// Default case
@@ -415,7 +421,8 @@ gicv3_its_select_table_type(GITS_TYPER_t		 typer,
 	}
 }
 
-#if defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE && GICV3_HAS_VLPI_V4_1
+#if defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE && GICV3_HAS_VLPI_V4_1 &&    \
+	defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 static GITS_BASER_t
 gicv3_its_find_vpe_table(platform_msi_controller_id_t new_its,
 			 GITS_TYPER_SVPET_t new_svpet, GITS_MPIDR_t new_mpidr)
@@ -498,7 +505,8 @@ gicv3_its_allocate_tables(platform_msi_controller_id_t its, gits_t *regs,
 		// shared between ITSs, and are not needed at all if VPE support
 		// is disabled.
 		if (GITS_BASER_get_Type(&baser) == GITS_BASER_TYPE_VPES) {
-#if defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE && GICV3_HAS_VLPI_V4_1
+#if defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE && GICV3_HAS_VLPI_V4_1 &&    \
+	defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 			// GICv4.1 guarantees that the VPE table is in BASER2.
 			assert(i == 2U);
 			GITS_BASER_t prev_baser = gicv3_its_find_vpe_table(
@@ -538,7 +546,7 @@ gicv3_its_allocate_tables(platform_msi_controller_id_t its, gits_t *regs,
 		count_t page_bits =
 			(count_t)(12U + (2U * (count_t)baser_page_size));
 		table_size = util_p2align_up(table_size, page_bits);
-		assert(page_bits < sizeof(table_size) * 8U);
+		assert(page_bits < util_width(table_size));
 		count_t page_count = (count_t)(table_size >> page_bits);
 
 		void *table_ptr = gicv3_its_alloc_table(
@@ -571,13 +579,15 @@ gicv3_its_allocate_tables(platform_msi_controller_id_t its, gits_t *regs,
 
 		GITS_BASER_set_Valid(&baser, true);
 
-#if defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE && GICV3_HAS_VLPI_V4_1
+#if defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE && GICV3_HAS_VLPI_V4_1 &&    \
+	defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 	baser_valid:
 #endif
 		atomic_store_relaxed(&regs->ctl.baser[i], baser);
 		gits[its].saved_basers[i] = baser;
 
-#if defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE && GICV3_HAS_VLPI_V4_1
+#if defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE && GICV3_HAS_VLPI_V4_1 &&    \
+	defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 		if ((GITS_TYPER_get_SVPET(&typer) !=
 		     GITS_TYPER_SVPET_NOT_SHARED) &&
 		    (GITS_BASER_get_Type(&baser) == GITS_BASER_TYPE_VPES)) {
@@ -608,6 +618,7 @@ gicv3_its_allocate_tables(platform_msi_controller_id_t its, gits_t *regs,
 			gits[its].vpe_table = vpropbaser;
 		}
 #endif // defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE && GICV3_HAS_VLPI_V4_1
+       // && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 	}
 }
 
@@ -621,7 +632,7 @@ gicv3_its_init_one(platform_msi_controller_id_t its, gits_t *regs)
 	GITS_TYPER_t typer = atomic_load_relaxed(&regs->ctl.typer);
 
 	assert(GITS_TYPER_get_Physical(&typer));
-#if GICV3_HAS_VLPI
+#if defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 	assert(GITS_TYPER_get_Virtual(&typer));
 #if defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE
 	if (its == 0U) {
@@ -631,8 +642,8 @@ gicv3_its_init_one(platform_msi_controller_id_t its, gits_t *regs)
 		assert(gits_vmovp_broadcast == GITS_TYPER_get_VMOVP(&typer));
 	}
 #endif
-#endif // GICV3_HAS_VLPI
-#if GICV3_HAS_VLPI_V4_1
+#endif // defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
+#if GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 	assert(GITS_TYPER_get_VMAPP(&typer) && GITS_TYPER_get_VSGI(&typer));
 #endif
 
@@ -680,6 +691,10 @@ gicv3_its_init_one(platform_msi_controller_id_t its, gits_t *regs)
 	// InnerCache == 7: Inner write back, read + write alloc
 	GITS_CBASER_set_InnerCache(&cbaser, 7U);
 	GITS_CBASER_set_Valid(&cbaser, true);
+
+	// cache cbaser, used to rewrite the cbaser on resume.
+	gits[its].saved_cbaser = cbaser;
+
 	atomic_store_relaxed(&regs->ctl.cbaser, cbaser);
 	cbaser = atomic_load(&regs->ctl.cbaser);
 
@@ -700,7 +715,9 @@ gicv3_its_init_one(platform_msi_controller_id_t its, gits_t *regs)
 	const platform_msi_controller_t *platform_ctrl =
 		platform_irq_msi_devices(its);
 	assert(platform_ctrl != NULL);
-	gits[its].first_unused = 0U;
+	gits[its].first_unused		= 0U;
+	gits[its].first_unused_reserved = false;
+	gits[its].first_unused_event	= 0U;
 
 	for (index_t i = 0U; i < platform_ctrl->num_devices; i++) {
 		if (gits[its].first_unused !=
@@ -718,7 +735,7 @@ gicv3_its_init_one(platform_msi_controller_id_t its, gits_t *regs)
 	GITS_CTLR_set_Enabled(&ctlr, true);
 	atomic_store_release(&regs->ctl.ctlr, ctlr);
 
-#if GICV3_HAS_VLPI_V4_1
+#if GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 	// Wait for the ITS to finish enabling (Quiescent bit clears). Note
 	// that Quiescent is UNKNOWN on an enabled ITS before GICv4.1.
 	do {
@@ -735,27 +752,38 @@ gicv3_its_init_one(platform_msi_controller_id_t its, gits_t *regs)
 	}
 }
 
-platform_msi_device_id_result_t
+platform_msi_id_result_t
 gicv3_its_reserve_unused_device(platform_msi_controller_id_t its,
 				platform_msi_event_id_t	     max_event)
 {
-	platform_msi_device_id_result_t ret;
+	platform_msi_id_result_t ret;
+	platform_msi_id_t	 msi = platform_msi_id_default();
 
-	if (gits[its].first_unused_reserved) {
-		ret = platform_msi_device_id_result_error(ERROR_BUSY);
+	if (its >= util_array_size(gits)) {
+		ret = platform_msi_id_result_error(ERROR_ARGUMENT_INVALID);
 		goto out;
 	}
 
-	// Allocate an extra ITT that doesn't belong to any real device, to be
-	// used for mapping dummy events in the virtual ITS implementation
-	GITS_TYPER_t typer    = atomic_load_relaxed(&gits[its].regs->ctl.typer);
-	size_t itt_entry_size = GITS_TYPER_get_ITT_entry_size(&typer) + 1U;
-	gicv3_its_allocate_itt(its, itt_entry_size, gits[its].first_unused,
-			       max_event);
-	ret = platform_msi_device_id_result_ok(gits[its].first_unused);
-	gits[its].first_unused_reserved = true;
+	if (!gits[its].first_unused_reserved) {
+		// Allocate an extra ITT that doesn't belong to any real device,
+		// to be used for mapping dummy events in the virtual ITS
+		// implementation
+		GITS_TYPER_t typer =
+			atomic_load_relaxed(&gits[its].regs->ctl.typer);
+		size_t itt_entry_size =
+			GITS_TYPER_get_ITT_entry_size(&typer) + 1U;
+		gicv3_its_allocate_itt(its, itt_entry_size,
+				       gits[its].first_unused, max_event);
+		gits[its].first_unused_reserved = true;
+	}
 
+	platform_msi_id_set_device_id(&msi, gits[its].first_unused);
+	platform_msi_id_set_event_id(&msi, gits[its].first_unused_event);
+	gits[its].first_unused_event++;
+	assert(gits[its].first_unused_event < max_event);
+	ret = platform_msi_id_result_ok(msi);
 out:
+
 	return ret;
 }
 
@@ -816,7 +844,8 @@ gicv3_its_init_cpu(cpu_index_t cpu, gicr_t *gicr, paddr_t gicr_phys,
 		gicv3_its_init_cpu_one(i, cpu, gicr_phys, gicr_pn);
 	}
 
-#if defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE && GICV3_HAS_VLPI_V4_1
+#if defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE && GICV3_HAS_VLPI_V4_1 &&    \
+	defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 	bool	     vpropbase_set = false;
 	GICR_TYPER_t gicr_typer	   = atomic_load_relaxed(&gicr->rd.typer);
 
@@ -898,7 +927,7 @@ out:
 error_t
 gicv3_its_wait(platform_msi_controller_id_t its, count_t cmd_seq)
 {
-	error_t err = OK;
+	error_t err;
 
 	spinlock_acquire(&gits[its].cmd_queue_lock);
 	count_t tail = gits[its].cmd_queue_cached_tail;
@@ -915,12 +944,16 @@ gicv3_its_wait(platform_msi_controller_id_t its, count_t cmd_seq)
 			// ITS has stalled
 			err = new_tail.e;
 			spinlock_release(&gits[its].cmd_queue_lock);
-			break;
+			goto out_err;
 		}
 		tail = new_tail.r;
 		spinlock_release(&gits[its].cmd_queue_lock);
 	}
 
+	// Checked all items within the range
+	err = OK;
+
+out_err:
 	return err;
 }
 
@@ -1035,9 +1068,9 @@ gicv3_its_discard(platform_msi_id_t msi_id)
 
 #if defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE
 
-#if GICV3_HAS_VLPI_V4_1
+#if GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 void
-gicv3_its_vpe_handle_boot_cold_init(void)
+gicv3_its_vpe_handle_irq_init(void)
 {
 	// TODO: for now, assume that vPE doorbells are the only use of LPIs
 	// in the hypervisor when GICv4.1 is present. In future we may need to
@@ -1096,8 +1129,7 @@ gicv3_its_vpe_map_submit(const thread_t *vcpu, cpu_index_t cpu,
 			 bool pending_zeroed, paddr_t config_table,
 			 irq_t db_lpi)
 {
-	error_t err    = OK;
-	bool	failed = false;
+	error_t err;
 
 	// After this point the VPE tables may be nonzero, so any GICR that has
 	// not been initialised yet will need to read the table.
@@ -1108,8 +1140,7 @@ gicv3_its_vpe_map_submit(const thread_t *vcpu, cpu_index_t cpu,
 	// Issue a VMAPP to every ITS. Note that this is required even if the
 	// ITSs share vPE tables.
 	platform_msi_controller_id_t map_its;
-	for (map_its = 0U; (!failed) && (map_its < PLATFORM_GITS_COUNT);
-	     map_its++) {
+	for (map_its = 0U; map_its < PLATFORM_GITS_COUNT; map_its++) {
 		gic_its_cmd_t cmd = { .vmapp = gic_its_cmd_vmapp_default() };
 		gic_its_cmd_vmapp_set_alloc(&cmd.vmapp, map_its == 0U);
 		gic_its_cmd_vmapp_set_ptz(&cmd.vmapp, pending_zeroed);
@@ -1134,9 +1165,14 @@ gicv3_its_vpe_map_submit(const thread_t *vcpu, cpu_index_t cpu,
 		    (PLATFORM_GITS_COUNT > 1U)) {
 			err = gicv3_its_wait(map_its, seq.r);
 		}
-		failed = (err != OK);
+		if (err != OK) {
+			goto out_err;
+		}
 	}
 
+	err = OK;
+
+out_err:
 	// If any of the VPE maps failed, we must unmap them all and wait for
 	// the unmap to finish.
 	if ((err != OK) && (map_its != 0U)) {
@@ -1162,7 +1198,7 @@ gicv3_its_vpe_map(thread_t *vcpu, count_t virq_bits, paddr_t config_table,
 	assert(vcpu != NULL);
 	assert(!cpulocal_index_valid(vcpu->gicv3_its_mapped_cpu));
 
-	error_t err = OK;
+	error_t err;
 
 	// The VCPU has LPI support if virq_bits is at least 14.
 	//
@@ -1177,6 +1213,7 @@ gicv3_its_vpe_map(thread_t *vcpu, count_t virq_bits, paddr_t config_table,
 	// delivery without allocating any vLPIs, is not permitted.
 	if (virq_bits < 14U) {
 		// No LPI support for this VCPU; nothing to do.
+		err = OK;
 		goto out;
 	}
 
@@ -1231,8 +1268,9 @@ gicv3_its_vpe_map(thread_t *vcpu, count_t virq_bits, paddr_t config_table,
 		goto fail;
 	}
 
-	if (((pending_table_size * 8U) < pending_table_size) ||
-	    (pending_table_size * 8U < ((size_t)util_bit(virq_bits)))) {
+	if (((pending_table_size * util_width(uint8_t)) < pending_table_size) ||
+	    ((pending_table_size * util_width(uint8_t)) <
+	     ((size_t)util_bit(virq_bits)))) {
 		err = ERROR_ARGUMENT_SIZE;
 		goto fail;
 	}
@@ -1392,10 +1430,11 @@ gicv3_its_vpe_move_submit(const thread_t *vcpu, cpu_index_t prev_cpu,
 }
 
 void
-gicv3_handle_scheduler_affinity_changed(thread_t *vcpu, cpu_index_t prev_cpu,
-					cpu_index_t new_cpu)
+gicv3_handle_scheduler_affinity_changed(thread_t *thread, cpu_index_t prev_cpu,
+					cpu_index_t next_cpu)
 {
-	assert(vcpu != NULL);
+	thread_t *vcpu = thread;
+	assert_debug(vcpu != NULL);
 
 	if (vcpu->gicv3_its_vpe_id >= GICV3_ITS_VPES) {
 		// Nothing to do for a VCPU with no VLPI support.
@@ -1411,8 +1450,8 @@ gicv3_handle_scheduler_affinity_changed(thread_t *vcpu, cpu_index_t prev_cpu,
 	assert(!cpulocal_index_valid(prev_cpu) ||
 	       (prev_cpu == vcpu->gicv3_its_mapped_cpu));
 
-	if (!cpulocal_index_valid(new_cpu)) {
-		// Nothing to do if we don't have a new CPU to map to.
+	if (!cpulocal_index_valid(next_cpu)) {
+		// Nothing to do if we don't have a next CPU to map to.
 		//
 		// In this case we leave the VPE mapped to the old CPU rather
 		// than unmapping it. It won't do any harm being mapped, and
@@ -1425,27 +1464,27 @@ gicv3_handle_scheduler_affinity_changed(thread_t *vcpu, cpu_index_t prev_cpu,
 	// needed if their GICRs are in different CommonLPIAff groups, which are
 	// the groups that must share LPI and VPE configuration tables.
 	platform_mpidr_mapping_t mapping = platform_cpu_get_mpidr_mapping();
-	MPIDR_EL1_t		 new_mpidr =
-		platform_cpu_map_index_to_mpidr(&mapping, new_cpu);
+	MPIDR_EL1_t		 next_mpidr =
+		platform_cpu_map_index_to_mpidr(&mapping, next_cpu);
 	MPIDR_EL1_t old_mpidr = platform_cpu_map_index_to_mpidr(
 		&mapping, vcpu->gicv3_its_mapped_cpu);
 
 	bool need_move = false;
 
 	if ((gits_common_lpi_affinity <= 3U) &&
-	    (MPIDR_EL1_get_Aff3(&new_mpidr) !=
+	    (MPIDR_EL1_get_Aff3(&next_mpidr) !=
 	     MPIDR_EL1_get_Aff3(&old_mpidr))) {
 		need_move = true;
 	}
 
 	if ((gits_common_lpi_affinity <= 2U) &&
-	    (MPIDR_EL1_get_Aff2(&new_mpidr) !=
+	    (MPIDR_EL1_get_Aff2(&next_mpidr) !=
 	     MPIDR_EL1_get_Aff2(&old_mpidr))) {
 		need_move = true;
 	}
 
 	if ((gits_common_lpi_affinity == 1U) &&
-	    (MPIDR_EL1_get_Aff1(&new_mpidr) !=
+	    (MPIDR_EL1_get_Aff1(&next_mpidr) !=
 	     MPIDR_EL1_get_Aff1(&old_mpidr))) {
 		need_move = true;
 	}
@@ -1458,10 +1497,10 @@ gicv3_handle_scheduler_affinity_changed(thread_t *vcpu, cpu_index_t prev_cpu,
 		// case we can't safely issue a VMOVP yet. Poll the GICR until
 		// its deschedule completes, noting that it is possible that
 		// another VCPU has since been scheduled.
-		gicv3_its_vpe_move_submit(vcpu, prev_cpu, new_cpu, db_lpi);
+		gicv3_its_vpe_move_submit(vcpu, prev_cpu, next_cpu, db_lpi);
 	}
 
-	vcpu->gicv3_its_mapped_cpu = new_cpu;
+	vcpu->gicv3_its_mapped_cpu = next_cpu;
 
 out:
 	return;
@@ -1604,7 +1643,7 @@ gicv3_its_vsgi_is_complete(count_t cmd_seq)
 	return gicv3_its_is_complete(gicv3_default_its, cmd_seq);
 }
 
-#elif GICV3_HAS_VLPI // && !GICV3_HAS_VLPI_V4_1
+#elif defined(GICV3_USE_VLPI) && GICV3_USE_VLPI // && !GICV3_HAS_VLPI_V4_1
 #error "GICv4.0 VLPI management is not implemented"
 #endif
 
@@ -1649,17 +1688,163 @@ out:
 }
 
 void
-gicv3_its_disable_all(gits_t *const (*regs)[PLATFORM_GITS_COUNT])
+gicv3_its_disable_all(void)
 {
-	// Ensure that the ITSs are disabled and quiescent.
+	GITS_CTLR_t gits_ctlr;
+	// Disable all the ITSs before waiting for any of them.
+	//
+	// If multiple ITSs are present, this will allow them to all flush
+	// their caches in parallel.
 	for (index_t i = 0U; i < PLATFORM_GITS_COUNT; i++) {
-		gits_t	   *its	      = (*regs)[i];
-		GITS_CTLR_t gits_ctlr = atomic_load_relaxed(&its->ctl.ctlr);
+		gits_t *its = gits[i].regs;
+		gits_ctlr   = atomic_load_relaxed(&its->ctl.ctlr);
+
 		GITS_CTLR_set_Enabled(&gits_ctlr, false);
 		atomic_store_relaxed(&its->ctl.ctlr, gits_ctlr);
+	}
+
+	// Poll for quiescent state
+	for (index_t i = 0U; i < PLATFORM_GITS_COUNT; i++) {
+		gits_t *its = gits[i].regs;
+
 		do {
 			gits_ctlr = atomic_load_acquire(&its->ctl.ctlr);
 		} while (!GITS_CTLR_get_Quiescent(&gits_ctlr));
 	}
 }
+
+error_t
+gicv3_handle_object_create_gicv3_its(gicv3_its_create_t gicv3_its_create)
+{
+	error_t	     err;
+	gicv3_its_t *gicv3_its = gicv3_its_create.gicv3_its;
+
+	if (gicv3_its_create.phys_index >= PLATFORM_GITS_COUNT) {
+		err = ERROR_ARGUMENT_INVALID;
+		goto fail;
+	}
+
+	gicv3_its->phys_index = gicv3_its_create.phys_index;
+	err		      = OK;
+
+fail:
+	return err;
+}
+
+#if defined(INTERFACE_ROOTVM)
+void
+gicv3_handle_rootvm_init(partition_t *root_partition, cspace_t *root_cspace,
+			 qcbor_enc_ctxt_t *qcbor_enc_ctxt)
+{
+	QCBOREncode_OpenArrayInMap(qcbor_enc_ctxt, "its_caps");
+
+	// Create the ITS objects for the root VM
+	for (index_t i = 0U; i < PLATFORM_GITS_COUNT; i++) {
+		gicv3_its_create_t its_params = {
+			.phys_index = i,
+		};
+		gicv3_its_ptr_result_t its_r = partition_allocate_gicv3_its(
+			root_partition, its_params);
+		if (its_r.e != OK) {
+			panic("Unable to create ITS object");
+		}
+
+		error_t err = object_activate_gicv3_its(its_r.r);
+		if (err != OK) {
+			panic("Failed to activate ITS object");
+		}
+
+		// Create a master cap for the gicv3_its
+		object_ptr_t	gicv3_its_optr = { .gicv3_its = its_r.r };
+		cap_id_result_t cid_r	       = cspace_create_master_cap(
+			 root_cspace, gicv3_its_optr, OBJECT_TYPE_GICV3_ITS);
+		if (cid_r.e != OK) {
+			panic("Unable to create cap to gicv3_its");
+		}
+		QCBOREncode_AddUInt64(qcbor_enc_ctxt, cid_r.r);
+	}
+
+	QCBOREncode_CloseArray(qcbor_enc_ctxt);
+}
+#endif // INTERFACE_ROOTVM
+
+// Ensure that all commands in the command queue are fully processed
+// before disabling ITS by clearing the GITS_CTLR.Enabled bit but wait
+// until the command queue becomes quiescent.
+void
+gicv3_its_system_suspend(void)
+{
+	for (index_t its = 0U; its < PLATFORM_GITS_COUNT; its++) {
+		spinlock_acquire(&gits[its].cmd_queue_lock);
+		// The last submitted command has a sequence number of
+		// `cmd_queue_head - 1`.
+		count_t current_submitted_head = gits[its].cmd_queue_head - 1U;
+		spinlock_release(&gits[its].cmd_queue_lock);
+
+		// If the queue is not empty, wait for the last submitted
+		// command to complete.
+		// `gicv3_its_wait` polls the hardware until this specific
+		// command is processed, internally updating
+		// `gits[its].cmd_queue_cached_tail`.
+		if (gicv3_its_wait(its, current_submitted_head) != OK) {
+			panic("failed to complete ITS command during suspend");
+		}
+	}
+
+	// All ITS command queues have been processed and are now empty.
+	// It is safe to disable all ITS.
+	gicv3_its_disable_all();
+}
+
+static void
+gicv3_its_system_resume_one(platform_msi_controller_id_t its)
+{
+	// Ensure that the ITS is disabled and quiescent.
+	GITS_CTLR_t ctlr = atomic_load_acquire(&gits[its].regs->ctl.ctlr);
+	if (GITS_CTLR_get_Enabled(&ctlr)) {
+		// Firmware or suspend path left the ITS enabled!
+		panic("gicv3_its: Already enabled");
+	}
+
+	// setting command queue pointers to 0
+	gits[its].cmd_queue_head	= 0U;
+	gits[its].cmd_queue_cached_tail = 0U;
+	atomic_store_relaxed(&gits[its].regs->ctl.cwriter,
+			     GITS_CWRITER_default());
+
+	// restoring command queue base address
+	assert(GITS_CBASER_raw(gits[its].saved_cbaser) != 0U);
+	atomic_store_relaxed(&gits[its].regs->ctl.cbaser,
+			     gits[its].saved_cbaser);
+
+	// restoring the base addr of device, collection and vPE tables
+	GITS_BASER_t *saved_basers = gits[its].saved_basers;
+	for (index_t i = 0U; i < util_array_size(gits[its].regs->ctl.baser);
+	     i++) {
+		atomic_store_relaxed(&gits[its].regs->ctl.baser[i],
+				     saved_basers[i]);
+	}
+
+	// Enable the ITS and start processing commands
+	GITS_CTLR_set_Enabled(&ctlr, true);
+	atomic_store_release(&gits[its].regs->ctl.ctlr, ctlr);
+
+#if GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
+	// Wait for the ITS to finish enabling (Quiescent bit clears).
+	// Note that Quiescent is UNKNOWN on an enabled ITS before
+	// GICv4.1.
+	do {
+		ctlr = atomic_load_acquire(&gits[its].regs->ctl.ctlr);
+	} while (GITS_CTLR_get_Quiescent(&ctlr));
+#endif
+}
+
+void
+gicv3_its_system_resume(void)
+{
+	for (index_t i = 0U; i < PLATFORM_GITS_COUNT; i++) {
+		gicv3_its_system_resume_one(i);
+	}
+}
+
 #endif // GICV3_HAS_ITS

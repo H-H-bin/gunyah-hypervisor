@@ -1,5 +1,5 @@
 #*
-# © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 #
 # 2019 Cog Systems Pty Ltd.
 #
@@ -80,8 +80,10 @@ bool
 ${type_name}_is_empty(${type_name}_t bit_field);
 
 // Check all unknown/unnamed fields have expected default values.
-// Note, this does NOT check whether const named fields have their default
-// values.
+// Note, this does NOT check:
+// - whether const named fields have their default values,
+// - whether named fields with enumerated types are in-range, or
+// - the values of named writeonly fields.
 bool
 ${type_name}_is_clean(${type_name}_t bit_field);
 

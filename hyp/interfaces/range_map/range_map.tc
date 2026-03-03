@@ -1,4 +1,4 @@
-// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -32,5 +32,4 @@ define range_map_arg union {
 
 define range_map_config bitfield<32> {
 	7:0	max_bits	type count_t;
-	8	rcu_read	bool;
 };

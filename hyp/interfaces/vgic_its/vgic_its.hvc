@@ -1,0 +1,23 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define vgic_its_bind_devices hypercall {
+	call_num 0x72;
+	vgic_its_cap		input type cap_id_t;
+	its_cap			input type cap_id_t;
+	device_id_start		input type vgic_device_id_t;
+	device_count		input type count_t;
+	res0			input uregister;
+	error			output enumeration error;
+};
+
+define vgic_its_unbind_devices hypercall {
+	call_num 0x73;
+	vgic_its_cap		input type cap_id_t;
+	device_id_start		input type vgic_device_id_t;
+	device_count		input type count_t;
+	res0			input uregister;
+	error			output enumeration error;
+	count			output type count_t;
+};

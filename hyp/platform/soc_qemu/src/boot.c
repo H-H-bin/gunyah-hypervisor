@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -92,53 +92,8 @@ platform_add_root_heap(partition_t *partition)
 }
 
 #if !defined(UNIT_TESTS)
-static memextent_t *
-create_memextent(partition_t *root_partition, cspace_t *root_cspace,
-		 paddr_t phys_base, size_t size, pgtable_access_t access,
-		 memextent_memtype_t memtype, cap_id_t *new_cap_id)
-{
-	memextent_create_t     params_me = { .memextent		   = NULL,
-     .memextent_device_mem = true };
-	memextent_ptr_result_t me_ret;
-	me_ret = partition_allocate_memextent(root_partition, params_me);
-	if (me_ret.e != OK) {
-		panic("Failed creation of memextent");
-	}
-	memextent_t *me = me_ret.r;
 
-	memextent_attrs_t attrs = memextent_attrs_default();
-	memextent_attrs_set_access(&attrs, access);
-	memextent_attrs_set_memtype(&attrs, memtype);
-
-	static_assert(MODULE_MEM_MEMEXTENT_SPARSE,
-		      "SPARSE type must be defined");
-	memextent_attrs_set_type(&attrs, MEMEXTENT_TYPE_SPARSE);
-
-	spinlock_acquire(&me->header.lock);
-	error_t ret = memextent_configure(me, phys_base, size, attrs);
-	if (ret != OK) {
-		panic("Failed configuration of memextent");
-	}
-	spinlock_release(&me->header.lock);
-
-	// Create a master cap for the memextent
-	object_ptr_t obj_ptr;
-	obj_ptr.memextent	  = me;
-	cap_id_result_t capid_ret = cspace_create_master_cap(
-		root_cspace, obj_ptr, OBJECT_TYPE_MEMEXTENT);
-	if (capid_ret.e != OK) {
-		panic("Error create memextent cap id.");
-	}
-
-	ret = object_activate_memextent(me);
-	if (ret != OK) {
-		panic("Failed activation of mem extent");
-	}
-
-	*new_cap_id = capid_ret.r;
-
-	return me;
-}
+static_assert(MODULE_MEM_MEMEXTENT_SPARSE, "SPARSE type must be defined");
 
 void
 soc_qemu_handle_rootvm_init(partition_t *root_partition, cspace_t *root_cspace,
@@ -181,11 +136,15 @@ soc_qemu_handle_rootvm_init(partition_t *root_partition, cspace_t *root_cspace,
 	paddr_t phys_address_start = 0U;
 	size_t	phys_address_size  = util_bit(PLATFORM_PHYS_ADDRESS_BITS);
 
-	memextent_t *me = create_memextent(root_partition, root_cspace,
-					   phys_address_start,
-					   phys_address_size, PGTABLE_ACCESS_RW,
-					   MEMEXTENT_MEMTYPE_DEVICE,
-					   &hyp_env->device_me_capid);
+	memextent_ptr_result_t me_ret = memextent_construct(
+		root_partition, root_cspace, phys_address_start,
+		phys_address_size, PGTABLE_ACCESS_RW, MEMEXTENT_MEMTYPE_DEVICE,
+		MEMEXTENT_TYPE_SPARSE, true, &hyp_env->device_me_capid);
+	if (me_ret.e != OK) {
+		panic("Error construct rootvm device memextent");
+	}
+
+	memextent_t *me = me_ret.r;
 
 	QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt, "device_me_capid",
 				   hyp_env->device_me_capid);
@@ -219,7 +178,6 @@ soc_qemu_handle_rootvm_init(partition_t *root_partition, cspace_t *root_cspace,
 	// Derive memextents for GICD, GICR and watchdog to effectively remove
 	// them from the device memextent we provide to the rootvm.
 
-	memextent_ptr_result_t me_ret;
 	me_ret = memextent_derive(me, PLATFORM_GICD_BASE, 0x10000U,
 				  MEMEXTENT_MEMTYPE_DEVICE, PGTABLE_ACCESS_RW,
 				  MEMEXTENT_TYPE_BASIC);

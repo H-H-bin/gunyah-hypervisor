@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -13,7 +13,7 @@ typedef uint64_t Elf_Xword;
 typedef uint64_t Elf_Addr;
 typedef uint64_t Elf_Off;
 
-#define R_TYPE(r_info) ((r_info)&0x7fffffffU)
+#define R_TYPE(r_info) ((r_info) & 0x7fffffffU)
 #define R_SYM(r_info)  ((r_info) >> 32U)
 
 #define ELF_CLASS ELF_CLASS_64

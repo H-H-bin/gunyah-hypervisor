@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -36,7 +36,11 @@ platform_pmu_handle_boot_cpu_cold_init(void)
 	// Disable all the interrupts at the startup
 	sysreg64_write(PMINTENCLR_EL1, ~0UL);
 	atomic_init(&CPULOCAL(pmu_irq_active), false);
+}
 
+void
+platform_pmu_handle_boot_cpu_warm_init(void)
+{
 	if (pmu_hwirq != NULL) {
 		irq_enable_local(pmu_hwirq);
 	}

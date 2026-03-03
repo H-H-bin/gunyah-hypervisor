@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -1448,7 +1448,7 @@ memdb_test10(void)
 static void
 memdb_test11(void)
 {
-#if defined(MEMDB_BITMAP_OBJECTS)
+#if defined(MODULE_MEM_MEMDB_BITMAP)
 	LOG(DEBUG, INFO, " Start TEST 11:");
 
 	memdb_data_t test_data = { 0 };
@@ -1469,7 +1469,7 @@ memdb_test11(void)
 
 	memdb_test_update(&test_data, start_addr, end_addr,
 			  MEMDB_TYPE_PARTITION, (uintptr_t)&dummy_partition_1);
-#else // !defined(MEMDB_BITMAP_OBJECTS)
+#else // !defined(MODULE_MEM_MEMDB_BITMAP)
 	LOG(DEBUG, INFO, " Skip TEST 11 (not using memdb_bitmap)");
 #endif
 }

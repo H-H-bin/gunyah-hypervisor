@@ -1,0 +1,24 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define viommu_bind_streams hypercall {
+	call_num 0x90;
+	viommu_cap		input type cap_id_t;
+	iommu_cap		input type cap_id_t;
+	stream_id_start		input type viommu_stream_id_t;
+	stream_count		input type count_t;
+	res0			input uregister;
+	error			output enumeration error;
+	count			output type count_t;
+};
+
+define viommu_unbind_streams hypercall {
+	call_num 0x91;
+	viommu_cap		input type cap_id_t;
+	stream_id_start		input type viommu_stream_id_t;
+	stream_count		input type count_t;
+	res0			input uregister;
+	error			output enumeration error;
+	count			output type count_t;
+};

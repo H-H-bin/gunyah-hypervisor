@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -13,12 +13,15 @@
 #include <cpulocal.h>
 #include <panic.h>
 #include <partition.h>
+#include <platform_timer.h>
 #include <smc_trace.h>
 #include <thread.h>
 #include <util.h>
+#if defined(INTERFACE_VCPU)
+#include <vcpu.h>
+#endif
 
 #include <asm/prefetch.h>
-#include <asm/timestamp.h>
 
 extern smc_trace_t *hyp_smc_trace;
 smc_trace_t	   *hyp_smc_trace;
@@ -50,7 +53,7 @@ smc_trace_log(smc_trace_id_t id, register_t (*registers)[SMC_TRACE_REG_MAX],
 	}
 
 	assert(num_registers <= SMC_TRACE_REG_MAX);
-	uint64_t timestamp = arch_get_timestamp();
+	uint64_t timestamp = platform_timer_get_current_ticks();
 
 	cpu_index_t pcpu = cpulocal_get_index_unsafe();
 	cpu_index_t vcpu = 0U;
@@ -59,7 +62,7 @@ smc_trace_log(smc_trace_id_t id, register_t (*registers)[SMC_TRACE_REG_MAX],
 #if defined(INTERFACE_VCPU)
 	thread_t *current = thread_get_self();
 
-	if (compiler_expected(current->kind == THREAD_KIND_VCPU)) {
+	if (compiler_expected(vcpu_is_vcpu(current))) {
 		assert(current->addrspace != NULL);
 		vmid = current->addrspace->vmid;
 		vcpu = current->psci_index;

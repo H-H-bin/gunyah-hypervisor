@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -128,3 +128,17 @@ ipi_handle_relaxed(void) REQUIRE_PREEMPT_DISABLED;
 // but this is not guaranteed. No barrier is implied.
 bool
 ipi_check_relaxed(void) REQUIRE_PREEMPT_DISABLED;
+
+#if defined(INTERFACE_POWER)
+// Check whether any IPIs are currently pending on any suspended CPU in the
+// specified CPU index bitmap.
+//
+// This function is intended to be used to optimise suspend state entry by
+// avoiding entering states that will be immediately exited due to a wakeup
+// already sent by the hypervisor.
+//
+// This function is not guaranteed to detect pending IPIs on any CPU that is not
+// currently in a suspend state. No barrier is implied.
+bool
+ipi_check_suspended_cpus(const cpuid_set_t cpus) REQUIRE_PREEMPT_DISABLED;
+#endif

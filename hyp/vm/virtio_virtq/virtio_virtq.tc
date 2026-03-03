@@ -1,0 +1,90 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define virtio_virtq_desc_flags bitfield<16> {
+	0		next		bool;
+	1		write		bool;
+	2		indirect	bool;
+	others		unknown=0;
+};
+
+define virtio_virtq_desc structure(aligned(16)) {
+	// Address (guest-physical).
+	addr		uint64;
+	len		uint32;
+	flags		bitfield virtio_virtq_desc_flags;
+	next		uint16;
+};
+
+// The size of the `avail` and `used` structs are dynamic and
+// depend on runtime negotiation of queue size and features. The guest
+// can choose to reduce the size.
+// Use the maximum Queue size to reserve enough room for the
+// user access copy operation.
+define virtio_virtq_avail_flags bitfield<16> {
+	0		no_interrupt	bool;
+	others		unknown=0;
+};
+
+define virtio_virtq_avail structure(aligned(2)) {
+	flags		bitfield virtio_virtq_avail_flags;
+	idx		uint16;
+
+	// Depends on negotiated Q size
+	// Use the Max size here, client can make is smaller
+	ring	array(VIRTIO_IOMMU_QUEUE_SIZE_MAX) uint16;
+
+	// Some optional event we don't support
+};
+
+define virtio_virtq_used_flags bitfield<16> {
+	0	no_notify	bool;
+	others	unknown=0;
+};
+
+define virtio_virtq_used_elem structure {
+	// Index of start of used descriptor chain.
+	id		uint32;
+
+	// The number of bytes written into the device writable portion of
+	// the buffer described by the descriptor chain.
+	len		uint32;
+};
+
+define virtio_virtq_used structure(aligned(4)) {
+	flags		bitfield virtio_virtq_used_flags;
+	idx		uint16;
+};
+
+// The spec says we can't assume that descriptors are not fragmented or that
+// they precisely show message framing. However, it also says we are allowed
+// to impose a "large" limit on the number of descriptors. Messages in the
+// iommu protocol are fairly small and unlikely to need fragmentation at all,
+// so drivers should never exceed 16 fragments. We may need to increase this
+// in future to support other protocols.
+define VIRTIO_VIRTQ_MAX_DESCS constant type count_t = 16;
+
+// Result of virtio_virtq_read_desc_chain
+define virtio_virtq_desc_chain structure {
+	// Parsed descriptors. This will skip any in the chain that are beyond
+	// the maximum size of the request buffer, or are out of order (i.e.
+	// read-only buffers that follow write-only buffers).
+	entries		array(VIRTIO_VIRTQ_MAX_DESCS)
+			structure virtio_virtq_desc;
+
+	// Total number of descriptors parsed.
+	count		type count_t;
+
+	// Index of the first write-only descriptor in the entries array.
+	reply_start	type index_t;
+
+	// Total size of the correctly ordered read-only descriptors. If this
+	// is shorter than the maximum request size, then the request buffer
+	// was not fully read and may contain garbage if it was not
+	// zero-initialised.
+	req_size	size;
+
+	// Total size of the correctly ordered write-only descriptors.
+	reply_space	size;
+};

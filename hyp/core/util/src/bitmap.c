@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -53,9 +53,10 @@ bitmap_extract(const register_t *bitmap, index_t bit, index_t width)
 	assert((width <= BITMAP_WORD_BITS) &&
 	       (BITMAP_WORD(bit) == BITMAP_WORD(bit + width - 1U)));
 
-	index_t i = BITMAP_WORD(bit);
+	index_t	   i	= BITMAP_WORD(bit);
+	register_t mask = util_mask_safe(width);
 
-	return (bitmap[i] >> (bit % BITMAP_WORD_BITS)) & util_mask(width);
+	return (bitmap[i] >> (bit % BITMAP_WORD_BITS)) & mask;
 }
 
 void
@@ -65,10 +66,11 @@ bitmap_insert(register_t *bitmap, index_t bit, index_t width, register_t value)
 	assert((width <= BITMAP_WORD_BITS) &&
 	       (BITMAP_WORD(bit) == BITMAP_WORD(bit + width - 1U)));
 
-	index_t i = BITMAP_WORD(bit);
+	index_t	   i	= BITMAP_WORD(bit);
+	register_t mask = util_mask_safe(width);
 
-	bitmap[i] &= ~(util_mask(width) << (bit % BITMAP_WORD_BITS));
-	bitmap[i] |= (value & util_mask(width)) << (bit % BITMAP_WORD_BITS);
+	bitmap[i] &= ~(mask << (bit % BITMAP_WORD_BITS));
+	bitmap[i] |= (value & mask) << (bit % BITMAP_WORD_BITS);
 }
 
 bool
@@ -285,11 +287,12 @@ bitmap_atomic_extract(const _Atomic register_t *bitmap, index_t bit,
 	assert((width <= BITMAP_WORD_BITS) &&
 	       (BITMAP_WORD(bit) == BITMAP_WORD(bit + width - 1U)));
 
-	index_t i = BITMAP_WORD(bit);
+	index_t	   i	= BITMAP_WORD(bit);
+	register_t mask = util_mask_safe(width);
 
 	return (atomic_load_explicit(&bitmap[i], order) >>
 		(bit % BITMAP_WORD_BITS)) &
-	       util_mask(width);
+	       mask;
 }
 
 void
@@ -300,7 +303,8 @@ bitmap_atomic_insert(_Atomic register_t *bitmap, index_t bit, index_t width,
 	assert((width <= BITMAP_WORD_BITS) &&
 	       (BITMAP_WORD(bit) == BITMAP_WORD(bit + width - 1U)));
 
-	index_t i = BITMAP_WORD(bit);
+	index_t	   i	= BITMAP_WORD(bit);
+	register_t mask = util_mask_safe(width);
 
 	memory_order load_order =
 		(order == memory_order_release)	  ? memory_order_relaxed
@@ -310,10 +314,8 @@ bitmap_atomic_insert(_Atomic register_t *bitmap, index_t bit, index_t width,
 	register_t old_word = atomic_load_explicit(&bitmap[i], load_order),
 		   new_word;
 	do {
-		new_word = (old_word &
-			    ~(util_mask(width) << (bit % BITMAP_WORD_BITS))) |
-			   ((value & util_mask(width))
-			    << (bit % BITMAP_WORD_BITS));
+		new_word = (old_word & ~(mask << (bit % BITMAP_WORD_BITS))) |
+			   ((value & mask) << (bit % BITMAP_WORD_BITS));
 	} while (!atomic_compare_exchange_weak_explicit(
 		&bitmap[i], &old_word, new_word, order, load_order));
 }

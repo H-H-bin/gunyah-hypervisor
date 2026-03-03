@@ -1,0 +1,25 @@
+// ============================================================================
+// Bitmap Macros and Utilities
+// ============================================================================
+
+#include <stdalign.h>
+
+// Calculate the number of bits in a register word
+#define BITMAP_WORD_BITS (sizeof(uregister) * 8)
+
+// Calculate the number of words needed for a bitmap of given bit count
+#define BITMAP_WORDS(x) (((x) + BITMAP_WORD_BITS - 1)/ BITMAP_WORD_BITS)
+
+// Declare a bitmap with specified bit count and name
+#define BITMAP_DECLARE(bits, name) name array(BITMAP_WORDS(bits)) uregister
+
+// ============================================================================
+// Test Structure with Various Bitmap Sizes
+// ============================================================================
+
+// Structure containing bitmaps of different sizes for testing
+define test_struct structure {
+	BITMAP_DECLARE(512, test_bitmap_512);	// 512-bit bitmap
+	BITMAP_DECLARE(768, test_bitmap_768);	// 768-bit bitmap
+	BITMAP_DECLARE(1, test_bitmap_1);	// Single-bit bitmap
+};

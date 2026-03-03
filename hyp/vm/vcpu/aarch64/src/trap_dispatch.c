@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -20,6 +20,10 @@
 #include <smc_trace.h>
 #include <thread.h>
 #include <trace.h>
+
+#if defined(INTERFACE_SMC_WAITQ)
+#include <platform_smc_waitq.h>
+#endif
 
 #include <events/vcpu.h>
 
@@ -156,7 +160,7 @@ vcpu_exception_dispatch(bool is_aarch64)
 
 	esr_ec_t ec	 = ESR_EL2_get_EC(&esr);
 	bool	 is_il32 = true;
-	// FIXME:
+	// FIXME: QC Gunyah issue #148
 	// For exceptions AArch32 execution, we need to determine whether the
 	// trapped instruction passed its condition code. If it did not pass,
 	// then skip the instruction. Remember special cases, such as BKPT in
@@ -185,7 +189,6 @@ vcpu_exception_dispatch(bool is_aarch64)
 		ESR_EL2_ISS_WFI_WFE_t iss =
 			ESR_EL2_ISS_WFI_WFE_cast(ESR_EL2_get_ISS(&esr));
 #if ARCH_AARCH64_32BIT_EL1
-		// FIXME:
 #error Check the condition code
 #endif
 		switch (ESR_EL2_ISS_WFI_WFE_get_TI(&iss)) {
@@ -198,7 +201,7 @@ vcpu_exception_dispatch(bool is_aarch64)
 #if defined(ARCH_ARM_FEAT_WFxT)
 		// These need events updated to pass timeout for FEAT_WFxT
 		// support
-		// FIXME:
+		// FIXME: QC Gunyah issue #206
 		case ISS_WFX_TI_WFET:
 			result = trigger_vcpu_trap_wfe_event(iss);
 			break;
@@ -215,7 +218,6 @@ vcpu_exception_dispatch(bool is_aarch64)
 	}
 	case ESR_EC_FPEN: {
 #if ARCH_AARCH64_32BIT_EL1
-		// FIXME:
 #error Check the condition code
 #endif
 		result = trigger_vcpu_trap_fp_enabled_event(esr);
@@ -274,6 +276,16 @@ vcpu_exception_dispatch(bool is_aarch64)
 
 		SMC_TRACE_CURRENT(SMC_TRACE_ID_EL1_64ENT, 8U);
 
+#ifdef MODULE_VM_SMC_WAITQ
+		smc_waitq_entry_ptr_result_t smc_waitq_entry_res =
+			platform_get_smc_waitq_entry(iss);
+		if (smc_waitq_entry_res.e != OK) {
+			result = VCPU_TRAP_RESULT_EMULATED;
+			SMC_TRACE_CURRENT(SMC_TRACE_ID_EL1_64RET, 7U);
+			goto process_entry;
+		}
+#endif
+
 		if (trigger_vcpu_trap_smc64_event(iss)) {
 			// SMC is not an exception generating instruction for
 			// EL2; it is trapped, and therefore the preferred
@@ -284,6 +296,13 @@ vcpu_exception_dispatch(bool is_aarch64)
 
 			SMC_TRACE_CURRENT(SMC_TRACE_ID_EL1_64RET, 7U);
 		}
+
+#ifdef MODULE_VM_SMC_WAITQ
+	process_entry:
+		if (smc_waitq_entry_res.r != NULL) {
+			platform_process_smc_waitq_entry(smc_waitq_entry_res.r);
+		}
+#endif
 
 		break;
 	}
@@ -302,6 +321,14 @@ vcpu_exception_dispatch(bool is_aarch64)
 	case ESR_EC_SVE:
 		result = trigger_vcpu_trap_sve_access_event();
 		break;
+#endif
+#if defined(ARCH_ARM_FEAT_SME)
+	case ESR_EC_SME: {
+		ESR_EL2_ISS_SME_t iss =
+			ESR_EL2_ISS_SME_cast(ESR_EL2_get_ISS(&esr));
+		result = trigger_vcpu_trap_sme_access_event(iss);
+		break;
+	}
 #endif
 	case ESR_EC_INST_ABT_LO: {
 		ESR_EL2_ISS_INST_ABORT_t iss =
@@ -420,9 +447,6 @@ vcpu_exception_dispatch(bool is_aarch64)
 #endif
 #if defined(ARCH_ARM_FEAT_TME)
 	case ESR_EC_TSTART:
-#endif
-#if defined(ARCH_ARM_FEAT_SME)
-	case ESR_EC_SME:
 #endif
 #if defined(ARCH_ARM_FEAT_RME)
 	case ESR_EC_RME:

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -24,10 +24,6 @@ subscribe thread_entry_from_user
 subscribe power_cpu_resume
 	handler rcu_bitmap_activate_current()
 	priority 100
-	require_preempt_disabled
-subscribe thread_exited
-	handler rcu_bitmap_activate_current()
-	priority first
 	require_preempt_disabled
 subscribe preempt_interrupt()
 	require_preempt_disabled

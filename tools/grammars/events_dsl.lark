@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // 2019 Cog Systems Pty Ltd.
 //
@@ -68,8 +68,8 @@ selector : "[" _selector_list "]"
 _subscriber : expected_args noreturn? unwinder? | handler unwinder? | unwinder | constant
 _subscriber_public : handler_public unwinder_public? | constant
 _HANDLER : ":" | _CONT_DECL "handler"
-handler : _HANDLER symbol expected_args? public? noreturn?
-handler_public : _HANDLER symbol expected_args? public noreturn?
+handler : _HANDLER symbol? expected_args? public? noreturn?
+handler_public : _HANDLER symbol? expected_args? public noreturn?
 _UNWINDER : _CONT_DECL "unwinder"
 unwinder : _UNWINDER symbol? expected_args? public?
 unwinder_public : _UNWINDER symbol? expected_args? public
@@ -100,7 +100,8 @@ RPAREN : ")"
 COMMA : ","
 _args : LPAREN _arg_list? RPAREN
 _arg_list : _NL_INDENT? _constexpr [COMMA _arg_list]
-selector_const: _type_cast? _constexpr
+ELLIPSIS : "..."
+selector_const: _type_cast? _constexpr [ELLIPSIS _type_cast? _constexpr]
 _selector_list : _NL_INDENT? selector_const ["," _selector_list]
 %import common.SIGNED_INT
 %import common.SIGNED_FLOAT

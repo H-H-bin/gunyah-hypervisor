@@ -1,0 +1,13 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+extend cap_rights_virtio_iommu bitfield {
+	0	bind_vpci	bool;
+	1	manage_streams	bool;
+};
+
+define virtio_iommu_options public bitfield<64> {
+	31:0	max_streams	type count_t;
+	32	addrspace_valid	bool(const) = 1;
+};

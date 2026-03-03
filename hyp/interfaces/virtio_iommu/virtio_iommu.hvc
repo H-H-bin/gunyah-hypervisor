@@ -1,0 +1,12 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define virtio_iommu_configure hypercall {
+	call_num	0x81;
+	virtio_iommu	input type cap_id_t;
+	iommu		input type cap_id_t;
+	options		input bitfield virtio_iommu_options;
+	addrspace	input type cap_id_t;
+	error		output enumeration error;
+};

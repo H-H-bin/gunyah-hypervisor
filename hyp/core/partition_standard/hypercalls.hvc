@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -102,6 +102,72 @@ define partition_create_vpm_group hypercall {
 #if defined(INTERFACE_VIRTIO_BACKEND)
 define partition_create_virtio_backend hypercall {
 	call_num	0x48;
+	src_partition	input type cap_id_t;
+	cspace		input type cap_id_t;
+	res0		input uregister;
+	error		output enumeration error;
+	new_cap		output type cap_id_t;
+};
+#endif
+
+#if defined(INTERFACE_VPCI)
+define partition_create_vpci hypercall {
+	call_num	0x6C;
+	src_partition	input type cap_id_t;
+	cspace		input type cap_id_t;
+	res0		input uregister;
+	error		output enumeration error;
+	new_cap		output type cap_id_t;
+};
+#endif
+
+#if defined(INTERFACE_VGIC_ITS)
+define partition_create_vgic_its hypercall {
+	call_num	0x71;
+	src_partition	input type cap_id_t;
+	cspace		input type cap_id_t;
+	res0		input uregister;
+	error		output enumeration error;
+	new_cap		output type cap_id_t;
+};
+#endif
+
+define partition_donate hypercall {
+	call_num	0x75;
+	flags		input bitfield partition_donate_flags;
+	partition_cap	input type cap_id_t;
+	arg2		input uregister;
+	base		input type paddr_t;
+	size		input size;
+	res0		input uregister;
+	error		output enumeration error;
+};
+
+define partition_query hypercall {
+	call_num	0x76;
+	partition_cap	input type cap_id_t;
+	flags		input bitfield partition_query_flags;
+	addr		input uregister;
+	size		input size;
+	arg4		input uregister;
+	res0		input uregister;
+	error		output enumeration error;
+};
+
+#if defined(INTERFACE_VSMMUV2)
+define partition_create_vsmmuv2 hypercall {
+	call_num	0x79;
+	src_partition	input type cap_id_t;
+	cspace		input type cap_id_t;
+	res0		input uregister;
+	error		output enumeration error;
+	new_cap		output type cap_id_t;
+};
+#endif
+
+#if defined(INTERFACE_VIRTIO_IOMMU)
+define partition_create_virtio_iommu hypercall {
+	call_num	0x82;
 	src_partition	input type cap_id_t;
 	cspace		input type cap_id_t;
 	res0		input uregister;

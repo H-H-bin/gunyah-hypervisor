@@ -1,0 +1,18 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define power_system_suspend hypercall {
+	call_num	0x70;
+	system_power	input type cap_id_t;
+	res0		input uregister;
+	error		output enumeration error;
+};
+
+define power_cpu_suspend hypercall {
+	call_num	0x84;
+	system_power	input type cap_id_t;
+	power_state	input uregister;
+	res0		input uregister;
+	error		output enumeration error;
+};

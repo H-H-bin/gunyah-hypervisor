@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -14,7 +14,8 @@
 #include <object.h>
 #include <partition.h>
 #include <spinlock.h>
-#include <vpm.h>
+
+#include "vpm_base.h"
 
 error_t
 hypercall_vpm_group_configure(cap_id_t		       vpm_group_cap,
@@ -106,7 +107,7 @@ error_t
 hypercall_vpm_group_bind_virq(cap_id_t vpm_group_cap, cap_id_t vic_cap,
 			      virq_t virq)
 {
-	error_t	  err	 = OK;
+	error_t	  err;
 	cspace_t *cspace = cspace_get_self();
 
 	vpm_group_ptr_result_t p = cspace_lookup_vpm_group(
@@ -137,7 +138,7 @@ out:
 error_t
 hypercall_vpm_group_unbind_virq(cap_id_t vpm_group_cap)
 {
-	error_t	  err	 = OK;
+	error_t	  err;
 	cspace_t *cspace = cspace_get_self();
 
 	vpm_group_ptr_result_t p = cspace_lookup_vpm_group(
@@ -151,6 +152,7 @@ hypercall_vpm_group_unbind_virq(cap_id_t vpm_group_cap)
 	vpm_unbind_virq(vpm_group);
 
 	object_put_vpm_group(vpm_group);
+	err = OK;
 out:
 	return err;
 }
@@ -177,4 +179,84 @@ hypercall_vpm_group_get_state(cap_id_t vpm_group_cap)
 	object_put_vpm_group(vpm_group);
 out:
 	return ret;
+}
+
+error_t
+hypercall_vpm_group_wakeup(cap_id_t vpm_group_cap)
+{
+	error_t	  err;
+	cspace_t *cspace = cspace_get_self();
+
+	vpm_group_ptr_result_t p = cspace_lookup_vpm_group(
+		cspace, vpm_group_cap, CAP_RIGHTS_VPM_GROUP_WAKEUP);
+	if (compiler_unexpected(p.e != OK)) {
+		err = p.e;
+		goto out;
+	}
+
+	vpm_group_t *vpm_group = p.r;
+
+	if (vpm_group_option_flags_get_explicit_wakeup(&vpm_group->options)) {
+		err = vpm_system_wakeup(vpm_group);
+	} else {
+		err = ERROR_DENIED;
+	}
+
+	object_put_vpm_group(vpm_group);
+
+out:
+	return err;
+}
+
+error_t
+hypercall_vpm_group_bind_power(cap_id_t vpm_group_cap, cap_id_t power_cap)
+{
+	error_t	  err;
+	cspace_t *cspace = cspace_get_self();
+
+	vpm_group_ptr_result_t vg = cspace_lookup_vpm_group(
+		cspace, vpm_group_cap, CAP_RIGHTS_VPM_GROUP_BIND_POWER);
+	if (compiler_unexpected(vg.e != OK)) {
+		err = vg.e;
+		goto out;
+	}
+	vpm_group_t *vpm_group = vg.r;
+
+	power_ptr_result_t p = cspace_lookup_power(
+		cspace, power_cap, CAP_RIGHTS_POWER_SYSTEM_SUSPEND);
+	if (compiler_unexpected(p.e != OK)) {
+		err = p.e;
+		goto out_vpm_group_release;
+	}
+	power_t *power = p.r;
+
+	err = vpm_bind_power(vpm_group, power);
+
+	object_put_power(power);
+out_vpm_group_release:
+	object_put_vpm_group(vpm_group);
+out:
+	return err;
+}
+
+error_t
+hypercall_vpm_group_set_threshold(cap_id_t vpm_group_cap, uint64_t power_state)
+{
+	error_t	  err;
+	cspace_t *cspace = cspace_get_self();
+
+	vpm_group_ptr_result_t p = cspace_lookup_vpm_group(
+		cspace, vpm_group_cap, CAP_RIGHTS_VPM_GROUP_SET_THRESHOLD);
+	if (compiler_unexpected(p.e != OK)) {
+		err = p.e;
+		goto out;
+	}
+
+	vpm_group_t *vpm_group = p.r;
+	vpm_set_threshold(vpm_group, power_state);
+
+	object_put_vpm_group(vpm_group);
+	err = OK;
+out:
+	return err;
 }

@@ -1,0 +1,7 @@
+
+module duplicate_selector_module
+
+
+subscribe duplicate_selector_interface_event[selector_1]
+
+subscribe duplicate_selector_interface_event[selector_1]

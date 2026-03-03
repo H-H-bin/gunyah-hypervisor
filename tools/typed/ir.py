@@ -1,5 +1,4 @@
-# © 2019 Qualcomm Innovation Center, Inc. All rights reserved.
-# All Rights Reserved.
+# Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 #
 # 2019 Cog Systems Pty Ltd.
 #
@@ -35,8 +34,7 @@ __loc__ = os.path.realpath(
         os.path.dirname(__file__)))
 
 default_copyright = \
-    "© 2019 Qualcomm Innovation Center, Inc. All rights reserved.\n" \
-    "All Rights Reserved.\n\n" \
+    "Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.\n\n" \
     "SPDX-License-Identifier: BSD-3-Clause"
 
 
@@ -119,6 +117,10 @@ class TopLevel:
         output = "// Automatically generated. Do not modify.\n//\n"
         output += '// ' + '\n// '.join(default_copyright.split('\n')) + '\n\n'
         output += "\n"
+        output += "#ifndef HYPTYPES_H_\n"
+        output += "#define HYPTYPES_H_\n"
+        output += "\n"
+        output += "#include <limits.h>\n"
         output += "#include <stddef.h>\n"
         output += "#include <stdint.h>\n"
         output += "#include <stdbool.h>\n"
@@ -137,6 +139,9 @@ class TopLevel:
         output += "\n"
         output += ' '.join(extra)
         output += ' '.join(footer)
+        output += "#else\n"
+        output += "#error multiple include HYPTYPES_H_\n"
+        output += "#endif\n"
 
         return output
 
@@ -178,7 +183,6 @@ class TopLevel:
             self.abi_refs.add(a)
 
     def _handle_refs(self, abi):
-        # FIXME: check for duplicates
         defs = {(d.type_name, d.category): d for d in self.definitions}
 
         # Set the ABI for types whose definition depends on it
@@ -209,6 +213,14 @@ class TopLevel:
             if t not in refs:
                 x = PrimitiveType(t)
                 self.abi_refs.add(x)
+
+        # Check for duplicate definitions
+        seen_names = {}
+        for d in self.definitions:
+            if d.type_name in seen_names:
+                raise DSLError(f"Duplicate definition of {d.indicator}",
+                               d.indicator)
+            seen_names[d.type_name] = d
 
         # link customised declarations and definitions
         self._handle_refs(abi)
@@ -2008,7 +2020,7 @@ class StructureDefinition(IGenCode, ICustomizedDefinition):
             if member_name in used_names:
                 raise DSLError("'structure {:s}': each member needs to have a"
                                " unique name".format(self.type_name),
-                               member_type.type_name)
+                               member_type.gen_type_name())
             used_names.add(member_name)
 
     @property
@@ -2222,7 +2234,8 @@ class EnumerationDefinition(IGenCode, ICustomizedDefinition):
 
     def __getstate__(self):
         """
-        Temporary workaround to ensure types are updated before pickling. 
+        Temporary workaround to ensure types are updated before pickling. Auto
+        update should be removed entirely when QC Gunyah issue #45 is resolved.
         """
         if not self._updated:
             self._autoupdate()
@@ -2382,6 +2395,39 @@ class EnumerationDefinition(IGenCode, ICustomizedDefinition):
         code.append('#define {:s}__MIN {:s}\n'.format(
             self.type_name.upper(), e_min))
         code.append('\n')
+
+        # Generate accessor declarations in extra
+        int_type = '{:s}int{:d}_t'.format(
+            '' if self.is_signed else 'u',
+            self.size * 8)
+        raw_name = self.type_name + '_raw'
+
+        extra.append('\n')
+        extra.append(self.type_name + '_t\n')
+        extra.append('{:s}_cast({:s} val);\n\n'.format(
+            raw_name, int_type))
+        extra.append('#define {:s}_cast(val) '.format(
+            self.type_name))
+        extra.append('{:s}_cast(({:s})(val))\n'.format(
+            raw_name, int_type))
+
+        extra.append('\n')
+        extra.append(self.type_name + '_result_t\n')
+        extra.append('{:s}_cast_safe({:s} val);\n\n'.format(
+            raw_name, int_type))
+        extra.append('#define {:s}_cast_safe(val) '.format(
+            self.type_name))
+        extra.append('{:s}_cast_safe(({:s})(val))\n'.format(
+            raw_name, int_type))
+
+        extra.append('\n')
+        extra.append('bool\n')
+        extra.append('{:s}_is_valid({:s} val);\n\n'.format(
+            raw_name, int_type))
+        extra.append('#define {:s}_is_valid(val) '.format(
+            self.type_name))
+        extra.append('{:s}_is_valid(({:s})(val))\n'.format(
+            raw_name, int_type))
 
         return (code, extra)
 

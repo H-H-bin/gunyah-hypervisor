@@ -1,0 +1,46 @@
+// Automatically generated. Do not modify.
+
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+module object_lists
+
+subscribe object_create_partition
+subscribe object_cleanup_partition(partition)
+
+
+subscribe object_create_addrspace
+subscribe object_cleanup_addrspace(addrspace)
+
+subscribe object_create_cspace
+subscribe object_cleanup_cspace(cspace)
+
+subscribe object_create_doorbell
+subscribe object_cleanup_doorbell(doorbell)
+
+subscribe object_create_gicv3_its
+subscribe object_cleanup_gicv3_its(gicv3_its)
+
+subscribe object_create_memextent
+subscribe object_cleanup_memextent(memextent)
+
+subscribe object_create_msgqueue
+subscribe object_cleanup_msgqueue(msgqueue)
+
+subscribe object_create_thread
+subscribe object_cleanup_thread(thread)
+
+subscribe object_create_vic
+subscribe object_cleanup_vic(vic)
+
+subscribe object_create_virtio_backend
+subscribe object_cleanup_virtio_backend(virtio_backend)
+
+subscribe object_create_vpm_group
+subscribe object_cleanup_vpm_group(vpm_group)
+
+subscribe object_create_vrtc
+subscribe object_cleanup_vrtc(vrtc)
+
+subscribe boot_cold_init()

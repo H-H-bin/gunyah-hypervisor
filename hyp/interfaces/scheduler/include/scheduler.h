@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -270,3 +270,6 @@ scheduler_set_timeslice(thread_t *thread, nanoseconds_t timeslice)
 // not to be the current thread.
 bool
 scheduler_will_preempt_current(thread_t *thread) REQUIRE_SCHEDULER_LOCK(thread);
+
+error_t
+scheduler_set_default_timeslice(nanoseconds_t default_timeslice);

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -29,12 +29,12 @@ extern opaque_lock_t idle_blocked;
 // as an SMCCC interruptible call.
 void
 idle_block_start(void) REQUIRE_PREEMPT_DISABLED ACQUIRE_LOCK(idle_blocked)
-	EXCLUDE_RCU_READ;
+EXCLUDE_RCU_READ;
 
 // Clean up after resuming execution after blocking on the calling CPU.
 void
 idle_block_finish(void) REQUIRE_PREEMPT_DISABLED RELEASE_LOCK(idle_blocked)
-	EXCLUDE_RCU_READ;
+EXCLUDE_RCU_READ;
 
 // Handle a wakeup event received during idle.
 idle_state_t

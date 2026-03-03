@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -54,6 +54,14 @@ preempt_enable_in_irq(void) RELEASE_PREEMPT_DISABLED;
 // for example, an AArch64 SError interrupt or an x86 NMI.
 bool
 preempt_abort_dispatch(void);
+
+// Check whether preemption is pending for the calling thread.
+//
+// This may be called with preemption disabled, and may be called from an RCU
+// read-side critical section. However, it must not be called while holding any
+// spinlock that is acquired in an interrupt handler.
+bool
+preempt_check(void);
 
 // Assert that preemption is currently disabled.
 //

@@ -1,0 +1,9 @@
+
+interface duplicate_selector_interface
+
+
+selector_event duplicate_selector_interface_event
+	selector action: hwirq_action_t
+	param param0: uint32_t
+		param param1: uint32_t
+	return: error_t = ERROR_ARGUMENT_INVALID

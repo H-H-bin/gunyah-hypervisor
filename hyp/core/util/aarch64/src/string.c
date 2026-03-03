@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -77,8 +77,8 @@ memset_below32(void *s, uint64_t cs, size_t n);
 void
 memset_align16(void *s, uint64_t cs, size_t n);
 
-void *
-memcpy(void *restrict s1, const void *restrict s2, size_t n)
+static void *
+memcpy_impl(void *s1, const void *s2, size_t n)
 {
 	assert(compiler_sizeof_object(s1) >= n);
 	assert(compiler_sizeof_object(s2) >= n);
@@ -100,6 +100,20 @@ memcpy(void *restrict s1, const void *restrict s2, size_t n)
 	}
 
 	return s1;
+}
+
+void *
+memcpy(void *restrict s1, const void *restrict s2, size_t n)
+{
+	return memcpy_impl(s1, s2, n);
+}
+
+size_t
+memscpy(void *s1, size_t s1_size, const void *s2, size_t s2_size)
+{
+	size_t copy_size = util_min(s1_size, s2_size);
+	(void)memcpy_impl(s1, s2, copy_size);
+	return copy_size;
 }
 
 static void

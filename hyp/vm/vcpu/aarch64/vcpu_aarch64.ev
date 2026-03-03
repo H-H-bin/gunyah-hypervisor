@@ -1,9 +1,6 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
-
-// Add the events for the traps coming from AArch32
-// FIXME:
 
 module vcpu
 
@@ -37,19 +34,19 @@ subscribe thread_start
 
 // vcpu context_switch handlers
 
-subscribe thread_save_state
-	handler vcpu_context_switch_save()
+subscribe vcpu_save_state
+	handler vcpu_context_switch_save
 	require_preempt_disabled
 
-subscribe thread_save_state
-	handler vcpu_context_switch_cpu_save()
+subscribe vcpu_save_state
+	handler vcpu_context_switch_cpu_save
 	require_preempt_disabled
 
-subscribe thread_load_state
+subscribe vcpu_load_state
 	handler vcpu_context_switch_load()
 	require_preempt_disabled
 
-subscribe thread_load_state
+subscribe vcpu_load_state
 	handler vcpu_context_switch_cpu_load()
 	require_preempt_disabled
 

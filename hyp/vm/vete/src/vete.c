@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -25,11 +25,18 @@
 
 #define ISS_TRFCR_EL1 ISS_OP0_OP1_CRN_CRM_OP2(3, 0, 1, 2, 1)
 
+static bool
+arm_ete_is_allowed(void)
+{
+	const global_options_t *global_options = globals_get_options();
+	return compiler_expected(
+		global_options_get_ete_present(global_options));
+}
+
 void
 vete_handle_boot_cpu_warm_init(void)
 {
-	const global_options_t *options = globals_get_options();
-	if (global_options_get_ete_present(options)) {
+	if (arm_ete_is_allowed()) {
 		TRFCR_EL2_t trfcr = TRFCR_EL2_default();
 		// prohibit trace of EL2
 		TRFCR_EL2_set_E2TRE(&trfcr, 0);
@@ -104,8 +111,7 @@ vet_enable_trace(void)
 void
 vet_restore_trace_power_context(bool was_poweroff)
 {
-	const global_options_t *options = globals_get_options();
-	if (global_options_get_ete_present(options)) {
+	if (arm_ete_is_allowed()) {
 		// enable trace register access by clear CPTR_EL2.TAA=0
 		vete_prohibit_registers_access(false);
 		asm_context_sync_ordered(&vet_ordering);
@@ -120,8 +126,7 @@ vet_restore_trace_power_context(bool was_poweroff)
 void
 vet_save_trace_power_context(bool was_poweroff)
 {
-	const global_options_t *options = globals_get_options();
-	if (global_options_get_ete_present(options)) {
+	if (arm_ete_is_allowed()) {
 		vete_prohibit_registers_access(false);
 		asm_context_sync_ordered(&vet_ordering);
 
@@ -152,8 +157,7 @@ vete_handle_vcpu_trap_sysreg(ESR_EL2_ISS_MSR_MRS_t iss)
 		// This VCPU isn't allowed to access debug. Fault immediately.
 		ret = VCPU_TRAP_RESULT_FAULT;
 	} else if (!current->vet_trace_unit_enabled) {
-		const global_options_t *options = globals_get_options();
-		if (global_options_get_ete_present(options)) {
+		if (arm_ete_is_allowed()) {
 			// Lazily enable trace register access and restore
 			// context.
 			current->vet_trace_unit_enabled = true;

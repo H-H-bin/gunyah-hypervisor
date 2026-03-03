@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -9,7 +9,7 @@ subscribe boot_cold_init
 subscribe ipi_received[IPI_REASON_TIMER_QUEUE_SYNC]()
 	require_preempt_disabled
 
-#if !defined(UNITTESTS) || !UNITTESTS
+#if !defined(UNIT_TESTS) || !UNIT_TESTS
 subscribe rootvm_init(hyp_env)
 #endif
 

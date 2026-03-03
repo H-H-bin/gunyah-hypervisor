@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -138,4 +138,15 @@ define addrspace_info_area_add_entry hypercall {
 	res0		input uregister;
 	error		output enumeration error;
 	ipa		output type vmaddr_t;
+};
+
+define addrspace_info_area_get_entry hypercall {
+	call_num	0x77;
+	type		input bitfield addrspace_info_area_entry_type;
+	buf		input type user_ptr_t;
+	buf_size	input size;
+	res0		input uregister;
+	error		output enumeration error;
+	size		output size;
+	type		output bitfield addrspace_info_area_entry_type;
 };

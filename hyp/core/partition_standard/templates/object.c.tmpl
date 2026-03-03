@@ -1,14 +1,14 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
+\#include <assert.h>
 \#include <hyptypes.h>
 \#include <string.h>
 
 \#include <hypcontainers.h>
 
 \#include <atomic.h>
-\#include <assert.h>
 \#include <object.h>
 \#include <partition.h>
 \#include <partition_alloc.h>
@@ -26,6 +26,21 @@
 extern const size_t thread_size;
 extern const size_t thread_align;
 #end if
+
+void
+partition_standard_handle_object_init_${o}(${o}_create_t ${o}_create,
+		partition_t *parent)
+{
+	${o}_t *${o} = ${o}_create.${o};
+
+	refcount_init(&${o}->header.refcount);
+	spinlock_init(&${o}->header.lock);
+
+	${o}->header.type = $obj.type_enum();
+	${o}->header.partition = object_get_partition_additional(parent);
+
+	atomic_init(&${o}->header.state, OBJECT_STATE_INIT);
+}
 
 ${o}_ptr_result_t
 partition_allocate_${o}(partition_t *parent, ${o}_create_t create)
@@ -53,15 +68,14 @@ partition_allocate_${o}(partition_t *parent, ${o}_create_t create)
 	${o} = (${o}_t *)alloc_ret.r;
 	(void)memset_s(${o}, size, 0, size);
 
-	refcount_init(&${o}->header.refcount);
-	spinlock_init(&${o}->header.lock);
-	${o}->header.partition = object_get_partition_additional(parent);
-	${o}->header.type = $obj.type_enum();
-	atomic_init(&${o}->header.state, OBJECT_STATE_INIT);
-
+	assert_debug((create.${o} == NULL) && (${o} != NULL));
 	create.${o} = $o;
 
+	trigger_object_init_${o}_event(create, parent);
+
+	spinlock_acquire(&create.${o}->header.lock);
 	error_t err = trigger_object_create_${o}_event(create);
+	spinlock_release(&create.${o}->header.lock);
 	if (err != OK) {
 		rcu_enqueue(&${o}->header.rcu_entry, $obj.rcu_destroy_enum());
 		obj_ret = ${o}_ptr_result_error(err);

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -13,6 +13,7 @@ import subprocess
 import logging
 import sys
 import pickle
+import shlex
 
 
 # Determine the location of this script.
@@ -79,8 +80,14 @@ class register:
                                 '!') else type_size['_'.join((type_name, v))]))
 
         if not ret:
-            size = int(int(type_name[4:])/8) if type_name.startswith(
-                'uint') else type_size[type_name]
+            if type_name.startswith('uint'):
+                size = int(int(type_name[4:])/8)
+            else:
+                if type_name not in type_size:
+                    raise Exception(
+                        "no type: {:s} for register {:s}".format(
+                            type_name, self.name))
+                size = type_size[type_name]
             ret = [(self.name, type_name, size)]
         return sorted(ret)
 
@@ -204,7 +211,8 @@ def main():
     output += generate_accessors(options.template, input, {})
 
     if options.formatter:
-        ret = subprocess.run([options.formatter], input=output.encode("utf-8"),
+        ret = subprocess.run(shlex.split(options.formatter),
+                             input=output.encode("utf-8"),
                              stdout=subprocess.PIPE)
         output = ret.stdout.decode("utf-8")
         if ret.returncode != 0:

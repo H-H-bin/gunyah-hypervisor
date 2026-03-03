@@ -1,4 +1,4 @@
-// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -19,6 +19,7 @@
 #include <scheduler.h>
 #include <spinlock.h>
 #include <task_queue.h>
+#include <thread.h>
 #include <vcpu.h>
 #include <vcpu_run.h>
 #include <vic.h>
@@ -34,7 +35,7 @@ vcpu_run_handle_vcpu_activate_thread(thread_t		*thread,
 {
 	assert(thread != NULL);
 
-	if (thread->kind == THREAD_KIND_VCPU) {
+	if (vcpu_is_vcpu(thread)) {
 		task_queue_init(&thread->vcpu_run_wakeup_virq_task);
 
 		thread->vcpu_run_last_state = VCPU_RUN_STATE_READY;
@@ -66,7 +67,7 @@ do_vcpu_run_check(const thread_t *vcpu, register_t *state_data_0,
 {
 	vcpu_run_state_t ret;
 
-	assert(vcpu->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(vcpu));
 	assert(!scheduler_is_runnable(vcpu));
 
 	thread_state_t state = atomic_load_relaxed(&vcpu->state);
@@ -106,15 +107,28 @@ hypercall_vcpu_run(cap_id_t vcpu_cap, register_t resume_data_0,
 	}
 
 	thread_t *vcpu = thread_r.r;
-	if (compiler_unexpected(vcpu->kind != THREAD_KIND_VCPU)) {
+	if (compiler_unexpected(!vcpu_is_vcpu(vcpu))) {
 		ret.error = ERROR_ARGUMENT_INVALID;
 		goto out_obj_put_thread;
 	}
 
 	scheduler_lock(vcpu);
 	if (!scheduler_is_blocked(vcpu, SCHEDULER_BLOCK_VCPU_RUN)) {
-		// VCPU not proxy-scheduled, or is being run by another caller
-		ret.error = ERROR_BUSY;
+		// VCPU not proxy-scheduled, or is being run by another caller.
+		if (thread_is_dying(vcpu) || thread_has_exited(vcpu)) {
+			// As a special case, if the VCPU has been killed, we
+			// return OK / VCPU_RUN_STATE_BLOCKED. This is because a
+			// killed VCPU will typically be scheduled to run to
+			// completion by whoever killed it, which may be a
+			// management VM rather than the VCPU's regular
+			// scheduler. In that case, this call may not actually
+			// be in error, and the caller should treat it as
+			// transiently blocked.
+			ret.error      = OK;
+			ret.vcpu_state = VCPU_RUN_STATE_BLOCKED;
+		} else {
+			ret.error = ERROR_BUSY;
+		}
 		goto unlock;
 	}
 	assert(vcpu_run_is_enabled(vcpu));
@@ -181,7 +195,7 @@ hypercall_vcpu_run_check(cap_id_t vcpu_cap)
 	}
 
 	thread_t *vcpu = thread_r.r;
-	if (compiler_unexpected(vcpu->kind != THREAD_KIND_VCPU)) {
+	if (compiler_unexpected(!vcpu_is_vcpu(vcpu))) {
 		ret.error = ERROR_ARGUMENT_INVALID;
 		goto out_obj_put_thread;
 	}
@@ -247,7 +261,7 @@ vcpu_run_handle_task_queue_execute(task_queue_entry_t *entry)
 	thread_t *vcpu = thread_container_of_vcpu_run_wakeup_virq_task(entry);
 
 	assert(vcpu != NULL);
-	assert(vcpu->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(vcpu));
 
 	(void)virq_assert(&vcpu->vcpu_run_wakeup_virq, true);
 	object_put_thread(vcpu);
@@ -259,7 +273,7 @@ void
 vcpu_run_trigger_virq(thread_t *vcpu)
 {
 	assert(vcpu != NULL);
-	assert(vcpu->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(vcpu));
 
 	if (scheduler_is_blocked(vcpu, SCHEDULER_BLOCK_VCPU_RUN)) {
 		(void)object_get_thread_additional(vcpu);
@@ -282,7 +296,7 @@ void
 vcpu_run_handle_thread_killed(thread_t *thread)
 {
 	assert(thread != NULL);
-	if (thread->kind == THREAD_KIND_VCPU) {
+	if (vcpu_is_vcpu(thread)) {
 		// Killing the VCPU may have made it temporarily runnable so
 		// it can unwind its EL2 stack. Raise a scheduling doorbell.
 		vcpu_run_trigger_virq(thread);
@@ -292,7 +306,7 @@ vcpu_run_handle_thread_killed(thread_t *thread)
 void
 vcpu_run_handle_object_deactivate_thread(thread_t *thread)
 {
-	if (thread->kind == THREAD_KIND_VCPU) {
+	if (vcpu_is_vcpu(thread)) {
 		vic_unbind(&thread->vcpu_run_wakeup_virq);
 	}
 }

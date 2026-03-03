@@ -1,0 +1,375 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define HYP_FFA_VERSION_MAJOR constant uint16 = 1;
+define HYP_FFA_VERSION_MINOR_MAX constant uint16 = 2; // v1.2
+define HYP_FFA_VERSION_MINOR_MIN constant uint16 = 2; // v1.2
+
+// uuidgen -s -n @url -N "qualcomm.com/gunyah/ffa"
+// {c56f89a4-6531-55cf-abb9-95a687c7e540} in big endian
+define HYP_FFA_UUID_LO constant uint64 = 0xcf553165a4896fc5U;
+define HYP_FFA_UUID_HI constant uint64 = 0x40e5c787a695b9abU;
+
+define HYP_FFA_VM_AVAILABILITY_RETRY_TIMEOUT_MS	constant type milliseconds_t = 200;
+
+define HYP_FFA_PARTITION_INFO_MAX_COUNT constant type count_t = 5;
+
+define HYP_FFA_PAGE_SIZE constant size = PGTABLE_HYP_PAGE_SIZE;
+define HYP_FFA_RXTX_MIN_BUFFER_PAGE_COUNT constant uint16 = 1;
+define HYP_FFA_RXTX_MAX_BUFFER_PAGE_COUNT constant uint16 = 1;
+define HYP_FFA_RXTX_MIN_ALIGNMENT constant size = 4096 * HYP_FFA_RXTX_MIN_BUFFER_PAGE_COUNT;
+define HYP_FFA_RXTX_MAX_BUFFER_SIZE constant size = 4096 * HYP_FFA_RXTX_MAX_BUFFER_PAGE_COUNT;
+
+extend addrspace object {
+	ffa_negotiated_version		bitfield ffa_version(atomic);
+};
+
+define ffa_part_id_type enumeration {
+	epid			= 0b00;
+	sepid_independent	= 0b01;
+	sepid_dependent		= 0b10;
+	auxiliary_id		= 0b11;
+};
+
+// FF-A partition property descriptor
+define ffa_part_prop_desc bitfield<32> {
+	0		can_receive_direct_req		bool;
+	1		can_send_direct_req		bool;
+	2		can_use_indirect_msg		bool;
+	3		notification_support		bool;
+	5:4		partition_id_type		enumeration ffa_part_id_type;
+	6		inform_vm_created		bool;
+	7		inform_vm_destroyed		bool;
+	8		is_aarch64			bool;
+	9		can_receive_direct_req2		bool;
+	10		can_send_direct_req2		bool;
+	13		smc64_cpu_cycle_support		bool;
+	others		unknown = 0;
+};
+
+define ffa_partition_id bitfield<16> {
+	14:0		part_id		uint16;
+	15		is_secure	bool;
+};
+
+// The metadata returned by FFA_PARTITION_INFO_GET_REGS
+define ffa_info_get_regs_metadata bitfield<64> {
+	15:0		last_index	type index_t;
+	31:16		curr_index	type index_t;
+	47:32		info_tag	type register_t;
+	63:48		info_size	type count_t;
+};
+
+// The partition info used in both FFA_PARTITION_INFO_GET_REGS
+// and FFA_PARTITION_INFO_GET
+define ffa_part_info bitfield<64> {
+	15:0		part_id			bitfield ffa_partition_id;
+	31:16		exec_context_count	type count_t;
+	63:32		properties		bitfield ffa_part_prop_desc;
+};
+
+// The partition info flags
+define ffa_part_info_get_flags bitfield<32> {
+	0		count_only	bool;
+	31:1		sbz		uint32(const) = 0;
+};
+
+// The list of available FF-A components in the system
+define ffa_component	structure {
+	list_node		structure	list_node(contained);
+	addrspace		pointer object	addrspace;
+	uuid_lo			uint64;
+	uuid_hi			uint64;
+	properties		bitfield	ffa_part_prop_desc;
+	part_id			bitfield	ffa_partition_id;
+	exec_context_count	type count_t;
+};
+
+// The ID format expected by FFA_FEATURES
+define ffa_func_feature_id bitfield<32> {
+	7:0		id		uint8;
+	30:8		mbz		uint32(const) = 0;
+	31		is_func		bool;
+};
+
+// Feature IDs used in FFA_FEATURES
+define ffa_feature_id enumeration {
+	notification_pending_int	= 1;
+	schedule_receiver_int		= 2;
+	managed_exit_int		= 3;
+};
+
+// Endpoint IDs in Messaging and Notification
+// The IDs are divided into two parts: high and low.
+// Low (15:0): Destination/Receiver ID or VM ID
+// High (31:16): Source/Sender ID or MBZ
+define ffa_ep_ids bitfield<32> {
+	15:0		dest_id	bitfield ffa_partition_id;
+	31:16		src_id	bitfield ffa_partition_id;
+};
+
+// Target information for CPU cycle management ABIs.
+define ffa_target_info bitfield<32> {
+	15:0		vcpu_id	type index_t;
+	31:16		ep_id	bitfield ffa_partition_id;
+};
+
+// Start index and info tag for UUIDs in partition info get regs
+// Low (15:0): Start index
+//	If there are 10 partitions corresponding to a UUID,
+//	this value could be any number in the range (0-9)
+// High (31:16): Information tag for the queried UUID
+define ffa_index_tag bitfield<32> {
+	15:0		index	type index_t;
+	31:16		tag	type register_t;
+};
+
+define FFA_INVALID_HANDLE constant uint64 = -1;
+
+// Size of each descriptor is 24 bytes as per the FF-A v1.1 spec
+define FFA_COMPONENT_DESCRIPTOR_SIZE constant uint16 = 24;
+
+define ffa_msg_framework_types enumeration {
+	vm_creation		= 4;
+	vm_creation_ack		= 5;
+	vm_destroy		= 6;
+	vm_destroy_ack		= 7;
+};
+
+define ffa_msg_flags bitfield<32> {
+	7:0		framework_type	enumeration ffa_msg_framework_types;
+	others		unknown			= 0;
+	31		framework_msg	bool;
+};
+
+// Minimum buffer size and alignment boundary for RXTX buffers.
+define ffa_rxtx_features_alignment enumeration {
+	size_4k		= 0b00;
+	size_64k	= 0b01;
+	size_16k	= 0b10;
+};
+
+define ffa_rxtx_features_buffer_info bitfield<32> {
+	1:0		min_alignment	enumeration ffa_rxtx_features_alignment;
+	15:2		mbz		uint16(const) = 0;
+	31:16		max_num_pages	uint16;
+};
+
+define ffa_rxtx_page_count bitfield<32> {
+	5:0		count		uint32;
+	31:6		reserved	uint32;
+};
+
+// RXTX buffer between Hypervisor and TZ or VM.
+// A non-zero size indicates the buffer has been successfully created,
+// while a zero size signifies that the buffer has not been created.
+define ffa_rxtx_buffer_info structure {
+
+	map_range		structure virt_range;
+
+	// Size of each buffer
+	buffer_size		size;
+
+	// Individual derived memory extents for each buffer
+	rx_me			pointer object memextent;
+	tx_me			pointer object memextent;
+
+	// Store the copied TX buffer to avoid TOCTOU issue.
+	// FIXME: QC Gunyah issue #283
+	tx_buffer_hyp_private	pointer uint8;
+
+	is_rx_owner		bool;	// Hypervisor is RX buffer owner
+	is_tx_busy		bool;
+};
+
+define ffa_rxtx_buffer structure {
+	lock		structure spinlock;
+	info		structure ffa_rxtx_buffer_info;
+};
+
+extend addrspace object {
+	ffa_rxtx_buffer	structure ffa_rxtx_buffer;
+};
+
+// The definition of memory transaction descriptor changed in different
+// versions, we only support the memory transaction from V1.2.
+
+define FFA_CONSTITUENT_MEMORY_REGION_DESC_COUNT_MAX constant uint32 = 512U;
+define FFA_CONSTITUENT_MRD_PAGE_SHIFT constant uint8 = 12U;
+define FFA_MEMORY_ACCESS_DESC_COUNT_MAX constant uint32 = 2U;
+
+define ffa_composite_memory_region_desc structure {
+	total_page_count	uint32;
+	range_count		uint32;
+	reserved		uint64;
+	// The constituent memory region descriptor array should start from
+	// here.
+};
+
+define ffa_constituent_memory_region_desc structure {
+	address		uint64;
+	page_count	uint32;
+	reserved	uint32;
+};
+
+define ffa_memory_access_permission_desc bitfield<32> {
+	15:0	receiver	bitfield ffa_partition_id;
+	17:16	data_access	enumeration ffa_memory_data_access;
+	19:18	instr_access	enumeration ffa_memory_instr_access;
+	23:20	unknown = 0;
+	// The flags is Reserved(MBZ) in an invocation of MEM_DONATE/SHARE/LEND
+	31:24	flags		uint8 = 0;
+};
+
+define ffa_memory_access_desc structure {
+	permission		bitfield ffa_memory_access_permission_desc;
+	composite_mrd_offset	uint32;
+	impl_def		array(2) uint64;
+	reserved		uint64;
+};
+
+define ffa_memory_data_access enumeration(explicit) {
+	NOT_SPECIFIED	= 0b00;
+	RO		= 0b01;
+	RW		= 0b10;
+	RESERVED	= 0b11;
+};
+
+define ffa_memory_instr_access enumeration(explicit) {
+	NOT_SPECIFIED	= 0b00;
+	NOT_X		= 0b01;
+	X		= 0b10;
+	RESERVED	= 0b11;
+};
+
+define ffa_memory_shareability enumeration(explicit) {
+	NON_SHAREABLE	= 0b00;
+	RESERVED	= 0b01;
+	OUTER_SHAREABLE	= 0b10;
+	INNER_SHAREABLE	= 0b11;
+};
+
+define ffa_memory_cacheability enumeration(explicit) {
+	RESERVED_0	= 0b00;
+	NON_CACHEABLE	= 0b01;
+	RESERVED_1	= 0b10;
+	WB		= 0b11;
+};
+
+define ffa_memory_device_attri enumeration(explicit) {
+	NGNRNE	= 0b00;
+	NGNRE	= 0b01;
+	NGRE	= 0b10;
+	GRE	= 0b11;
+};
+
+define ffa_memory_type enumeration(explicit) {
+	NOT_SPECIFIED	= 0b00;
+	DEVICE		= 0b01;
+	NORMAL		= 0b10;
+	RESERVED	= 0b11;
+};
+
+define ffa_memory_attributes bitfield<16> {
+	1:0	shareability	enumeration ffa_memory_shareability;
+	3:2	cacheability	uint8;
+	5:4	type		enumeration ffa_memory_type;
+	6	NS		bool;
+	15:7	unknown = 0;
+};
+
+// Flags usage in MEM_DONATE/LEND/SHARE ABIs. MEM_RETRIEVE_REQ/RESP has
+// different bitmap but we don't define the flags map for it as currently
+// only MEM_LEND/SHARE would be supported in hypervisor.
+define ffa_memory_send_flags bitfield<32> {
+	// In an invocation of MEM_DONATE/LEND, this flag specifies if the
+	// memory need to be zeroed. MBZ in MEM_SHARE. MBZ if the owner only
+	// has RO permission.
+	0	zero		bool;
+	// Currently we don't support to time slice the memory operation.
+	1	time_slice	bool = 0;
+	31:2	unknown = 0;
+};
+
+define ffa_memory_handle_encode bitfield<64> {
+	31:0	rx	uint32;
+	63:32	ry	uint32;
+};
+
+define FFA_MEMORY_INVALID_HANDLE_RAW constant uint64 = 0xFFFFFFFFFFFFFFFFU;
+
+define ffa_memory_handle bitfield<64> {
+	62:0	id		uint64;
+	// 0: allocated by SPMC, 1: hypervisor.
+	63	hyp_alloc	bool;
+};
+
+// This is the top structure which directly or indirectly contains the
+// memory related structures, it is used to donate/lend/share memory between
+// the owner and receiver. Currently ARM released two different formats of
+// this structure and we only support the latest one V1.1.
+define ffa_memory_transaction_desc structure {
+	sender			bitfield ffa_partition_id;
+	attributes		bitfield ffa_memory_attributes;
+	flags			bitfield ffa_memory_send_flags;
+	handle			bitfield ffa_memory_handle;
+	tag			uint64;
+	// Size of each endpoint memory access descriptor in the array at
+	// bottom.
+	mad_size		uint32;
+	// Count of endpoint memory access descriptors.
+	mad_count		uint32;
+	// Offset of the endpoint memory access descriptor array from the base
+	// of this descriptor.
+	mad_array_offset	uint32;
+	reserved		array(3) uint32;
+	// The endpoint memory access descriptor array should start from here.
+};
+
+define FFA_MAX_MEMORY_HANDLES constant type count_t = 32U;
+
+define ffa_memory_state enumeration(explicit) {
+	INIT		= 0;
+	CONSTRUCTING	= 1; // Multiple fragments.
+	CONSTRUCTED	= 2;
+	RECLAIMING	= 3;
+};
+
+define ffa_trans_type enumeration(explicit) {
+	DONATE	= 0; // Not supported.
+	LEND	= 1;
+	SHARE	= 2;
+};
+
+define ffa_memory_phys_range structure {
+	node			structure list_node(contained);
+	phys_range		pointer structure phys_range;
+	total_size		size;
+	capacity		type count_t;
+	count			type count_t;
+};
+
+// We use ffa_share to track the owner's shared/lent memory.
+define ffa_share structure {
+	handle			bitfield ffa_memory_handle;
+	trans_type		enumeration ffa_trans_type;
+	state			enumeration ffa_memory_state(atomic);
+	me			pointer object memextent;
+	phys_range_list		structure list;
+	total_size		size;
+	total_size_expect	size;
+	total_msg_len		size;
+	total_msg_len_expect	size;
+	node			structure list_node(contained);
+	access			enumeration pgtable_access;
+	attributes		bitfield ffa_memory_attributes;
+	need_check_attributes	bool;
+	identity_mapping	bool;
+};
+
+extend addrspace object {
+	ffa_memory_list		structure list;
+	ffa_memory_lock		structure spinlock;
+	ffa_memory_handles	type count_t(atomic);
+};

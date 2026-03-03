@@ -1,4 +1,4 @@
-// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -137,8 +137,9 @@ vdevice_handle_vcpu_trap_data_abort_guest(ESR_EL2_t esr, vmaddr_result_t ipa,
 			// Do we need to sign-extend the result?
 			if (ESR_EL2_ISS_DATA_ABORT_get_SSE(&iss) &&
 			    (size != sizeof(uint64_t))) {
-				uint64_t mask = util_bit((size * 8U) - 1U);
-				val	      = (val ^ mask) - mask;
+				uint64_t mask = util_bit(
+					(size * util_width(uint8_t)) - 1U);
+				val = (val ^ mask) - mask;
 			}
 
 			// Adjust the width if necessary. Note that this is

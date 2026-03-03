@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -26,7 +26,7 @@ hypercall_memextent_modify(cap_id_t		    memextent_cap,
 	error_t	  err	 = OK;
 	cspace_t *cspace = cspace_get_self();
 
-	// FIXME:
+	// FIXME: QC Gunyah issue #205
 	if (memextent_modify_flags_get_res_0(&flags) != 0U) {
 		err = ERROR_ARGUMENT_INVALID;
 		goto out;
@@ -78,8 +78,8 @@ hypercall_memextent_modify(cap_id_t		    memextent_cap,
 	} else if ((op == MEMEXTENT_MODIFY_OP_CACHE_FLUSH_RANGE) &&
 		   !need_sync) {
 		err = memextent_cache_flush_range(memextent, offset, size);
-	} else if (op == MEMEXTENT_MODIFY_OP_SYNC_ALL) {
-		err = need_sync ? OK : ERROR_ARGUMENT_INVALID;
+	} else if ((op == MEMEXTENT_MODIFY_OP_SYNC_ALL) && need_sync) {
+		err = memextent_sync_all(memextent);
 	} else if ((op == MEMEXTENT_MODIFY_OP_SANITISE_ON_RESET) &&
 		   !need_sync) {
 		err = memextent_sanitise_on_reset(memextent);
@@ -386,7 +386,7 @@ hypercall_memextent_donate(memextent_donate_options_t options,
 		// Ensure that mappings are no longer accessible to the host.
 		// Currently we do this by calling sync to wait for EL2
 		// operations to complete, even if the caller asked to avoid it.
-		// FIXME:
+		// FIXME: QC Gunyah issue #242
 		need_sync = true;
 	} else if (type == MEMEXTENT_DONATE_TYPE_FROM_PROTECTED) {
 		err = hypercall_memextent_donate_from_protected(

@@ -1,0 +1,39 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+#if defined(ARCH_ARM_FEAT_AMUv1) || defined(ARCH_ARM_FEAT_AMUv1p1)
+define AMCR_EL0 bitfield<64>(const){
+	10		HDBG		bool;
+	others		unknown=0;
+};
+
+#if defined(ARCH_ARM_FEAT_AMUv1p1)
+extend AMCR_EL0 bitfield {
+	17		CG1RZ		bool;
+};
+#endif
+
+define AMCFGR_EL0 bitfield<64> {
+	7:0		N		uint8;
+	13:8		Size		uint8;
+	24		HDBG		bool;
+	31:28		NCG		uint8;
+	others		unknown=0;
+};
+
+define AMCGCR_EL0 bitfield<64> {
+	7:0		CG0NC		uint8;
+	15:8		CG1NC		uint8;
+	others		unknown=0;
+};
+
+#if defined(ARCH_ARM_FEAT_AMUv1p1)
+// Instead of adding every bit, add two 16-bit bitmaps
+define AMCG1IDR_EL0 bitfield<64>(const) {
+	15:0		AMEVCNTR1s	uint16;
+	31:16		AMEVCNTOFF1s	uint16;
+	others		unknown=0;
+};
+#endif
+#endif

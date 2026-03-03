@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -70,6 +70,23 @@ bool_result_t
 platform_cpu_default_suspend(void) REQUIRE_PREEMPT_DISABLED;
 #endif
 
+#if defined(PLATFORM_ENABLE_SYSTEM_SUSPEND) && PLATFORM_ENABLE_SYSTEM_SUSPEND
+// Suspend the calling CPU until an external wakeup event occurs.
+//
+// If the system cannot suspend or wakes immediately because an external wakeup
+// event is already pending, this may return false, but is not required to do
+// so.
+//
+// This may fail with ERROR_DENIED if the attempt to sleep was aborted due to
+// incorrect system configuration, such as other CPUs being powered on.
+bool_result_t
+platform_system_suspend(void) REQUIRE_PREEMPT_DISABLED;
+
+// get power off state of the specified cpu
+bool_result_t
+platform_cpu_powered_off(cpu_index_t cpu);
+#endif // PLATFORM_ENABLE_SYSTEM_SUSPEND
+
 #if defined(ARCH_ARM)
 platform_mpidr_mapping_t
 platform_cpu_get_mpidr_mapping(void);
@@ -95,6 +112,7 @@ platform_cpu_mpidr_to_index(MPIDR_EL1_t mpidr);
 bool
 platform_cpu_mpidr_valid(MPIDR_EL1_t mpidr);
 
+#if defined(PLATFORM_HAS_CPU_GET_COREID) && PLATFORM_HAS_CPU_GET_COREID
 core_id_t
 platform_cpu_get_coreid(MIDR_EL1_t midr);
 #endif
@@ -103,6 +121,7 @@ platform_cpu_get_coreid(MIDR_EL1_t midr);
 bool
 platform_cpu_bti_enabled(void);
 #endif
+#endif // ARCH_ARM
 
 uint32_t
 platform_cpu_stack_size(void);

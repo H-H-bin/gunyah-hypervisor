@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -22,6 +22,7 @@ import sys
 import inspect
 import os
 import re
+import shlex
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,8 @@ def main():
                                       {'arch_list': options.archs})))
 
     if options.formatter:
-        ret = subprocess.run([options.formatter], input=output.encode("utf-8"),
+        ret = subprocess.run(shlex.split(options.formatter),
+                             input=output.encode("utf-8"),
                              stdout=subprocess.PIPE)
         output = ret.stdout.decode("utf-8")
         if ret.returncode != 0:

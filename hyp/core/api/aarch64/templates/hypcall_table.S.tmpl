@@ -1,6 +1,6 @@
 // Automatically generated. Do not modify.
 //
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 #extends hypercall_api
@@ -25,10 +25,7 @@
 \#endif
 
 #if len($hypcall_dict)
-	.balign 16
-	.global hypercall_table
-	.type hypercall_table, #function
-hypercall_table:
+function hypercall_table align=16
 #for hypcall_num in range(0, max($hypcall_dict.keys()) + 1)
 $hypcall_num:
     #if $hypcall_num not in $hypcall_dict
@@ -63,11 +60,10 @@ $hypcall_num:
 .err // bad alignment
 .endif
 #end for
-	.size hypercall_table, . - hypercall_table
+function_end hypercall_table
 
 #for out in ["x0", "x1", "x2", "slow", "sensitive"]
-	.balign 64
-function vcpu_${prefix}entry_x0_${out}
+function vcpu_${prefix}entry_x0_${out} align=64
 #for input in range(0, 8)
 #set $next_in = $input + 1
 	## sanitise unused HVC argument registers

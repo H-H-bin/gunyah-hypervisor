@@ -1,4 +1,4 @@
-// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -21,7 +21,7 @@ bool
 arm_vm_lor_null_handle_vcpu_activate_thread(thread_t *thread)
 {
 	assert(thread != NULL);
-	assert_debug(thread->kind == THREAD_KIND_VCPU);
+	assert_debug(vcpu_is_vcpu(thread));
 
 	// Trap accesses to the LOR registers
 	HCR_EL2_set_TLOR(&thread->vcpu_regs_el2.hcr_el2, true);

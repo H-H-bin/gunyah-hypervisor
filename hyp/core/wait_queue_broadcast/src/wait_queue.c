@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -18,7 +18,7 @@
 
 #include "event_handlers.h"
 
-// FIXME:
+// FIXME: QC Gunyah issue #84
 // Unify list code in util module
 
 scheduler_block_properties_t
@@ -125,16 +125,16 @@ wait_queue_wakeup(wait_queue_t *wait_queue)
 	spinlock_acquire(&wait_queue->lock);
 
 	// Wakeup all waiters
-	thread_t *thread;
-	list_t	 *list = &wait_queue->list;
+	list_t *list = &wait_queue->list;
 
-	list_foreach_container (thread, list, thread, wait_queue_list_node) {
+	LIST_FOREACH_CONTAINER_BEGIN(thread_t, list, thread,
+				     wait_queue_list_node, thread)
 		scheduler_lock_nopreempt(thread);
 		if (scheduler_unblock(thread, SCHEDULER_BLOCK_WAIT_QUEUE)) {
 			wakeup_any = true;
 		}
 		scheduler_unlock_nopreempt(thread);
-	}
+	LIST_FOREACH_CONTAINER_END
 
 	spinlock_release_nopreempt(&wait_queue->lock);
 

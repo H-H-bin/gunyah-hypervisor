@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -6,5 +6,26 @@
 extend hyp_api_flags0 bitfield {
 	delete	partition_cspace;
 	0	partition_cspace bool = 1;
+};
+
+define partition_donate_type public enumeration {
+	to_partition = 0;
+	add_heap = 1;
+	remove_heap = 2;
+};
+
+define partition_donate_flags public bitfield<32> {
+	7:0	type	enumeration partition_donate_type;
+	31:8	res0	uint32(const) = 0;
+};
+
+define partition_query_type public enumeration {
+	heap_is_free = 0;
+	heap_stats = 1;
+};
+
+define partition_query_flags public bitfield<32> {
+	7:0	type	enumeration partition_query_type;
+	31:8	res0	uint32(const) = 0;
 };
 #endif

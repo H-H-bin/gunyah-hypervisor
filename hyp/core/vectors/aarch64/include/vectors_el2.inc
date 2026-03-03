@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -39,7 +39,7 @@
 #endif
 
 // Macro for restoring the EL2 pointer auth keys (discarding any EL1 keys)
-.macro kernel_pauth_entry kp:req, kl:req, kh:req
+.macro kernel_pauth_full kp:req, kl:req, kh:req
 #if defined(ARCH_ARM_FEAT_PAuth)
 	adrl	\kp, aarch64_pauth_keys
 	kernel_pauth_entry_key DA, \kp, \kl, \kh
@@ -47,6 +47,15 @@
 	kernel_pauth_entry_key IA, \kp, \kl, \kh
 	kernel_pauth_entry_key IB, \kp, \kl, \kh
 	kernel_pauth_entry_key GA, \kp, \kl, \kh
+	isb
+#endif
+.endm
+
+// Macro for restoring the EL2 IA pointer auth key
+.macro kernel_pauth_entry kp:req, kl:req, kh:req
+#if defined(ARCH_ARM_FEAT_PAuth)
+	adrl	\kp, aarch64_pauth_keys
+	kernel_pauth_entry_key IA, \kp, \kl, \kh
 	isb
 #endif
 .endm
@@ -62,7 +71,7 @@
 	sub	x0, sp, x0
 	sub	sp, sp, x0
 	neg	x0, x0
-#ifndef HYPVM_WITH_COVERAGE
+#if !defined(ARCH_AARCH64_CODE_MODEL_SMALL) || !ARCH_AARCH64_CODE_MODEL_SMALL
 	b.ne    handle_stack_fault
 #else
 	b.eq 1f; b    handle_stack_fault; 1:
@@ -176,7 +185,7 @@
 	msr	TPIDR_EL1, x1
 
 	// The emergency stacks must use the emergency vectors.
-#ifndef HYPVM_WITH_COVERAGE
+#if !defined(ARCH_AARCH64_CODE_MODEL_SMALL) || !ARCH_AARCH64_CODE_MODEL_SMALL
 	adr     x0, emergency_vectors_aarch64
 #else
 	adrl	x0, emergency_vectors_aarch64
@@ -247,6 +256,12 @@
 .else
 	adr_threadlocal \reg, (current_thread + \offset), \tls_base
 .endif
+.endm
+
+.macro thread_get_fast, reg:req, tmp:req, offset=0
+	mrs	\reg, TPIDR_EL2
+	movz	\tmp, :tprel_g0:(current_thread + \offset)
+	add	\reg, \reg, \tmp
 .endm
 
 // Hypervisor self vectors

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -62,10 +62,10 @@ ete_save_registers(ete_context_t *context,
         #end while
     #else
         #if d.member_name == "TRCSTALLCTLR"
-            TRCIDR3_t trcidr3 = register_TRCIDR3_read_barrier();
+            TRCIDR3_t trcidr3 = register_TRCIDR3_read_volatile();
             if (TRCIDR3_get_STALLCTL(&trcidr3)) {
         #else if d.member_name == "TRCQCTLR"
-            TRCIDR0_t trcidr0 = register_TRCIDR0_read_barrier();
+            TRCIDR0_t trcidr0 = register_TRCIDR0_read_volatile();
             if (TRCIDR0_get_QFILT(&trcidr0)) {
         #end if
 
@@ -140,10 +140,10 @@ ete_restore_registers(ete_context_t *context,
         #end while
     #else
         #if d.member_name == "TRCSTALLCTLR"
-            TRCIDR3_t trcidr3 = register_TRCIDR3_read_barrier();
+            TRCIDR3_t trcidr3 = register_TRCIDR3_read_volatile();
             if (TRCIDR3_get_STALLCTL(&trcidr3)) {
         #else if d.member_name == "TRCQCTLR"
-            TRCIDR0_t trcidr0 = register_TRCIDR0_read_barrier();
+            TRCIDR0_t trcidr0 = register_TRCIDR0_read_volatile();
             if (TRCIDR0_get_QFILT(&trcidr0)) {
         #end if
 

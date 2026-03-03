@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -16,10 +16,11 @@ void
 gicv3_its_init_cpu(cpu_index_t cpu, gicr_t *gicr, paddr_t gicr_phys,
 		   index_t gicr_pn);
 
-// Reserve an unused device ID and allocate a specified number of events for it.
-// This is used by the virtual ITS code to temporarily map LPIs so it can
-// operate on them directly. It can only be called once per physical ITS.
-platform_msi_device_id_result_t
+// Reserve an unused device ID and allocate a specified number of events for
+// it. Additionally, reserve an unused event ID. This is used by the virtual
+// ITS code to temporarily map LPIs so it can operate on them directly. It can
+// be called up to max_event times per physical ITS.
+platform_msi_id_result_t
 gicv3_its_reserve_unused_device(platform_msi_controller_id_t its,
 				platform_msi_event_id_t	     max_event);
 
@@ -97,7 +98,7 @@ gicv3_its_discard(platform_msi_id_t msi_id);
 count_result_t
 gicv3_its_sync(platform_msi_controller_id_t its, cpu_index_t cpu);
 
-#if GICV3_HAS_VLPI
+#if defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 
 // Virtual PE management.
 //
@@ -194,12 +195,17 @@ gicv3_its_vsgi_is_complete(count_t cmd_seq);
 
 #endif // GICV3_HAS_VLPI_V4_1
 
-#endif // GICV3_HAS_VLPI
+#endif // defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 
 size_t
 gicv3_its_page_size(GITS_BASER_Page_Size_t page_size);
 
 void
-gicv3_its_disable_all(gits_t *const (*regs)[PLATFORM_GITS_COUNT]);
+gicv3_its_disable_all(void);
 
+void
+gicv3_its_system_suspend(void);
+
+void
+gicv3_its_system_resume(void);
 #endif // GICV3_HAS_ITS

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -7,6 +7,7 @@ extend cap_rights_virtio_backend bitfield {
 	// bit 1 used by virtio_mmio for bind_mmio_frontend_virq
 	2	assert_virq		bool;
 	3	config			bool;
+	// bit 4 used by virtio_pci for bind_vpci
 };
 
 define virtio_backend_notify_reason public bitfield<64> {
@@ -21,7 +22,49 @@ define virtio_backend_notify_reason public bitfield<64> {
 
 define virtio_backend_option_flags public bitfield<64> {
 	0		sync_reset		bool = 0;
-	5:1		unknown = 0;
-	6		valid_device_type	bool = 0;
+	1		per_queue_irqs		bool = 0;
+	2		ignore_config_writes	bool = 0;
+	3		valid_me_layout		bool = 0;
+	5:4		unknown = 0;
+	6		valid_type		bool = 0;
 	63:7		unknown = 0;
+};
+
+define virtio_backend_interface_type public bitfield<64> {
+	23:16	transport	enumeration virtio_transport_type;
+	7:0	device		enumeration virtio_device_type;
+	others	unknown = 0;
+};
+
+define virtio_backend_memextent_layout public bitfield<64> {
+	32:16	devcfg_offset	size;
+	15:0	devcfg_size	size;
+	others	unknown = 0;
+};
+
+// Interrupt status for notify when per-queue status is enabled. This type
+// is specific to the backend hypercalls and is not used by frontends.
+define virtio_backend_interrupt_perqueue public bitfield<64> {
+	(VIRTIO_MAX_VQS-1):0	queues_ready	uint64;
+	63			config_update	bool;
+	others			unknown = 0;
+};
+
+define virtio_backend_notify_status public union {
+	unified			bitfield virtio_interrupt;
+	per_queue		bitfield virtio_backend_interrupt_perqueue;
+	raw			uint64;
+};
+
+// Flags for backend_notify.
+define virtio_backend_notify_flags public bitfield<64> {
+	// Set to select per-queue format for the notify status.
+	0	per_queue	bool = 1;
+
+	// Set to indicate that a non-atomic configuration update is in
+	// progress, so frontend reads of config_gen should increment the
+	// value before returning it. Only implemented for PCI.
+	1	config_update	bool;
+
+	63:2	unknown = 0;
 };

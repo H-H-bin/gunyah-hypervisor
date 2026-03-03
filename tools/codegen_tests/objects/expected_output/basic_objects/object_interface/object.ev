@@ -1,0 +1,322 @@
+// Automatically generated. Do not modify.
+
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+interface object
+
+// FIXME: QC Gunyah issue #14
+// Add rollback handlers
+
+event object_init_addrspace
+	param addrspace_create: addrspace_create_t
+	param parent: partition_t *
+
+setup_event object_create_addrspace
+	param addrspace_create: addrspace_create_t
+	return: error_t = OK
+	success: OK
+
+setup_event object_activate_addrspace
+	param addrspace: addrspace_t *
+	return: error_t = OK
+	success: OK
+
+event object_deactivate_addrspace
+	param addrspace: addrspace_t *
+
+event object_cleanup_addrspace
+	param status: rcu_update_status_t *
+	param addrspace: addrspace_t *
+
+event object_get_defaults_addrspace
+	param addrspace_create: addrspace_create_t *
+
+event object_init_cspace
+	param cspace_create: cspace_create_t
+	param parent: partition_t *
+
+setup_event object_create_cspace
+	param cspace_create: cspace_create_t
+	return: error_t = OK
+	success: OK
+
+setup_event object_activate_cspace
+	param cspace: cspace_t *
+	return: error_t = OK
+	success: OK
+
+event object_deactivate_cspace
+	param cspace: cspace_t *
+
+event object_cleanup_cspace
+	param status: rcu_update_status_t *
+	param cspace: cspace_t *
+
+event object_get_defaults_cspace
+	param cspace_create: cspace_create_t *
+
+event object_init_doorbell
+	param doorbell_create: doorbell_create_t
+	param parent: partition_t *
+
+setup_event object_create_doorbell
+	param doorbell_create: doorbell_create_t
+	return: error_t = OK
+	success: OK
+
+setup_event object_activate_doorbell
+	param doorbell: doorbell_t *
+	return: error_t = OK
+	success: OK
+
+event object_deactivate_doorbell
+	param doorbell: doorbell_t *
+
+event object_cleanup_doorbell
+	param status: rcu_update_status_t *
+	param doorbell: doorbell_t *
+
+event object_get_defaults_doorbell
+	param doorbell_create: doorbell_create_t *
+
+event object_init_gicv3_its
+	param gicv3_its_create: gicv3_its_create_t
+	param parent: partition_t *
+
+setup_event object_create_gicv3_its
+	param gicv3_its_create: gicv3_its_create_t
+	return: error_t = OK
+	success: OK
+
+setup_event object_activate_gicv3_its
+	param gicv3_its: gicv3_its_t *
+	return: error_t = OK
+	success: OK
+
+event object_deactivate_gicv3_its
+	param gicv3_its: gicv3_its_t *
+
+event object_cleanup_gicv3_its
+	param status: rcu_update_status_t *
+	param gicv3_its: gicv3_its_t *
+
+event object_get_defaults_gicv3_its
+	param gicv3_its_create: gicv3_its_create_t *
+
+event object_init_hwirq
+	param hwirq_create: hwirq_create_t
+	param parent: partition_t *
+
+setup_event object_create_hwirq
+	param hwirq_create: hwirq_create_t
+	return: error_t = OK
+	success: OK
+
+setup_event object_activate_hwirq
+	param hwirq: hwirq_t *
+	return: error_t = OK
+	success: OK
+
+event object_deactivate_hwirq
+	param hwirq: hwirq_t *
+
+event object_cleanup_hwirq
+	param status: rcu_update_status_t *
+	param hwirq: hwirq_t *
+
+event object_get_defaults_hwirq
+	param hwirq_create: hwirq_create_t *
+
+event object_init_memextent
+	param memextent_create: memextent_create_t
+	param parent: partition_t *
+
+setup_event object_create_memextent
+	param memextent_create: memextent_create_t
+	return: error_t = OK
+	success: OK
+
+setup_event object_activate_memextent
+	param memextent: memextent_t *
+	return: error_t = OK
+	success: OK
+
+event object_deactivate_memextent
+	param memextent: memextent_t *
+
+event object_cleanup_memextent
+	param status: rcu_update_status_t *
+	param memextent: memextent_t *
+
+event object_get_defaults_memextent
+	param memextent_create: memextent_create_t *
+
+event object_init_msgqueue
+	param msgqueue_create: msgqueue_create_t
+	param parent: partition_t *
+
+setup_event object_create_msgqueue
+	param msgqueue_create: msgqueue_create_t
+	return: error_t = OK
+	success: OK
+
+setup_event object_activate_msgqueue
+	param msgqueue: msgqueue_t *
+	return: error_t = OK
+	success: OK
+
+event object_deactivate_msgqueue
+	param msgqueue: msgqueue_t *
+
+event object_cleanup_msgqueue
+	param status: rcu_update_status_t *
+	param msgqueue: msgqueue_t *
+
+event object_get_defaults_msgqueue
+	param msgqueue_create: msgqueue_create_t *
+
+event object_init_partition
+	param partition_create: partition_create_t
+	param parent: partition_t *
+
+setup_event object_create_partition
+	param partition_create: partition_create_t
+	return: error_t = OK
+	success: OK
+
+setup_event object_activate_partition
+	param partition: partition_t *
+	return: error_t = OK
+	success: OK
+
+event object_deactivate_partition
+	param partition: partition_t *
+
+event object_cleanup_partition
+	param status: rcu_update_status_t *
+	param partition: partition_t *
+
+event object_get_defaults_partition
+	param partition_create: partition_create_t *
+
+event object_init_thread
+	param thread_create: thread_create_t
+	param parent: partition_t *
+
+setup_event object_create_thread
+	param thread_create: thread_create_t
+	return: error_t = OK
+	success: OK
+
+setup_event object_activate_thread
+	param thread: thread_t *
+	return: error_t = OK
+	success: OK
+
+event object_deactivate_thread
+	param thread: thread_t *
+
+event object_cleanup_thread
+	param status: rcu_update_status_t *
+	param thread: thread_t *
+
+event object_get_defaults_thread
+	param thread_create: thread_create_t *
+
+event object_init_vic
+	param vic_create: vic_create_t
+	param parent: partition_t *
+
+setup_event object_create_vic
+	param vic_create: vic_create_t
+	return: error_t = OK
+	success: OK
+
+setup_event object_activate_vic
+	param vic: vic_t *
+	return: error_t = OK
+	success: OK
+
+event object_deactivate_vic
+	param vic: vic_t *
+
+event object_cleanup_vic
+	param status: rcu_update_status_t *
+	param vic: vic_t *
+
+event object_get_defaults_vic
+	param vic_create: vic_create_t *
+
+event object_init_virtio_backend
+	param virtio_backend_create: virtio_backend_create_t
+	param parent: partition_t *
+
+setup_event object_create_virtio_backend
+	param virtio_backend_create: virtio_backend_create_t
+	return: error_t = OK
+	success: OK
+
+setup_event object_activate_virtio_backend
+	param virtio_backend: virtio_backend_t *
+	return: error_t = OK
+	success: OK
+
+event object_deactivate_virtio_backend
+	param virtio_backend: virtio_backend_t *
+
+event object_cleanup_virtio_backend
+	param status: rcu_update_status_t *
+	param virtio_backend: virtio_backend_t *
+
+event object_get_defaults_virtio_backend
+	param virtio_backend_create: virtio_backend_create_t *
+
+event object_init_vpm_group
+	param vpm_group_create: vpm_group_create_t
+	param parent: partition_t *
+
+setup_event object_create_vpm_group
+	param vpm_group_create: vpm_group_create_t
+	return: error_t = OK
+	success: OK
+
+setup_event object_activate_vpm_group
+	param vpm_group: vpm_group_t *
+	return: error_t = OK
+	success: OK
+
+event object_deactivate_vpm_group
+	param vpm_group: vpm_group_t *
+
+event object_cleanup_vpm_group
+	param status: rcu_update_status_t *
+	param vpm_group: vpm_group_t *
+
+event object_get_defaults_vpm_group
+	param vpm_group_create: vpm_group_create_t *
+
+event object_init_vrtc
+	param vrtc_create: vrtc_create_t
+	param parent: partition_t *
+
+setup_event object_create_vrtc
+	param vrtc_create: vrtc_create_t
+	return: error_t = OK
+	success: OK
+
+setup_event object_activate_vrtc
+	param vrtc: vrtc_t *
+	return: error_t = OK
+	success: OK
+
+event object_deactivate_vrtc
+	param vrtc: vrtc_t *
+
+event object_cleanup_vrtc
+	param status: rcu_update_status_t *
+	param vrtc: vrtc_t *
+
+event object_get_defaults_vrtc
+	param vrtc_create: vrtc_create_t *

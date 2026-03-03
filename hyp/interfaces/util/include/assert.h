@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -39,7 +39,7 @@ assert_failed(const char *file, int line, const char *func, const char *err);
 			    : assert_failed(__FILE__, __LINE__, __func__, #x))
 #endif
 
-#if defined(__KLOCWORK__)
+#if defined(__KLOCWORK__) || defined(__clang_analyzer__)
 #define assert_debug assert
 #elif defined(VERBOSE) && VERBOSE
 #define assert_debug assert
@@ -47,8 +47,15 @@ assert_failed(const char *file, int line, const char *func, const char *err);
 #define assert_debug(x) (void)assert_if_const(x)
 #endif
 
-#if defined(PLATFORM_SAFETY) && (PLATFORM_SAFETY == 1)
+#if defined(__KLOCWORK__) || defined(__clang_analyzer__)
 #define assert_safety assert
+#elif defined(PLATFORM_SAFETY) && (PLATFORM_SAFETY == 1)
+#if defined(NDEBUG)
+_Noreturn void
+assert_failed(const char *file, int line, const char *func, const char *err);
+#endif
+#define assert_safety(x)                                                       \
+	((x) ? (void)0 : assert_failed(__FILE__, __LINE__, __func__, #x))
 #else
 #define assert_safety assert_debug
 #endif

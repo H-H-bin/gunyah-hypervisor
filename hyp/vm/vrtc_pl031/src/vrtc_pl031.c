@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -66,7 +66,7 @@ vrtc_pl031_reg_read(vrtc_t *vrtc, size_t offset)
 	uint32_t value;
 
 	if (offset == offsetof(vrtc_pl031_t, RTCDR)) {
-		uint64_t now = platform_timer_get_current_ticks();
+		uint64_t now = platform_timer_get_current_ticks_sync();
 		value	     = (uint32_t)(platform_timer_convert_ticks_to_ns(
 						  vrtc->time_base + now) /
 					  TIMER_NANOSECS_IN_SECOND);
@@ -104,7 +104,7 @@ vrtc_pl031_reg_write(vrtc_t *vrtc, size_t offset, uint32_t value)
 		ticks_t value_ticks = platform_timer_convert_ns_to_ticks(
 			(uint64_t)value * TIMER_NANOSECS_IN_SECOND);
 		preempt_disable();
-		ticks_t now	= platform_timer_get_current_ticks();
+		ticks_t now	= platform_timer_get_current_ticks_sync();
 		vrtc->time_base = value_ticks - now;
 		preempt_enable();
 		vrtc->lr = (rtc_seconds_t)value;

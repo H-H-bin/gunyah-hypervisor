@@ -1,5 +1,4 @@
-// © 2019 Qualcomm Innovation Center, Inc. All rights reserved.
-// All Rights Reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -10,7 +9,9 @@
 
 #include <compiler.h>
 #include <log.h>
+#include <panic.h>
 #include <preempt.h>
+#include <qcbor.h>
 #include <thread.h>
 #include <trace.h>
 #include <vcpu.h>
@@ -33,6 +34,40 @@ static_assert((ARCH_AARCH64_32BIT_EL1 && ARCH_AARCH64_32BIT_EL0) ||
 #if defined(ARCH_ARM_FEAT_SHA512) != defined(ARCH_ARM_FEAT_SHA3)
 #error ARCH_ARM_FEAT_SHA512 and ARCH_ARM_FEAT_SHA3 mismatch
 #endif
+
+static tcr_ps_t
+get_ipa_size_from_address_bits(count_t address_bits)
+{
+	tcr_ps_t ps;
+	// We round up to the next larger size that can be reported
+	// in the PS / PARange fields. This is because the guest VM
+	// will use this field to configure its TCR_EL1.PS, which must
+	// be large enough to avoid address size faults for any valid
+	// stage 2 mapping.
+	//
+	// This might overstate the address space available for new
+	// IPA mappings, but the VM should be using hypervisor calls
+	// to determine that.
+	if (address_bits <= 32U) {
+		ps = TCR_PS_SIZE_32BITS;
+	} else if (address_bits <= 36U) {
+		ps = TCR_PS_SIZE_36BITS;
+	} else if (address_bits <= 40U) {
+		ps = TCR_PS_SIZE_40BITS;
+	} else if (address_bits <= 42U) {
+		ps = TCR_PS_SIZE_42BITS;
+	} else if (address_bits <= 44U) {
+		ps = TCR_PS_SIZE_44BITS;
+	} else if (address_bits <= 48U) {
+		ps = TCR_PS_SIZE_48BITS;
+	} else if (address_bits <= 52U) {
+		ps = TCR_PS_SIZE_52BITS;
+	} else {
+		// Cannot be greater than the maximum size
+		panic("Invalid IPA size configured for the VM!");
+	}
+	return ps;
+}
 
 #if SCHEDULER_CAN_MIGRATE
 static bool
@@ -79,7 +114,9 @@ read_virtual_id_register(ESR_EL2_ISS_MSR_MRS_t iss, uint8_t reg_num)
 #endif
 		break;
 	case ISS_MRS_MSR_ID_AA64PFR0_EL1: {
-		ID_AA64PFR0_EL1_t pfr0 = ID_AA64PFR0_EL1_default();
+		ID_AA64PFR0_EL1_t pfr0	  = ID_AA64PFR0_EL1_default();
+		ID_AA64PFR0_EL1_t hw_pfr0 = register_ID_AA64PFR0_EL1_read();
+		(void)hw_pfr0;
 #if ARCH_AARCH64_32BIT_EL0 && ARCH_AARCH64_32BIT_EL0_ALL_CORES
 		ID_AA64PFR0_EL1_set_EL0(&pfr0, 2U);
 #else
@@ -135,9 +172,12 @@ read_virtual_id_register(ESR_EL2_ISS_MSR_MRS_t iss, uint8_t reg_num)
 #if defined(ARCH_ARM_FEAT_MPAM)
 		if (arm_mpam_is_allowed() &&
 		    vcpu_option_flags_get_mpam_allowed(&thread->vcpu_options)) {
-			ID_AA64PFR0_EL1_t hw_pfr0 =
-				register_ID_AA64PFR0_EL1_read();
 			ID_AA64PFR0_EL1_copy_MPAM(&pfr0, &hw_pfr0);
+		}
+#endif
+#if defined(ARCH_ARM_FEAT_SVE)
+		if (vcpu_option_flags_get_sve_allowed(&thread->vcpu_options)) {
+			ID_AA64PFR0_EL1_copy_SVE(&pfr0, &hw_pfr0);
 		}
 #endif
 		reg_val = ID_AA64PFR0_EL1_raw(pfr0);
@@ -176,6 +216,11 @@ read_virtual_id_register(ESR_EL2_ISS_MSR_MRS_t iss, uint8_t reg_num)
 		if (arm_mpam_is_allowed() &&
 		    vcpu_option_flags_get_mpam_allowed(&thread->vcpu_options)) {
 			ID_AA64PFR1_EL1_copy_MPAM_frac(&pfr1, &hw_pfr1);
+		}
+#endif
+#if defined(ARCH_ARM_FEAT_SME)
+		if (vcpu_option_flags_get_sme_allowed(&thread->vcpu_options)) {
+			ID_AA64PFR1_EL1_copy_SME(&pfr1, &hw_pfr1);
 		}
 #endif
 #if defined(ARCH_ARM_FEAT_RNG)
@@ -302,7 +347,7 @@ read_virtual_id_register(ESR_EL2_ISS_MSR_MRS_t iss, uint8_t reg_num)
 #endif
 #if defined(ARCH_ARM_FEAT_WFxT)
 		// Copy the hardware values across once FEAT_WFxT is implemented
-		// FIXME:
+		// FIXME: QC Gunyah issue #206
 		// ID_AA64ISAR2_EL1_copy_WFxT(&isar2, &hw_isar2);
 #endif
 
@@ -312,9 +357,13 @@ read_virtual_id_register(ESR_EL2_ISS_MSR_MRS_t iss, uint8_t reg_num)
 
 	case ISS_MRS_MSR_ID_AA64MMFR0_EL1: {
 		ID_AA64MMFR0_EL1_t mmfr0 = ID_AA64MMFR0_EL1_default();
+		VTCR_EL2_t vtcr_el2 = thread->addrspace->vm_pgtable.vtcr_el2;
+		count_t	   address_bits =
+			(count_t)64 - VTCR_EL2_get_T0SZ(&vtcr_el2);
+		tcr_ps_t ipa_size =
+			get_ipa_size_from_address_bits(address_bits);
 
-		// FIXME: match PLATFORM_VM_ADDRESS_SPACE_BITS
-		ID_AA64MMFR0_EL1_set_PARange(&mmfr0, TCR_PS_SIZE_36BITS);
+		ID_AA64MMFR0_EL1_set_PARange(&mmfr0, ipa_size);
 #if defined(ARCH_AARCH64_ASID16)
 		ID_AA64MMFR0_EL1_set_ASIDBits(&mmfr0, 2U);
 #endif
@@ -714,7 +763,6 @@ read_virtual_id_register(ESR_EL2_ISS_MSR_MRS_t iss, uint8_t reg_num)
 	case ISS_MRS_MSR_ID_AA64AFR0_EL1:
 	case ISS_MRS_MSR_ID_AA64AFR1_EL1:
 	case ISS_MRS_MSR_ID_AFR0_EL1:
-	case ISS_MRS_MSR_ID_AA64SMFR0_EL1:
 		// RAZ
 		break;
 	default:
@@ -850,7 +898,7 @@ sys_aa64isar2_read(void)
 #endif
 #if defined(ARCH_ARM_FEAT_WFxT)
 	// Remove once FEAT_WFxT is implemented
-	// FIXME:
+	// FIXME: QC Gunyah issue #206
 	ID_AA64ISAR2_EL1_set_WFxT(&isar2, 0U);
 #endif
 	reg_val = ID_AA64ISAR2_EL1_raw(isar2);
@@ -986,12 +1034,36 @@ sys_aa64pfr1_read(const thread_t *thread)
 	ID_AA64PFR1_EL1_set_MPAM_frac(&pfr1, 0);
 	(void)thread;
 #endif
-	// No SME / NMI
-	ID_AA64PFR1_EL1_set_SME(&pfr1, 0);
+#if defined(ARCH_ARM_FEAT_SME)
+	if (!vcpu_option_flags_get_sme_allowed(&thread->vcpu_options)) {
+		// Tell non-SME allowed guests that there is no SME.
+		ID_AA64PFR1_EL1_set_SME(&pfr1, 0U);
+	}
+#else
+	// No SME
+	ID_AA64PFR1_EL1_set_SME(&pfr1, 0U);
+#endif
+	// No NMI
 	ID_AA64PFR1_EL1_set_NMI(&pfr1, 0);
 
 	reg_val = ID_AA64PFR1_EL1_raw(pfr1);
 
+	return reg_val;
+}
+
+static register_t
+sys_aa64zfr0_read(const thread_t *thread)
+{
+	(void)thread;
+
+	register_t reg_val = 0ULL;
+
+#if defined(ARCH_ARM_FEAT_SVE) || defined(ARCH_ARM_FEAT_SME)
+	if (vcpu_option_flags_get_sme_allowed(&thread->vcpu_options) ||
+	    vcpu_option_flags_get_sve_allowed(&thread->vcpu_options)) {
+		reg_val = register_ID_AA64ZFR0_EL1_read_volatile();
+	}
+#endif
 	return reg_val;
 }
 
@@ -1207,6 +1279,32 @@ sys_pfr0_read(const thread_t *thread)
 	return reg_val;
 }
 
+static bool
+sysreg_read_trapped_tid1(ESR_EL2_ISS_MSR_MRS_t iss, uint8_t reg_num)
+{
+	register_t reg_val = 0U;
+	bool	   handled = true;
+	thread_t  *thread  = thread_get_self();
+
+	switch (ESR_EL2_ISS_MSR_MRS_raw(iss)) {
+	case ISS_MRS_MSR_REVIDR_EL1:
+		sysreg64_read(REVIDR_EL1, reg_val);
+		break;
+	case ISS_MRS_MSR_AIDR_EL1:
+		sysreg64_read(AIDR_EL1, reg_val);
+		break;
+	default:
+		handled = false;
+		break;
+	}
+
+	if (handled) {
+		vcpu_gpr_write(thread, reg_num, reg_val);
+	}
+
+	return handled;
+}
+
 // For the guests with no AMU access we should trap the AMU registers by setting
 // CPTR_EL2.TAM and clearing ACTLR_EL2.AMEN. However the trapped registers
 // should be handled in the AMU module, and not here.
@@ -1235,6 +1333,10 @@ sysreg_read(ESR_EL2_ISS_MSR_MRS_t iss)
 		goto out;
 	}
 #endif
+
+	if (sysreg_read_trapped_tid1(temp_iss, reg_num)) {
+		goto out;
+	}
 
 	switch (ESR_EL2_ISS_MSR_MRS_raw(temp_iss)) {
 	// The registers trapped with HCR_EL2.TID3
@@ -1305,15 +1407,15 @@ sysreg_read(ESR_EL2_ISS_MSR_MRS_t iss)
 		reg_val = sys_aa64pfr1_read(thread);
 		break;
 	case ISS_MRS_MSR_ID_AA64ZFR0_EL1:
-#if defined(ARCH_ARM_FEAT_SVE)
-		// The SVE module will handle this register
-		ret = VCPU_TRAP_RESULT_UNHANDLED;
-#else
-		// When SVE is not implemented this register is RAZ, do nothing
-#endif
+		reg_val = sys_aa64zfr0_read(thread);
 		break;
 	case ISS_MRS_MSR_ID_AA64SMFR0_EL1:
-		// No Scalable Matrix Extension support for now
+#if defined(ARCH_ARM_FEAT_SME)
+		// The SME module will handle this register
+		ret = VCPU_TRAP_RESULT_UNHANDLED;
+#else
+		// When SME is not implemented this register is RAZ, do nothing
+#endif
 		break;
 	case ISS_MRS_MSR_ID_AA64DFR0_EL1:
 		reg_val = sys_aa64dfr0_read(thread);
@@ -1366,9 +1468,7 @@ sysreg_read(ESR_EL2_ISS_MSR_MRS_t iss)
 		vcpu_gpr_write(thread, reg_num, reg_val);
 	}
 
-#if SCHEDULER_CAN_MIGRATE
 out:
-#endif
 	return ret;
 }
 
@@ -1421,8 +1521,9 @@ sysreg_write(ESR_EL2_ISS_MSR_MRS_t iss)
 
 		// However, they're only unsafe for the VM executing them
 		// (because DC ISW is upgraded to DC CISW in hardware) so we
-		// disable the trap after the first warning
-		// FIXME:
+		// disable the trap after the first warning (except on physical
+		// CPUs with an erratum that makes all set/way ops unsafe).
+		// FIXME: QC Gunyah issue #121
 		preempt_disable();
 		thread->vcpu_regs_el2.hcr_el2 = register_HCR_EL2_read();
 		HCR_EL2_set_TSW(&thread->vcpu_regs_el2.hcr_el2, false);

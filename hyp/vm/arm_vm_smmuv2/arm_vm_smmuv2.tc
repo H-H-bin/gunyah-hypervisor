@@ -1,0 +1,8 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+extend vsmmuv2 object {
+	lock		structure spinlock;
+	addrspace	pointer object addrspace;
+};

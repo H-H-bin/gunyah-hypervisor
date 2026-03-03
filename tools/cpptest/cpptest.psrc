@@ -1,6 +1,0 @@
-
-cpptestcc.exclude *
-cpptestcc.include hyp/*
-cpptestcc.include build/qemu/gunyah-baseline/codecoverage/*
-cpptestcc.ignore hyp/core/coverage/src/coverage.c
-cpptestcc.ignore hyp/core/boot/src/rel_init.c

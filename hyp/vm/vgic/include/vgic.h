@@ -1,12 +1,16 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 // Interfaces used by the VGIC ITS for LPI cache invalidation.
 
 #if VGIC_HAS_LPI
-void
+gic_lpi_prop_result_t
 vgic_gicr_copy_propbase_one(vic_t *vic, thread_t *gicr_vcpu, irq_t vlpi);
+
+bool
+vgic_gicr_copy_propbase_all(vic_t *vic, thread_t *gicr_vcpu,
+			    bool zero_remainder);
 
 #if GICV3_HAS_VLPI_V4_1
 void

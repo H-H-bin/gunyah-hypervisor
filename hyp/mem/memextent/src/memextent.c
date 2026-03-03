@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -6,8 +6,10 @@
 #include <hyptypes.h>
 #include <string.h>
 
+#include <addrspace.h>
 #include <bitmap.h>
 #include <compiler.h>
+#include <cspace.h>
 #include <list.h>
 #include <log.h>
 #include <memdb.h>
@@ -30,6 +32,7 @@
 #include <asm/cpu.h>
 
 #include "event_handlers.h"
+#include "memextent_memdb.h"
 
 error_t
 memextent_handle_object_create_memextent(memextent_create_t memextent_create)
@@ -48,18 +51,23 @@ static bool
 memextent_validate_attrs(memextent_type_t type, memextent_memtype_t memtype,
 			 pgtable_access_t access)
 {
-	bool ret = true;
+	bool ret;
+	bool type_valid;
+	bool memtype_valid;
+	bool access_valid;
 
 	switch (type) {
 	case MEMEXTENT_TYPE_BASIC:
 	case MEMEXTENT_TYPE_SPARSE:
+		type_valid = true;
 		break;
 	default:
-		ret = false;
+		type_valid = false;
 		break;
 	}
 
-	if (!ret) {
+	if (!type_valid) {
+		ret = false;
 		goto out;
 	}
 
@@ -70,17 +78,19 @@ memextent_validate_attrs(memextent_type_t type, memextent_memtype_t memtype,
 #if defined(ARCH_AARCH64_USE_S2FWB)
 	case MEMEXTENT_MEMTYPE_CACHED:
 #endif
+		memtype_valid = true;
 		break;
 #if !defined(ARCH_AARCH64_USE_S2FWB)
 	// Without S2FWB, we cannot force cached mappings
 	case MEMEXTENT_MEMTYPE_CACHED:
 #endif
 	default:
-		ret = false;
+		memtype_valid = false;
 		break;
 	}
 
-	if (!ret) {
+	if (!memtype_valid) {
+		ret = false;
 		goto out;
 	}
 
@@ -91,12 +101,21 @@ memextent_validate_attrs(memextent_type_t type, memextent_memtype_t memtype,
 	case PGTABLE_ACCESS_RX:
 	case PGTABLE_ACCESS_RW:
 	case PGTABLE_ACCESS_RWX:
+		access_valid = true;
 		break;
 	case PGTABLE_ACCESS_NONE:
 	default:
-		ret = false;
+		access_valid = false;
 		break;
 	}
+
+	if (!access_valid) {
+		ret = false;
+		goto out;
+	}
+
+	// All validations passed
+	ret = true;
 
 out:
 	return ret;
@@ -106,7 +125,7 @@ error_t
 memextent_configure(memextent_t *me, paddr_t phys_base, size_t size,
 		    memextent_attrs_t attributes)
 {
-	error_t ret = OK;
+	error_t ret;
 
 	assert(me != NULL);
 
@@ -146,16 +165,17 @@ memextent_configure(memextent_t *me, paddr_t phys_base, size_t size,
 	}
 
 	me->parent = NULL;
+	ret	   = OK;
 out:
 	return ret;
 }
 
-// FIXME:
+// FIXME: QC Gunyah issue #87
 error_t
 memextent_configure_derive(memextent_t *me, memextent_t *parent, size_t offset,
 			   size_t size, memextent_attrs_t attributes)
 {
-	error_t ret = OK;
+	error_t ret;
 
 	assert(parent != NULL);
 	assert(me != NULL);
@@ -222,6 +242,7 @@ memextent_configure_derive(memextent_t *me, memextent_t *parent, size_t offset,
 
 	me->parent = object_get_memextent_additional(parent);
 
+	ret = OK;
 out:
 	spinlock_release(&parent->lock);
 
@@ -232,7 +253,7 @@ error_t
 memextent_handle_object_activate_memextent(memextent_t *memextent)
 {
 	assert(memextent != NULL);
-	error_t ret = OK;
+	error_t ret;
 
 	if (memextent->parent != NULL) {
 		assert(!memextent->device_mem);
@@ -240,6 +261,7 @@ memextent_handle_object_activate_memextent(memextent_t *memextent)
 		// Check new memtype is compatible with parent type
 		switch (memextent->parent->memtype) {
 		case MEMEXTENT_MEMTYPE_ANY:
+			ret = OK;
 			break;
 		case MEMEXTENT_MEMTYPE_DEVICE:
 		case MEMEXTENT_MEMTYPE_UNCACHED:
@@ -248,6 +270,8 @@ memextent_handle_object_activate_memextent(memextent_t *memextent)
 #endif
 			if (memextent->memtype != memextent->parent->memtype) {
 				ret = ERROR_ARGUMENT_INVALID;
+			} else {
+				ret = OK;
 			}
 			break;
 #if !defined(ARCH_AARCH64_USE_S2FWB)
@@ -265,16 +289,20 @@ memextent_handle_object_activate_memextent(memextent_t *memextent)
 		assert(pgtable_access_check(memextent->parent->access,
 					    memextent->access));
 
-		ret = trigger_memextent_activate_derive_event(memextent->type,
-							      memextent);
+		do {
+			ret = trigger_memextent_activate_derive_event(
+				memextent->type, memextent);
+		} while (ret == ERROR_RETRY);
 	} else {
 		if (memextent->size == 0U) {
 			ret = ERROR_OBJECT_CONFIG;
 			goto out;
 		}
 
-		ret = trigger_memextent_activate_event(memextent->type,
-						       memextent);
+		do {
+			ret = trigger_memextent_activate_event(memextent->type,
+							       memextent);
+		} while (ret == ERROR_RETRY);
 	}
 
 	if (ret == OK) {
@@ -328,8 +356,10 @@ memextent_donate_child(memextent_t *me, size_t offset, size_t size,
 		goto out;
 	}
 
-	ret = trigger_memextent_donate_child_event(me->type, me, phys, size,
-						   reverse);
+	do {
+		ret = trigger_memextent_donate_child_event(me->type, me, phys,
+							   size, reverse);
+	} while (ret == ERROR_RETRY);
 
 out:
 	return ret;
@@ -370,8 +400,10 @@ memextent_donate_sibling(memextent_t *from, memextent_t *to, size_t offset,
 		goto out;
 	}
 
-	ret = trigger_memextent_donate_sibling_event(from->type, from, to, phys,
-						     size);
+	do {
+		ret = trigger_memextent_donate_sibling_event(from->type, from,
+							     to, phys, size);
+	} while (ret == ERROR_RETRY);
 
 out:
 	return ret;
@@ -412,6 +444,8 @@ memextent_donate_protected_reclaim(memextent_t *from, size_t offset,
 		goto out;
 	}
 
+	// This operation fails if any mapping exists for the reclaimed memory,
+	// so it should never unmap anything and ERROR_RETRY should not occur
 	ret = trigger_memextent_donate_protected_reclaim_event(from->type, from,
 							       phys, size);
 
@@ -447,6 +481,8 @@ memextent_donate_device(memextent_t *me, size_t offset, size_t size)
 		goto out;
 	}
 
+	// This is only called during boot, so there should not be any
+	// sanitisation happening and ERROR_RETRY should not occur
 	ret = trigger_memextent_donate_device_event(me->type, me, phys, size);
 
 out:
@@ -464,9 +500,10 @@ memextent_check_map_attrs(memextent_t		   *extent,
 	pgtable_vm_memtype_t memtype =
 		memextent_mapping_attrs_get_memtype(&map_attrs);
 
-	return (pgtable_access_check(extent->access, access_user)) &&
+	return pgtable_access_check(extent->access, access_user) &&
 	       pgtable_access_check(extent->access, access_kernel) &&
-	       memextent_check_memtype(extent->memtype, memtype);
+	       memextent_check_memtype(extent->memtype, memtype) &&
+	       pgtable_vm_access_validate(access_kernel, access_user);
 }
 
 error_t
@@ -486,13 +523,13 @@ memextent_map(memextent_t *extent, addrspace_t *addrspace, vmaddr_t vm_base,
 		goto out;
 	}
 
-	if (addrspace->read_only) {
-		ret = ERROR_DENIED;
-	} else {
+	do {
 		ret = trigger_memextent_map_event(extent->type, extent,
 						  addrspace, vm_base, map_attrs,
 						  map_flags);
-	}
+		// Check for wakeups in the caller
+		// FIXME: QC Gunyah issue #259
+	} while (ret == ERROR_RETRY);
 
 out:
 	return ret;
@@ -529,14 +566,14 @@ memextent_map_partial(memextent_t *extent, addrspace_t *addrspace,
 		goto out;
 	}
 
-	if (addrspace->read_only) {
-		ret = ERROR_DENIED;
-	} else {
+	do {
 		ret = trigger_memextent_map_partial_event(extent->type, extent,
 							  addrspace, vm_base,
 							  offset, size,
 							  map_attrs, map_flags);
-	}
+		// Check for wakeups in the caller
+		// FIXME: QC Gunyah issue #259
+	} while (ret == ERROR_RETRY);
 
 out:
 	return ret;
@@ -553,15 +590,23 @@ memextent_unmap(memextent_t *extent, addrspace_t *addrspace, vmaddr_t vm_base,
 		goto out;
 	}
 
-	if (addrspace->read_only) {
-		ret = ERROR_DENIED;
-	} else {
+	do {
 		ret = trigger_memextent_unmap_event(
 			extent->type, extent, addrspace, vm_base, map_flags);
-	}
+		// Check for wakeups in the caller
+		// FIXME: QC Gunyah issue #259
+	} while (ret == ERROR_RETRY);
 
 out:
 	return ret;
+}
+
+error_t
+memextent_unmap_whole_extent(memextent_t *extent, addrspace_t *addrspace,
+			     addrspace_map_flags_t map_flags)
+{
+	return trigger_memextent_unmap_whole_extent_event(extent->type, extent,
+							  addrspace, map_flags);
 }
 
 error_t
@@ -589,23 +634,33 @@ memextent_unmap_partial(memextent_t *extent, addrspace_t *addrspace,
 		goto out;
 	}
 
-	if (addrspace->read_only) {
-		ret = ERROR_DENIED;
-	} else {
+	do {
 		ret = trigger_memextent_unmap_partial_event(extent->type,
 							    extent, addrspace,
 							    vm_base, offset,
 							    size, map_flags);
-	}
+		// Check for wakeups in the caller
+		// FIXME: QC Gunyah issue #259
+	} while (ret == ERROR_RETRY);
 
 out:
 	return ret;
 }
 
 error_t
+memextent_sync_all(memextent_t *extent)
+{
+	return trigger_memextent_sync_all_event(extent->type, extent);
+}
+
+error_t
 memextent_unmap_all(memextent_t *extent)
 {
-	return trigger_memextent_unmap_all_event(extent->type, extent);
+	error_t ret;
+	do {
+		ret = trigger_memextent_unmap_all_event(extent->type, extent);
+	} while (ret == ERROR_RETRY);
+	return ret;
 }
 
 static error_t
@@ -709,8 +764,9 @@ memextent_check_access_attrs(memextent_t	     *extent,
 	pgtable_access_t access_kernel =
 		memextent_access_attrs_get_kernel_access(&access_attrs);
 
-	return (pgtable_access_check(extent->access, access_user) &&
-		pgtable_access_check(extent->access, access_kernel));
+	return pgtable_access_check(extent->access, access_user) &&
+	       pgtable_access_check(extent->access, access_kernel) &&
+	       pgtable_vm_access_validate(access_kernel, access_user);
 }
 
 error_t
@@ -730,13 +786,9 @@ memextent_update_access(memextent_t *extent, addrspace_t *addrspace,
 		goto out;
 	}
 
-	if (addrspace->read_only) {
-		ret = ERROR_DENIED;
-	} else {
-		ret = trigger_memextent_update_access_event(
-			extent->type, extent, addrspace, vm_base, access_attrs,
-			map_flags);
-	}
+	ret = trigger_memextent_update_access_event(extent->type, extent,
+						    addrspace, vm_base,
+						    access_attrs, map_flags);
 
 out:
 	return ret;
@@ -773,13 +825,9 @@ memextent_update_access_partial(memextent_t *extent, addrspace_t *addrspace,
 		goto out;
 	}
 
-	if (addrspace->read_only) {
-		ret = ERROR_DENIED;
-	} else {
-		ret = trigger_memextent_update_access_partial_event(
-			extent->type, extent, addrspace, vm_base, offset, size,
-			access_attrs, map_flags);
-	}
+	ret = trigger_memextent_update_access_partial_event(
+		extent->type, extent, addrspace, vm_base, offset, size,
+		access_attrs, map_flags);
 
 out:
 	return ret;
@@ -817,10 +865,16 @@ memextent_handle_object_cleanup_memextent(memextent_t *memextent)
 }
 
 size_result_t
-memextent_get_offset_for_pa(memextent_t *memextent, paddr_t pa, size_t size)
+memextent_get_mapped_size(const memextent_t *me)
 {
-	return trigger_memextent_get_offset_for_pa_event(memextent->type,
-							 memextent, pa, size);
+	return trigger_memextent_get_mapped_size_event(me->type, me);
+}
+
+size_result_t
+memextent_get_offset_for_pa(memextent_t *me, paddr_t pa, size_t size)
+{
+	return trigger_memextent_get_offset_for_pa_event(me->type, me, pa,
+							 size);
 }
 
 #if defined(ARCH_AARCH64_USE_S2FWB)
@@ -957,7 +1011,7 @@ memextent_attach(partition_t *owner, memextent_t *extent, uintptr_t hyp_va,
 	assert(owner != NULL);
 	assert(extent != NULL);
 
-	error_t ret = OK;
+	error_t ret;
 
 	if (owner != extent->header.partition) {
 		ret = ERROR_DENIED;
@@ -979,18 +1033,21 @@ memextent_attach(partition_t *owner, memextent_t *extent, uintptr_t hyp_va,
 	case MEMEXTENT_MEMTYPE_CACHED:
 	case MEMEXTENT_MEMTYPE_ANY:
 		memtype = PGTABLE_HYP_MEMTYPE_WRITEBACK;
+		ret	= OK;
 		break;
 	case MEMEXTENT_MEMTYPE_DEVICE:
 		memtype = PGTABLE_HYP_MEMTYPE_DEVICE;
+		ret	= OK;
 		break;
 	case MEMEXTENT_MEMTYPE_UNCACHED:
 		memtype = PGTABLE_HYP_MEMTYPE_WRITECOMBINE;
+		ret	= OK;
 		break;
 	default:
 		ret = ERROR_ARGUMENT_INVALID;
 		break;
 	}
-	if (ret == ERROR_ARGUMENT_INVALID) {
+	if (ret != OK) {
 		goto out;
 	}
 
@@ -1186,3 +1243,158 @@ memextent_sanitise_on_reset(memextent_t *me)
 	return ERROR_UNIMPLEMENTED;
 }
 #endif // !PLATFORM_RAM_SANITISE_ON_RESET
+
+// We need LOCK_IMPL here because memdb_range_walk can't pass lock attributes
+// through its function pointer
+static error_t
+memextent_map_range_sparse(paddr_t phys, size_t size, void *arg) LOCK_IMPL
+{
+	error_t err;
+
+	assert(size != 0U);
+	assert(!util_add_overflows(phys, size - 1U));
+	assert(arg != NULL);
+
+	memextent_map_arg_t *me_arg = (memextent_map_arg_t *)arg;
+
+	size_t offset = phys - me_arg->pbase;
+
+	err = addrspace_map_locked(me_arg->addrspace, me_arg->vbase + offset,
+				   size, phys, me_arg->memtype,
+				   me_arg->kernel_access, me_arg->user_access,
+				   me_arg->map_flags);
+	if (err != OK) {
+		me_arg->fail_addr = phys;
+	}
+
+	return err;
+}
+
+paddr_result_t
+memextent_memdb_walk_map(memextent_t *memextent, addrspace_t *addrspace,
+			 vmaddr_t vbase, paddr_t pbase, size_t size,
+			 pgtable_vm_memtype_t  memtype,
+			 pgtable_access_t      user_access,
+			 pgtable_access_t      kernel_access,
+			 addrspace_map_flags_t map_flags)
+{
+	paddr_result_t ret;
+
+	memextent_map_arg_t arg = {
+		.addrspace     = addrspace,
+		.vbase	       = vbase,
+		.pbase	       = pbase,
+		.memtype       = memtype,
+		.user_access   = user_access,
+		.kernel_access = kernel_access,
+		.map_flags     = map_flags,
+	};
+
+	ret.e = memdb_range_walk((uintptr_t)memextent, MEMDB_TYPE_EXTENT, pbase,
+				 pbase + (size - 1U),
+				 &memextent_map_range_sparse, &arg);
+	ret.r = arg.fail_addr;
+
+	return ret;
+}
+
+// We need LOCK_IMPL here because memdb_range_walk can't pass lock attributes
+// through its function pointer
+static error_t
+memextent_unmap_range_sparse(paddr_t phys, size_t size, void *arg) LOCK_IMPL
+{
+	assert(size != 0U);
+	assert(!util_add_overflows(phys, size - 1U));
+	assert(arg != NULL);
+
+	memextent_unmap_arg_t *me_arg = (memextent_unmap_arg_t *)arg;
+
+	size_t offset = phys - me_arg->pbase;
+
+	return addrspace_unmap_locked(me_arg->addrspace, me_arg->vbase + offset,
+				      size, phys, me_arg->map_flags);
+}
+
+error_t
+memextent_memdb_walk_unmap(memextent_t *memextent, addrspace_t *addrspace,
+			   vmaddr_t vbase, paddr_t pbase, size_t size,
+			   addrspace_map_flags_t map_flags)
+{
+	memextent_unmap_arg_t arg = {
+		.addrspace = addrspace,
+		.vbase	   = vbase,
+		.pbase	   = pbase,
+		.map_flags = map_flags,
+	};
+
+	return memdb_range_walk((uintptr_t)memextent, MEMDB_TYPE_EXTENT, pbase,
+				pbase + (size - 1U),
+				&memextent_unmap_range_sparse, &arg);
+}
+
+memextent_ptr_result_t
+memextent_construct(partition_t *partition, cspace_t *cspace, paddr_t phys_base,
+		    size_t size, pgtable_access_t access,
+		    memextent_memtype_t memtype, memextent_type_t type,
+		    bool memextent_device_mem, cap_id_t *new_cap_id)
+{
+	error_t	     err;
+	memextent_t *me = NULL;
+
+	memextent_create_t params_me = {
+		.memextent = NULL, .memextent_device_mem = memextent_device_mem
+	};
+	memextent_ptr_result_t me_ret;
+	me_ret = partition_allocate_memextent(partition, params_me);
+	if (me_ret.e != OK) {
+		err = me_ret.e;
+		goto out;
+	}
+	me = me_ret.r;
+
+	spinlock_acquire(&me->header.lock);
+
+	memextent_attrs_t attrs = memextent_attrs_default();
+	memextent_attrs_set_access(&attrs, access);
+	memextent_attrs_set_memtype(&attrs, memtype);
+	memextent_attrs_set_type(&attrs, type);
+	err = memextent_configure(me, phys_base, size, attrs);
+	if (err != OK) {
+		spinlock_release(&me->header.lock);
+		goto out_delete_me;
+	}
+	spinlock_release(&me->header.lock);
+
+	if (cspace != NULL) {
+		assert(new_cap_id != NULL);
+		// Create a master cap for the memextent
+		object_ptr_t obj_ptr;
+		obj_ptr.memextent	  = me;
+		cap_id_result_t capid_ret = cspace_create_master_cap(
+			cspace, obj_ptr, OBJECT_TYPE_MEMEXTENT);
+		if (capid_ret.e != OK) {
+			err = capid_ret.e;
+			goto out_delete_me;
+		}
+
+		*new_cap_id = capid_ret.r;
+	}
+
+	err = object_activate_memextent(me);
+	if (err != OK) {
+		goto out_delete_cap;
+	}
+
+	goto out;
+
+out_delete_cap:
+	if (cspace != NULL) {
+		assert(cspace_delete_cap(cspace, *new_cap_id) == OK);
+		goto out;
+	}
+out_delete_me:
+	object_put_memextent(me);
+out:
+	return (err == OK) ? memextent_ptr_result_ok(me)
+			   : memextent_ptr_result_error(err);
+}

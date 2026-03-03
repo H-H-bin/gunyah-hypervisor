@@ -1,29 +1,169 @@
-// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-define smmu_v3 structure(aligned(SMMU_V3_PAGE_SIZE)) {
-	smmu_page0 @ 0x00000	structure smmu_v3_page0;
-	smmu_page1 @ 0x10000	structure smmu_v3_page1;
+// Queue lengths
+// Keep CMD and EVT sizes the same for now to make things easier
+// For now we set the Q size to 128 entries, to match VirtQ and
+// allocate around 4k per Queue
+// We can make it larger later. We chose this.
+// It needs to be less than the HW limit. On FVP the HW limit is 8k.
+// Needs to be a power of 2.
+define SMMU_V3_QUEUE_SHIFT constant uint8 = 7;
+define SMMU_V3_CMDQ_LEN constant uint8 = (1 << SMMU_V3_QUEUE_SHIFT);
+define SMMU_V3_EVENTQ_LEN constant uint8 = (1 << SMMU_V3_QUEUE_SHIFT);
+define SMMU_V3_QUEUE_MIN_ALIGN constant uint8 = 32;
+
+// Stream table Split min/max - allowed values are 6,8,10
+define SMMU_V3_STREAM_TABLE_SPLIT_MIN constant uint8 = 6;
+define SMMU_V3_STREAM_TABLE_SPLIT_MAX constant uint8 = 10;
+
+// Stream Table needs minimum alignment
+define SMMU_V3_STRTAB_MIN_ALIGN constant uint8 = 64;
+
+define smmu_v3_stream_id_t newtype uint32;
+define smmu_v3_substream_id_t newtype uint32;
+define smmu_v3_asid_t newtype uint16;
+
+// The Substream ID max is the same as PCI PASID at 20bits
+define SMMU_V3_SUBSTREAM_ID_MAX_BITS constant uint8 = 20;
+
+extend hwirq_action enumeration {
+	smmu_v3_tcu_cmdsync;
+	smmu_v3_tcu_eventq;
+	smmu_v3_tcu_global;
+	smmu_v3_tcu_pmu;
+};
+
+define smmu_v3_regs structure(aligned(SMMU_V3_PAGE_SIZE)) {
+	smmu_page0	@ 0x00000	structure smmu_v3_page0;
+	smmu_page1	@ 0x10000	structure smmu_v3_page1;
 };
 
 // TCU page 0 registers
 define smmu_v3_page0 structure(aligned(SMMU_V3_PAGE_SIZE)) {
-	iidr	@ 0x0018	bitfield SMMU_V3_IIDR(atomic);
-	aidr	@ 0x001C	bitfield SMMU_V3_AIDR(atomic);
+	idr0		@ 0x0000	bitfield SMMU_V3_IDR0(atomic);
+	iidr		@ 0x0018	bitfield SMMU_V3_IIDR(atomic);
+	aidr		@ 0x001C	bitfield SMMU_V3_AIDR(atomic);
 
-	cr0	@ 0x0020	bitfield SMMU_V3_CR0(atomic);
-	cr0ack	@ 0x0024	bitfield SMMU_V3_CR0(atomic);
+	cr0		@ 0x0020	bitfield SMMU_V3_CR0(atomic);
+	cr0ack		@ 0x0024	bitfield SMMU_V3_CR0(atomic);
 
-	gbpa	@ 0x0044	bitfield SMMU_V3_GBPA(atomic);
+	cr1		@ 0x0028	bitfield SMMU_V3_CR1(atomic);
+	cr2		@ 0x002C	bitfield SMMU_V3_CR2(atomic);
+
+	gbpa		@ 0x0044	bitfield SMMU_V3_GBPA(atomic);
+
+	irq_ctrl	@ 0x0050	bitfield SMMU_V3_IRQ_CTRL(atomic);
+	irq_ctrlack	@ 0x0054	bitfield SMMU_V3_IRQ_CTRL(atomic);
+
+	gerror		@ 0x0060	bitfield SMMU_V3_GERROR(atomic);
+	gerrorn		@ 0x0064	bitfield SMMU_V3_GERROR(atomic);
+
+	gerror_irq_cgf0	@ 0x0068	bitfield SMMU_V3_EVENT_IRQ_CFG0(atomic);
+	gerror_irq_cgf1	@ 0x0070	bitfield SMMU_V3_EVENT_IRQ_CFG1(atomic);
+	gerror_irq_cgf2	@ 0x0074	bitfield SMMU_V3_EVENT_IRQ_CFG2(atomic);
+
+	strtab_base	@ 0x0080	bitfield SMMU_V3_STRTAB_BASE(atomic);
+	strtab_base_cfg	@ 0x0088	bitfield SMMU_V3_STRTAB_BASE_CFG(atomic);
+
+	cmdq_base	@ 0x0090	bitfield SMMU_V3_CMDQ_BASE(atomic);
+	cmdq_prod	@ 0x0098	bitfield SMMU_V3_CMDQ_PROD(atomic);
+	cmdq_cons	@ 0x009C	bitfield SMMU_V3_CMDQ_CONS(atomic);
+
+	eventq_base	@ 0x00A0	bitfield SMMU_V3_EVENTQ_BASE(atomic);
+
+	eventq_irq_cgf0	@ 0x00B0	bitfield SMMU_V3_EVENT_IRQ_CFG0(atomic);
+	eventq_irq_cgf1	@ 0x00B8	bitfield SMMU_V3_EVENT_IRQ_CFG1(atomic);
+	eventq_irq_cgf2	@ 0x00BC	bitfield SMMU_V3_EVENT_IRQ_CFG2(atomic);
 };
 
 // TCU page 1 registers - TODO
 define smmu_v3_page1 structure(aligned(SMMU_V3_PAGE_SIZE)) {
-	eventq_prod	@ 0x00A8	uint32(atomic);
-	eventq_cons	@ 0x00AC	uint32(atomic);
-	priq_prod	@ 0x00C8	uint32(atomic);
-	priq_cons	@ 0x00CC	uint32(atomic);
+	eventq_prod	@ 0x00A8	bitfield SMMU_V3_EVENTQ_PROD(atomic);
+	eventq_cons	@ 0x00AC	bitfield SMMU_V3_EVENTQ_CONS(atomic);
+	//priq_prod	@ 0x00C8	uint32(atomic);
+	//priq_cons	@ 0x00CC	uint32(atomic);
+};
+
+// The IDR registers are not const as we want to set it for VMs
+define SMMU_V3_IDR0 bitfield<32> {
+	0		S2P		bool;
+	1		S1P		bool;
+	3:2		TTF		uint8;
+	4		COHACC		bool;
+	5		BTM		bool;
+	7:6		HTTU		uint8;
+	8		DORMHINT	bool;
+	9		Hyp		bool;
+	10		ATS		bool;
+	11		NS1ATS		bool;
+	12		ASID16		bool;
+	13		MSI		bool;
+	14		SEV		bool;
+	15		ATOS		bool;
+	16		PRI		bool;
+	17		VMW		bool;
+	18		VMID16		bool;
+	19		CD2L		bool;
+	20		VATOS		bool;
+	22:21		TTENDIAN	uint8;
+	23		ATSRECERR	bool;
+	25:24		STALL_MODEL	uint8;
+	26		TERM_MODEL	bool;
+	28:27		ST_LEVEL	uint8;
+	30		RME_IMPL	bool;
+	others		unknown=0;
+};
+
+define SMMU_V3_IDR1 bitfield<32> {
+	5:0		SIDSIZE		uint8;
+	10:6		SSIDSIZE	uint8;
+	15:11		PRIQS		uint8;
+	20:16		EVENTQS		uint8;
+	25:21		CMDQS		uint8;
+	26		ATTR_PERMS_OVR	bool;
+	27		ATTR_TYPES_OVR	bool;
+	28		REL		bool;
+	29		QUEUES_PRESET	bool;
+	30		TABLES_PRESET	bool;
+	31		ECMDQ		bool;
+};
+
+define SMMU_V3_IDR2 bitfield<32> {
+	9:0		BA_VATOS	uint16;
+	others		unknown=0;
+};
+
+define SMMU_V3_IDR3 bitfield<32> {
+	2		HAD		bool;
+	3		PBHA		bool;
+	4		XNX		bool;
+	5		PPS		bool;
+	7		MPAM		bool;
+	8		FWB		bool;
+	9		STT		bool;
+	10		RIL		bool;
+	12:11		BBML		uint8;
+	13		E0PD		bool;
+	14		PTWNNC		bool;
+	15		DPT		bool;
+	others		unknown=0;
+};
+
+define SMMU_V3_IDR4 bitfield<32> {
+	// IMPLEMENTATION_DEFINED
+	others		unknown=0;
+};
+
+define SMMU_V3_IDR5 bitfield<32> {
+	2:0		OAS		uint8;
+	4		GRAN4K		bool;
+	5		GRAN16K		bool;
+	6		GRAN64K		bool;
+	11:10		VAX		uint8;
+	31:16		STALL_MAX	uint16;
+	others		unknown=0;
 };
 
 define SMMU_V3_IIDR bitfield<32>(const) {
@@ -52,16 +192,240 @@ define SMMU_V3_CR0 bitfield<32> {
 	31:11		unknown=0;
 };
 
+define SMMU_V3_CR1_SHAREABILITY enumeration {
+	NONE	= 0x0;
+	OUTER	= 0x2;
+	INNER	= 0x3;
+};
+
+define SMMU_V3_CR1_CACHEABILITY enumeration {
+	NC = 0x0;
+	WB = 0x1;
+	WT = 0x2;
+};
+
+define SMMU_V3_CR1 bitfield<32> {
+	1:0	QUEUE_IC	enumeration SMMU_V3_CR1_CACHEABILITY;
+	3:2	QUEUE_OC	enumeration SMMU_V3_CR1_CACHEABILITY;
+	5:4	QUEUE_SH	enumeration SMMU_V3_CR1_SHAREABILITY;
+	7:6	TABLE_IC	enumeration SMMU_V3_CR1_CACHEABILITY;
+	9:8	TABLE_OC	enumeration SMMU_V3_CR1_CACHEABILITY;
+	11:10	TABLE_SH	enumeration SMMU_V3_CR1_SHAREABILITY;
+	others	unknown=0;
+};
+
+define SMMU_V3_CR2 bitfield<32> {
+	0	E2H		bool;
+	1	RECINVSID	bool;
+	2	PTM		bool;
+	3	REC_CFG_ATS	bool;
+	others	unknown=0;
+};
+
+define SMMU_V3_GBPA_SHAREABILITY enumeration {
+	NONE		= 0x0;
+	INCOMING	= 0x1;
+	OUTER		= 0x2;
+	INNER		= 0x3;
+};
+
 define SMMU_V3_GBPA bitfield<32> {
-	3:0		MemAttr		uint8;
+	3:0		MemAttr		uint8; // same as VMSAv8-64 stage 2 MemAttr[3:0]
 	4		MTCFG		bool;
 	7:5		unknown=0;
 	11:8		ALLOCCFG	uint8;
-	13:12		SHCFG		uint8;
+	13:12		SHCFG		enumeration SMMU_V3_GBPA_SHAREABILITY;
 	15:14		unknown=0;
 	17:16		PRIVCFG		uint8;
 	19:18		INSTCFG		uint8;
 	20		ABORT		bool;
 	30:21		unknown=0;
 	31		Update		bool;
+};
+
+define SMMU_V3_GERROR bitfield<32> {
+	0		CMDQ_ERR		bool;
+	2		EVENTQ_ABT_ERR		bool;
+	3		PRIQ_ABT_ERR		bool;
+	4		MSI_CMDQ_ABT_ERR	bool;
+	5		MSI_EVENTQ_ABT_ERR	bool;
+	6		MSI_PRIQ_ABT_ERR	bool;
+	7		MSI_GERROR_ABT_ERR	bool;
+	8		SFM_ERR			bool;
+	9		CMDQP_ERR		bool;
+	10		DPT_ERR			bool;
+	others		unknown=0;
+};
+
+define SMMU_V3_IRQ_CTRL bitfield<32> {
+	0		GERROR_IRQEN	bool;
+	1		PRIQ_IRQEN	bool;
+	2		EVENTQ_IRQEN	bool;
+	31:3		unknown=0;
+};
+
+// These IRQ defs are almost the same.
+// The PRI one is different.
+// We dont have PRI for now.
+define SMMU_V3_EVENT_IRQ_CFG0 bitfield<64> {
+	1:0		unknown=0;
+	51:2		ADDR		uint64;
+	63:52		unknown=0;
+};
+
+define SMMU_V3_EVENT_IRQ_CFG1 bitfield<32> {
+	31:0		DATA		uint32;
+};
+
+define SMMU_V3_EVENT_IRQ_CFG2 bitfield<32> {
+	3:0		MemAttr		uint8; // todo: Make this a enum
+	5:4		SH		uint8; // todo: Make this a enum
+	31:6		unknown=0;
+};
+
+define SMMU_V3_STRTAB_BASE bitfield<64> {
+	51:6		ADDR		uint64;
+	62		RA		bool;
+	others		unknown=0;
+};
+
+define SMMU_V3_STRTAB_BASE_CFG_FMT enumeration {
+	linear		= 0x0;
+	twolevel	= 0x1;
+};
+
+define SMMU_V3_STRTAB_BASE_CFG bitfield<32> {
+	5:0	LOG2SIZE	uint8;
+	10:6	SPLIT		uint8;
+	17:16	FMT		enumeration SMMU_V3_STRTAB_BASE_CFG_FMT;
+	others	unknown=0;
+};
+
+define SMMU_V3_CMDQ_BASE bitfield<64> {
+	4:0	LOG2SIZE	uint8;
+	51:5	ADDR		uint64;
+	62	RA		bool;
+	others	unknown=0;
+};
+
+define SMMU_V3_CMDQ_PROD bitfield<32> {
+	19:0	WR		uint32;
+	others	unknown=0;
+};
+
+define SMMU_V3_CMDQ_CONS bitfield<32> {
+	19:0	RD		uint32;
+	30:24	ERR		uint16; // enum? Read-only?
+	others	unknown=0;
+};
+
+define SMMU_V3_EVENTQ_BASE bitfield<64> {
+	4:0	LOG2SIZE	uint8;
+	51:5	ADDR		uint64;
+	62	WA		bool;
+	others	unknown=0;
+};
+
+define SMMU_V3_EVENTQ_PROD bitfield<32> {
+	19:0	WR		uint32;
+	31	OVFLG		bool;
+	others	unknown=0;
+};
+
+define SMMU_V3_EVENTQ_CONS bitfield<32> {
+	19:0	RD		uint32;
+	31	OVACKFLG	bool;
+	others	unknown=0;
+};
+
+define smmu_v3_cmd_queue structure {
+	// Virtual and physical pointers to this SMMU's command queue
+	queue		pointer array(SMMU_V3_CMDQ_LEN) union smmu_v3_cmd;
+	phys		type paddr_t;
+
+	// For CMDQs Hyp produces entries and HW consumes
+	// Next sequence number to be allocated by Hyp
+	head		type count_t;
+
+	// Next sequence number to be processed by HW
+	tail		type count_t;
+	len		type count_t;
+	log2len		type count_t;
+
+	lock		structure spinlock;
+};
+
+define smmu_v3_event_queue structure {
+	// Virtual and physical pointers to this SMMUs's event queue
+	queue		pointer array(SMMU_V3_EVENTQ_LEN) union smmu_v3_event;
+	phys		type paddr_t;
+
+	// For EventQ, HW produces entries and HYP consumes
+	// Next sequence number to be used by HW
+	head		type count_t;
+
+	// Next sequence number to be processed by us
+	tail		type count_t;
+	len		type count_t;
+	log2len		type count_t;
+
+	// Overflow flag toggled by SMMU
+	overflow	bool;
+
+	lock		structure spinlock;
+};
+
+define smmu_v3_instance structure {
+	regs			pointer structure smmu_v3_regs;
+#if defined(PLATFORM_SMMUV3_SERIALISE_REGS) && PLATFORM_SMMUV3_SERIALISE_REGS
+	regs_lock		structure spinlock;
+#endif
+
+	// We might have multiple CMDQs later
+	cmd_queue		structure smmu_v3_cmd_queue;
+	event_queue		structure smmu_v3_event_queue;
+
+	stream_table		structure smmu_v3_stream_table;
+	stream_table_lock	structure spinlock;
+
+	// Map of bound physical stream ID ranges to their virtual ranges
+	// (node structure is phys_node in smmuv3_stream_range_t)
+	stream_ranges		structure range_tree;
+};
+
+// FIXME: Stub SMMUv3 object which points to an smmu_v3_instance.
+extend smmuv3 object {
+	instance			pointer structure smmu_v3_instance;
+};
+
+extend cap_rights_smmuv3 bitfield {
+	0	configure		bool;
+	1	manage_streams		bool;
+};
+
+define smmuv3_stream_range structure {
+	smmuv3			pointer object smmuv3;
+	viommu			pointer structure viommu;
+
+	// The physical range tree node used by the SMMU driver; this also
+	// contains the base physical stream ID and the range size.
+	phys_node		structure range_tree_node(contained);
+
+	// The virtual range tree node used by the viommu; this also contains
+	// the base virtual stream ID (or endpoint ID for virtio) and should
+	// have the same size as phys_node.
+	virt_node		structure range_tree_node(contained);
+
+	partition		pointer object partition;
+	rcu			structure rcu_entry(contained);
+};
+
+extend rcu_update_class enumeration {
+	smmuv3_release_stream_range;
+};
+
+define smmuv3_stream_config structure {
+	cd_ptr		type vmaddr_t;
+	s1cdmax		uint8;
+	eats		enumeration smmu_v3_ste_eats;
 };

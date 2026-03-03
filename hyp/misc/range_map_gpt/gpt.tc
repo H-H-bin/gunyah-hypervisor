@@ -1,4 +1,4 @@
-// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -35,36 +35,24 @@ define range_map_pte structure {
 	value	union range_map_value;
 };
 
-define range_map_level_non_atomic structure {
+define range_map_level structure {
 	entries		array(RANGE_MAP_LEVEL_ENTRIES) structure range_map_pte;
 };
 
-// FIXME:
+// FIXME: QC Gunyah issue #27
 define range_map_level_atomic structure(aligned(16)) {
 	entries		array(RANGE_MAP_LEVEL_ENTRIES) structure range_map_pte(atomic);
 	rcu_entry	structure rcu_entry(contained);
 	partition	pointer object partition;
 };
 
-define range_map_level union {
-	raw		uintptr;
-	non_atomic	pointer structure range_map_level_non_atomic;
-	atomic		pointer structure range_map_level_atomic;
-};
-
 extend range_map_value union {
 	raw	uint64;
-	level	union range_map_level;
-};
-
-// FIXME:
-define range_map_root union(aligned(16)) {
-	non_atomic	structure range_map_pte;
-	atomic		structure range_map_pte(atomic);
+	level	pointer structure range_map_level;
 };
 
 extend range_map structure {
-	root		union range_map_root;
+	root		structure range_map_pte;
 	partition	pointer object partition;
 	config		bitfield range_map_config;
 	allowed_types	uregister;
@@ -93,7 +81,7 @@ define range_map_frame_info bitfield<64> {
 };
 
 define range_map_stack_frame structure {
-	level	union range_map_level;
+	level	pointer structure range_map_level;
 	info	bitfield range_map_frame_info;
 };
 

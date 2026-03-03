@@ -1,0 +1,10 @@
+
+module inconsistent_lock_kinds_module
+
+subscribe inconsistent_lock_kinds_interface_event[selector_1]
+		handler handle1()
+		acquire_lock(lock)
+
+subscribe inconsistent_lock_kinds_interface_event[selector_2]
+		handler handle2()
+		acquire_read(lock)

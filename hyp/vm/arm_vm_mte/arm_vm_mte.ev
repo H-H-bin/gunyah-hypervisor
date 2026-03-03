@@ -1,0 +1,14 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+module arm_vm_mte
+
+#if defined(ARCH_ARM_FEAT_MTE)
+subscribe object_activate_thread
+
+subscribe vcpu_save_state()
+subscribe vcpu_load_state()
+
+subscribe boot_cold_init()
+#endif

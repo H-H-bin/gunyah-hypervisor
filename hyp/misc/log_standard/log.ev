@@ -1,10 +1,10 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 module log_standard
 
-subscribe trace_log(id, action, arg0, arg1, arg2, arg3, arg4, arg5)
+subscribe trace_log
 
 subscribe boot_runtime_first_init
 	handler log_init()

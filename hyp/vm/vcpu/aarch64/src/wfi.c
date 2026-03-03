@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -12,6 +12,7 @@
 #include <idle.h>
 #include <log.h>
 #include <preempt.h>
+#include <qcbor.h>
 #include <scheduler.h>
 #include <thread.h>
 #include <trace.h>
@@ -39,7 +40,7 @@ vcpu_handle_vcpu_trap_wfi(ESR_EL2_ISS_WFI_WFE_t iss)
 	vcpu_trap_result_t ret = VCPU_TRAP_RESULT_EMULATED;
 
 	thread_t *current = thread_get_self();
-	assert(current->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(current));
 
 	assert_preempt_enabled();
 	preempt_disable();
@@ -48,7 +49,7 @@ vcpu_handle_vcpu_trap_wfi(ESR_EL2_ISS_WFI_WFE_t iss)
 	// Inject a trap to the guest if it uses the WFIT instruction
 	// without checking their availability in the ID registers first.
 	// Remove once support for FEAT_WFxT is added to the hypervisor.
-	// FIXME:
+	// FIXME: QC Gunyah issue #206
 	if (ESR_EL2_ISS_WFI_WFE_get_TI(&iss) == ISS_WFX_TI_WFIT) {
 		TRACE_AND_LOG(ERROR, WARN, "WFIT trap from thread {:#x}",
 			      (register_t)current);
@@ -119,7 +120,7 @@ void
 vcpu_handle_scheduler_quiescent(void)
 {
 	thread_t *current = thread_get_self();
-	if (compiler_expected(current->kind == THREAD_KIND_VCPU)) {
+	if (compiler_expected(vcpu_is_vcpu(current))) {
 		current->vcpu_regs_el2.hcr_el2 = register_HCR_EL2_read();
 		HCR_EL2_set_TWI(&current->vcpu_regs_el2.hcr_el2,
 				!vcpu_runtime_flags_get_vcpu_can_idle(
@@ -142,7 +143,7 @@ void
 vcpu_wakeup(thread_t *vcpu)
 {
 	assert(vcpu != NULL);
-	assert(vcpu->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(vcpu));
 
 #if !defined(PREEMPT_NULL)
 	// Inhibit sleep in preempted WFI handlers (see above)
@@ -160,7 +161,7 @@ void
 vcpu_wakeup_self(void)
 {
 	thread_t *current = thread_get_self();
-	assert(current->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(current));
 
 #if !defined(PREEMPT_NULL)
 	// Inhibit sleep in preempted WFI handlers (see above)
@@ -173,7 +174,7 @@ vcpu_wakeup_self(void)
 bool
 vcpu_expects_wakeup(const thread_t *thread)
 {
-	assert(thread->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(thread));
 
 	return scheduler_is_blocked(thread, SCHEDULER_BLOCK_VCPU_WFI) ||
 	       trigger_vcpu_expects_wakeup_event(thread);
@@ -198,7 +199,7 @@ bool
 vcpu_pending_wakeup(void)
 {
 	thread_t *current = thread_get_self();
-	assert(current->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(current));
 
 #if defined(PREEMPT_NULL)
 	return trigger_vcpu_pending_wakeup_event();

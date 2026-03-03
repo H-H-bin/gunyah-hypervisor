@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -8,6 +8,7 @@
 
 #include <compiler.h>
 #include <thread.h>
+#include <vcpu.h>
 
 #include <asm/sysregs.h>
 
@@ -16,19 +17,11 @@
 void
 vcpu_context_switch_cpu_load(void)
 {
-	thread_t *thread = thread_get_self();
-
-	if (compiler_expected(thread->kind == THREAD_KIND_VCPU)) {
-		// No-op
-	}
+	// No-op
 }
 
 void
 vcpu_context_switch_cpu_save(void)
 {
-	thread_t *thread = thread_get_self();
-
-	if (compiler_expected(thread->kind == THREAD_KIND_VCPU)) {
-		// No-op
-	}
+	// No-op
 }

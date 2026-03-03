@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -156,7 +156,7 @@ soc_fvp_uart_init(void)
 
 	pgtable_hyp_commit();
 
-	// Set the Baudrate devider
+	// Set the Baudrate divider
 	atomic_store_relaxed(&pvm_uart->ibrd, 0x4);
 	// Set 8N1 and enable fifo
 	atomic_store_relaxed(&pvm_uart->lcrh, 0x70);

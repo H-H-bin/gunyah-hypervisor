@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # coding: utf-8
 #
-# © 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -43,9 +43,12 @@ severity_map = {
 
 deviation_map = {
     # Deviation because the behaviour proscribed by the rule is exactly the
-    # intended behaviour of assert(): it prints the unexpanded expression.
+    # intended behaviour of assert(), assert_safety() and assert_debug():
+    # it prints the unexpanded expression.
     'MISRAC2012-RULE_20_12-a': [
-        (None, re.compile(r"parameter of potential macro 'assert'")),
+        (None, re.compile(
+            r"parameter of potential macro 'assert(|_safety|_debug)'"
+        )),
     ],
     # False positives due to __c11 builtins taking int memory order arguments
     # instead of enum in the Clang implementation.
@@ -80,11 +83,15 @@ deviation_map = {
         # type-generic APIs defined in the same file.
         (re.compile(r'^build/.*/objects/.*\.c$'), None),
     ],
-    # Invariant expressions are expected and unavoidable in generated event
-    # triggers because it is not possible to remove error result types from
-    # handlers that never return errors.
     'MISRAC2012-RULE_14_3-ac': [
+        # Invariant expressions are expected and unavoidable in generated
+        # event triggers because it is not possible to remove error result
+        # types from handlers that never return errors.
         (re.compile(r'^build/.*/events/src/.*\.c$'), None),
+        # Invariant expressions in assertions that can be statically
+        # determined to true are covered by the approved deviation from this
+        # rule for safety / sanity checks.
+        (None, re.compile(r'\"assert.*always evaluates to true')),
     ],
     'MISRAC2012-RULE_8_13-a': [
         # Could-be-const pointers are expected and unavoidable in generated
@@ -99,15 +106,18 @@ deviation_map = {
         (re.compile(r'^build/.*/accessors\.c$'),
          re.compile(r'parameter "b1"')),
     ],
-    # The generated type-generic object functions terminate non-empty default
-    # clauses with a _Noreturn function, panic(), to indicate that the object
-    # type is invalid. There is an approved deviation for this, and in any
-    # case these rules are downgraded to advisory in generated code.
+    # The generated type-generic object and accessor functions terminate
+    # non-empty default clauses with a _Noreturn function, panic(),
+    # to indicate that the object type or SMC call is invalid.
+    # There is an approved deviation for this, and in any case these rules
+    # are downgraded to advisory in generated code.
     'MISRAC2012-RULE_16_1-d': [
         (re.compile(r'^build/.*/objects/.*\.c$'), None),
+        (re.compile(r'^build/.*/accessors\.c$'), None),
     ],
     'MISRAC2012-RULE_16_3-b': [
         (re.compile(r'^build/.*/objects/.*\.c$'), None),
+        (re.compile(r'^build/.*/accessors\.c$'), None),
     ],
     # False positive due to a builtin sizeof variant that does not evaluate its
     # argument, so there is no uninitialised use.
@@ -149,7 +159,7 @@ deviation_map = {
     ],
     # Rule 8.5 is downgraded to Advisory in generated code, and we can't
     # comply with it easily for event handler prototypes which are duplicated
-    # in the calling module's genereted events.c and the handling module's
+    # in the calling module's generated events.c and the handling module's
     # private generated event_handlers.h. Both prototypes are generated from
     # the same Python dictionary entry, so they are always consistent.
     'MISRAC2012-RULE_8_5-a': [
@@ -159,6 +169,23 @@ deviation_map = {
     # deviation) for generated code.
     'MISRAC2012-RULE_20_5-a': [
         (re.compile(r'^build/'), None),
+    ],
+    # False positive due to a pointer-to-array type being misinterpreted as
+    # incomplete when it is the type of the RHS of an assignment, but complete
+    # when it is the LHS of an assignment. This is easily identified using two
+    # criteria: (a) the origin type name of the alleged conversion contains
+    # the string "(*)[", and (b) the destination type name is identical to the
+    # origin (i.e. no conversion is actually happening).
+    'MISRAC2012-RULE_11_2-a': [
+        (None, re.compile(
+            r'Pointer to incomplete type \'(.*\(\*\)\[.*)\' '
+            r'should not be converted to type \'\1\'')),
+    ],
+    # Approved deviation for Directive 4.10 warnings because we have an
+    # alternative mechanism for avoiding multiple inclusion that satisfies the
+    # requirements of the directive (but not the check, which expects guards).
+    'MISRAC2012-DIR_4_10-a': [
+        (None, None),
     ],
 }
 

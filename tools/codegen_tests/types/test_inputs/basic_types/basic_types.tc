@@ -1,0 +1,86 @@
+// ============================================================================
+// Alternative Types (newtypes)
+// ============================================================================
+
+// Basic integer type aliases
+define byte_t newtype uint8;
+define half_t newtype uint16;
+define word_t newtype uint32;
+define dword_t newtype uint32;
+
+define count_t public newtype uint32;
+define index_t public newtype uint32;
+
+// FIXME: array of alternative types currently broken
+// TODO - test additional combinations
+//define dwordarray_t newtype array(4) type dword_t;
+
+// ABI defined type
+define vaddr_t newtype uintptr;
+
+// Pointer to array type
+define intarray_t newtype pointer array(8) sint8;
+
+// ============================================================================
+// Enumerations - Basic Features
+// ============================================================================
+
+// Public enumeration with noprefix modifier
+define color_code public enumeration(noprefix) {
+	RED = 1;
+	BLUE = 2;
+};
+
+// Standard enumeration with explicit values
+define priority_level enumeration {
+	LOW = 0;
+	MEDIUM = 1;
+	HIGH = 2;
+};
+
+// Enumeration with mixed noprefix (per-constant)
+define status_flag enumeration {
+	INACTIVE noprefix;
+	ACTIVE;
+	PENDING;
+};
+
+// Public enumeration with noprefix and negative values
+define temperature_offset enumeration(noprefix) {
+	TEMP_ZERO = 0;
+	TEMP_BELOW = -1;
+	TEMP_ABOVE = 1;
+};
+
+// ============================================================================
+// Enumerations - Advanced Features
+// ============================================================================
+
+// Public enumeration with explicit and implicit values
+define error_code public enumeration {
+	ERROR_OK = 0;
+	ERROR_RETRY = 1;
+	ERROR_INVALID_ARG = 2;
+	ERROR_TIMEOUT = -3;
+	ERROR_RESOURCE_BUSY;	// = -2 (implicit)
+	ERROR_NOT_FOUND;			// = -1 (implicit)
+	ERROR_FATAL = 10;
+	//ERROR_RETRY = 1;	// duplicate error (would fail)
+};
+
+// Public enumeration with noprefix
+define result_code public enumeration(noprefix) {
+	RESULT_SUCCESS = 1;
+	RESULT_FAILURE = 2;
+};
+
+// ============================================================================
+// Enumeration Extensions
+// ============================================================================
+
+// Extend existing enumeration with additional values
+// Values continue from last value of base, or last auto value of previous extension
+extend error_code enumeration {
+	ERROR_PERMISSION_DENIED;
+	ERROR_OUT_OF_MEMORY;
+};

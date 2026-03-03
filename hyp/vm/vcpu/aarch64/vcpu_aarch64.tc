@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -11,7 +11,9 @@ define vcpu_gpr structure {
 define vector_register_t newtype array(16) uint8();
 
 define vcpu_vfp_registers structure {
+#if !defined(ARCH_ARM_FEAT_SVE) && !defined(ARCH_ARM_FEAT_SME)
 	q		array(32) type vector_register_t(aligned(16));
+#endif
 	fpcr		bitfield FPCR;
 	fpsr		bitfield FPSR;
 };

@@ -1,0 +1,111 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define VIRTIO_PCI_VENDOR_ID constant uint16 = 0x1af4;
+define VIRTIO_PCI_DEVICE_ID_BASE constant uint16 = 0x1040;
+define VIRTIO_PCI_DEVICE_ID_MAX constant uint16 = 0x107f;
+
+define virtio_pci structure {
+	device			structure vpci_device;
+	fn0			structure vpci_function(contained);
+	msix_data		structure vpci_msix_data;
+	pcie_data		structure vpci_pcie_data;
+	cap_common_cfg		structure virtio_pci_cap_data;
+	cap_notify_cfg		structure virtio_pci_cap_data;
+	cap_isr_cfg		structure virtio_pci_cap_data;
+	cap_device_cfg		structure virtio_pci_cap_data;
+	cap_pci_cfg		structure virtio_pci_cap_data;
+
+	dev_feat_sel		type index_t(atomic);
+	drv_feat_sel		type index_t(atomic);
+	queue_sel		type index_t(atomic);
+
+	interrupt_status	bitfield virtio_interrupt(atomic);
+
+	config_msix_vector	uint16(atomic);
+	queue_msix_vector	array(VIRTIO_MAX_VQS) uint16(atomic);
+
+	rcu			structure rcu_entry(contained);
+};
+
+extend rcu_update_class enumeration {
+	virtio_pci_cleanup;
+};
+
+extend virtio_frontend union {
+	pci		structure virtio_pci(contained);
+};
+
+// PCI BAR 0+1 register layout. This includes the virtio common registers,
+// the queue notify register, and the interrupt status register. The remaining
+// BARs are used for the device-specific configuration in BAR 2+3, and the
+// MSI-X table and PBA in BAR 4+5.
+define virtio_pci_bar0_regs structure {
+	dev_feat_sel @ 0x000		uint32(atomic);
+	dev_feat @ 0x004		uint32(atomic);
+	drv_feat_sel @ 0x008		uint32(atomic);
+	drv_feat @ 0x00c		uint32(atomic);
+	config_msix_vector @ 0x010	uint16(atomic);
+	num_queues @ 0x012		uint16(atomic);
+	status @ 0x014			bitfield virtio_status(atomic);
+	config_gen @ 0x015		uint8(atomic);
+	queue_sel @ 0x016		uint16(atomic);
+	queue_size @ 0x018		uint16(atomic);
+	queue_msix_vector @ 0x01a	uint16(atomic);
+	queue_enable @ 0x01c		uint16(atomic);
+	queue_notify_offset @ 0x1e	uint16(const);
+	queue_desc_low @ 0x020		uint32(atomic);
+	queue_desc_high @ 0x024		uint32(atomic);
+	queue_drv_low @ 0x028		uint32(atomic);
+	queue_drv_high @ 0x02c		uint32(atomic);
+	queue_dev_low @ 0x030		uint32(atomic);
+	queue_dev_high @ 0x034		uint32(atomic);
+	queue_notify			uint32(atomic);
+	interrupt_status		bitfield virtio_interrupt(atomic);
+};
+
+extend vpci_function_type enumeration {
+	virtio;
+};
+
+define virtio_pci_cap_type enumeration(explicit) {
+	common_cfg = 1;
+	notify_cfg = 2;
+	isr_cfg = 3;
+	device_cfg = 4;
+	pci_cfg = 5;
+};
+
+define virtio_pci_cap_data structure {
+	base			structure vpci_capability_data(contained);
+	type			enumeration virtio_pci_cap_type;
+	bar_index		type index_t;
+	bar_offset		size;
+	bar_length		size;
+};
+
+define virtio_pci_capability structure {
+	header @ 0x0		structure pci_vendor_capability;
+	type @ 0x3		uint8;
+	bar_index @ 0x4		uint8;
+	bar_offset @ 0x8	uint32;
+	bar_length @ 0xc	uint32;
+};
+
+define virtio_pci_notify_capability structure {
+	base @ 0x0		structure virtio_pci_capability;
+	notify_off_multiplier	uint32;
+};
+
+define virtio_pci_access_capability structure {
+	base @ 0x0		structure virtio_pci_capability;
+	pci_cfg_data		array(4) uint8;
+};
+
+define virtio_pci_bar enumeration {
+	COMMON; // contains virtio_pci_bar0_regs_t
+	DEVCFG; // contains config cache memextent, if any
+	MSIX_TABLE;
+	MSIX_PBA;
+};

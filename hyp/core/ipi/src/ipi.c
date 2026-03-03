@@ -1,14 +1,14 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <assert.h>
 #include <hyptypes.h>
-#include <limits.h>
 
 #include <hypconstants.h>
 
 #include <atomic.h>
+#include <bitmap.h>
 #include <compiler.h>
 #include <cpulocal.h>
 #include <idle.h>
@@ -33,7 +33,7 @@
 // Set this to 1 to disable the fast idle optimisation for debugging
 #define IPI_DEBUG_NO_FAST_IDLE 0
 
-#define REGISTER_BITS (sizeof(register_t) * (size_t)CHAR_BIT)
+#define REGISTER_BITS util_width(register_t)
 
 // We enable the fast wakeup support by default if asm_event_wait() can sleep
 // (as it will busy-wait otherwise) and preemption is enabled. We can possibly
@@ -43,7 +43,7 @@
 // If interrupts are handled by a VM, we need to be able to ask the VM to send
 // an IPI for us. This is not currently implemented, so we force fast wakeups in
 // such configurations even though they will block pending interrupts.
-// FIXME:
+// FIXME: QC Gunyah issue #33
 #if (!ASM_EVENT_WAIT_IS_NOOP && !defined(PREEMPT_NULL) &&                      \
      !IPI_DEBUG_NO_FAST_IDLE) ||                                               \
 	defined(IPI_FORCE_FAST_WAKEUP_HACK)
@@ -70,6 +70,7 @@ ipi_others_relaxed(ipi_reason_t ipi)
 	const register_t  ipi_bit  = util_bit((uint8_t)ipi);
 	const cpu_index_t this_cpu = cpulocal_get_index();
 
+	atomic_thread_fence(memory_order_release);
 	for (cpu_index_t i = 0U; cpulocal_index_valid(i); i++) {
 		if (i == this_cpu) {
 			continue;
@@ -78,7 +79,6 @@ ipi_others_relaxed(ipi_reason_t ipi)
 			&CPULOCAL_BY_INDEX(ipi_pending, i).bits, ipi_bit,
 			memory_order_relaxed);
 	}
-	atomic_thread_fence(memory_order_release);
 	asm_event_wake_updated();
 }
 
@@ -264,6 +264,26 @@ ipi_check_relaxed(void)
 	return atomic_load_relaxed(local_pending) != 0U;
 }
 
+#if defined(INTERFACE_POWER)
+bool
+ipi_check_suspended_cpus(const cpuid_set_t cpus)
+{
+	bool pending = false;
+
+	assert_preempt_disabled();
+	BITMAP_FOREACH_SET_BEGIN(cpu, cpus.bitmap, PLATFORM_MAX_CORES)
+		_Atomic register_t *cpu_pending =
+			&CPULOCAL_BY_INDEX(ipi_pending, (cpu_index_t)cpu).bits;
+		if (atomic_load_relaxed(cpu_pending) != 0U) {
+			pending = true;
+			break;
+		}
+	BITMAP_FOREACH_SET_END
+
+	return pending;
+}
+#endif
+
 idle_state_t
 ipi_handle_idle_yield(bool in_idle_thread)
 {
@@ -350,6 +370,12 @@ ipi_handle_preempt_interrupt(void)
 #endif
 	return false;
 }
+
+bool
+ipi_handle_preempt_check(void)
+{
+	return atomic_load_relaxed(&CPULOCAL(ipi_pending).bits) != 0U;
+}
 #endif
 
 void
@@ -372,11 +398,11 @@ ipi_handle_scheduler_stop(void)
 	// We don't wait for acknowledgement since they may be unresponsive.
 	uint32_t freq = platform_timer_get_frequency();
 
-	uint64_t now = platform_timer_get_current_ticks();
+	uint64_t now = platform_timer_get_current_ticks_sync();
 	uint64_t end = now + ((uint64_t)freq / 1024U);
 
 	while (now < end) {
 		asm_yield();
-		now = platform_timer_get_current_ticks();
+		now = platform_timer_get_current_ticks_sync();
 	}
 }

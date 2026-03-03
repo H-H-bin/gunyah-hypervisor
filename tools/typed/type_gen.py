@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 #
 # 2019 Cog Systems Pty Ltd.
 #
@@ -17,6 +17,7 @@ import subprocess
 import inspect
 import logging
 import pickle
+import shlex
 
 logger = logging.getLogger(__name__)
 
@@ -115,10 +116,9 @@ def main():
             ir = parse_dsl(parser, options.input, options.abi)
         except (DSLError, RangeError) as e:
             if options.traceback:
-                import traceback
-                traceback.print_exc(file=sys.stderr)
+                logger.error(e, stack_info=False, exc_info=True)
             else:
-                logger.error("Parse error", e)
+                logger.error(e, stack_info=False, exc_info=False)
             sys.exit(1)
 
         if options.dump_pickle:
@@ -135,7 +135,7 @@ def main():
                                 public_only=options.public)
 
         if options.formatter:
-            ret = subprocess.run([options.formatter],
+            ret = subprocess.run(shlex.split(options.formatter),
                                  input=result.encode("utf-8"),
                                  stdout=subprocess.PIPE)
             result = ret.stdout.decode("utf-8")

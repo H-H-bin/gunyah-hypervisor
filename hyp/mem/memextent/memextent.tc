@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -8,10 +8,21 @@ extend addrspace object {
 	basic_mapping_list	structure list;
 };
 
-define memextent_basic_arg structure {
-	me		pointer object memextent;
-	map		array(MEMEXTENT_MAX_MAPS) pointer structure memextent_basic_mapping;
-	failed_address	type paddr_t;
+define memextent_map_arg structure {
+	addrspace	pointer object addrspace;
+	vbase		type vmaddr_t;
+	pbase		type paddr_t;
+	memtype		enumeration pgtable_vm_memtype;
+	user_access	enumeration pgtable_access;
+	kernel_access	enumeration pgtable_access;
+	fail_addr	type paddr_t;
+	map_flags	bitfield addrspace_map_flags;
+};
+
+define memextent_unmap_arg structure {
+	addrspace	pointer object addrspace;
+	vbase		type vmaddr_t;
+	pbase		type paddr_t;
 	map_flags	bitfield addrspace_map_flags;
 };
 

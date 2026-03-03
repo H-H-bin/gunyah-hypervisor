@@ -1,0 +1,4 @@
+
+module event_subscribe_invalid_module
+
+subscribe event_interface_event

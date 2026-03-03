@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -33,8 +33,8 @@ define virtio_mmio_regs structure(aligned(PGTABLE_HYP_PAGE_SIZE)) {
 	queue_num @ 0x038		uint32(atomic);
 	queue_ready @ 0x044		uint32(atomic);
 	queue_notify @ 0x050		uint32(atomic);
-	interrupt_status @ 0x060	uint32(atomic);
-	interrupt_ack @ 0x064		uint32(atomic);
+	interrupt_status @ 0x060	bitfield virtio_interrupt(atomic);
+	interrupt_ack @ 0x064		bitfield virtio_interrupt(atomic);
 	status @ 0x070			bitfield virtio_status(atomic);
 	queue_desc_low @ 0x080		uint32(atomic);
 	queue_desc_high @ 0x084		uint32(atomic);

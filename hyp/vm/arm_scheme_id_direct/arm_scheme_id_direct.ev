@@ -1,0 +1,13 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+module arm_scheme_id_direct
+
+#if defined(ENABLE_SCHEMEID_MGMT) && ENABLE_SCHEMEID_MGMT
+
+subscribe vcpu_activate_thread
+
+subscribe vcpu_load_state()
+
+#endif

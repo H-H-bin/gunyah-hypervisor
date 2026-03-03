@@ -1,9 +1,10 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <hyptypes.h>
 
+#include <compiler.h>
 #include <thread.h>
 
 #include <events/smccc.h>
@@ -129,10 +130,13 @@ out:
 bool
 smccc_handle_vcpu_trap_smc64(ESR_EL2_ISS_SMC64_t iss)
 {
-	bool handled = false;
+	bool handled;
 
-	if (ESR_EL2_ISS_SMC64_get_imm16(&iss) == (uint16_t)0U) {
+	if (compiler_expected(ESR_EL2_ISS_SMC64_get_imm16(&iss) ==
+			      (uint16_t)0U)) {
 		handled = smccc_handle_call(false);
+	} else {
+		handled = false;
 	}
 
 	return handled;
@@ -141,22 +145,54 @@ smccc_handle_vcpu_trap_smc64(ESR_EL2_ISS_SMC64_t iss)
 bool
 smccc_handle_vcpu_trap_hvc64(ESR_EL2_ISS_HVC_t iss)
 {
-	bool handled = false;
+	bool handled;
 
-	if (ESR_EL2_ISS_HVC_get_imm16(&iss) == (uint16_t)0U) {
+	if (compiler_expected(ESR_EL2_ISS_HVC_get_imm16(&iss) ==
+			      (uint16_t)0U)) {
 		handled = smccc_handle_call(true);
+	} else {
+		handled = false;
 	}
 
 	return handled;
 }
 
 bool
-smccc_handle_vcpu_trap_default(void)
+smccc_handle_vcpu_trap_smc64_default(ESR_EL2_ISS_SMC64_t iss)
 {
-	// We always fallback to returning -1, otherwise we'll deliver an
-	// exception to the VCPU.
-	thread_t *current	    = thread_get_self();
-	current->vcpu_regs_gpr.x[0] = (register_t)SMCCC_UNKNOWN_FUNCTION64;
+	bool handled;
 
-	return true;
+	if (compiler_expected(ESR_EL2_ISS_SMC64_get_imm16(&iss) ==
+			      (uint16_t)0U)) {
+		// We always fallback to returning -1 for SMCCC, otherwise
+		// we'll deliver an exception to the VCPU.
+		thread_t *current = thread_get_self();
+		current->vcpu_regs_gpr.x[0] =
+			(register_t)SMCCC_UNKNOWN_FUNCTION64;
+		handled = true;
+	} else {
+		handled = false;
+	}
+
+	return handled;
+}
+
+bool
+smccc_handle_vcpu_trap_hvc64_default(ESR_EL2_ISS_HVC_t iss)
+{
+	bool handled;
+
+	if (compiler_expected(ESR_EL2_ISS_HVC_get_imm16(&iss) ==
+			      (uint16_t)0U)) {
+		// We always fallback to returning -1 for SMCCC, otherwise
+		// we'll deliver an exception to the VCPU.
+		thread_t *current = thread_get_self();
+		current->vcpu_regs_gpr.x[0] =
+			(register_t)SMCCC_UNKNOWN_FUNCTION64;
+		handled = true;
+	} else {
+		handled = false;
+	}
+
+	return handled;
 }

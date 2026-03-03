@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -79,6 +79,15 @@ define vcpu_unbind_virq hypercall {
 	call_num	0x5d;
 	vcpu		input type cap_id_t;
 	virq_type	input enumeration vcpu_virq_type;
+	res0		input uregister;
+	error		output enumeration error;
+};
+
+define vcpu_set_local_virq hypercall {
+	call_num	0x85;
+	cap_id		input type cap_id_t;
+	virq_type	input enumeration vcpu_local_virq_type;
+	virq		input type virq_t;
 	res0		input uregister;
 	error		output enumeration error;
 };

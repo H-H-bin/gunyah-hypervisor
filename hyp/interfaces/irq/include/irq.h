@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -14,14 +14,14 @@
 // Note that newly registered IRQs are always disabled, and IRQs are
 // automatically disabled when they are deregistered.
 void
-irq_enable_shared(hwirq_t *hwirq);
+irq_enable_shared(const hwirq_t *hwirq);
 
 // Enable a hardware per-CPU IRQ on the local CPU.
 //
 // The behaviour is the same as for irq_enable_shared(), but affects only the
 // calling CPU.
 void
-irq_enable_local(hwirq_t *hwirq) REQUIRE_PREEMPT_DISABLED;
+irq_enable_local(const hwirq_t *hwirq) REQUIRE_PREEMPT_DISABLED;
 
 // Disable a hardware IRQ, which must not be per-CPU, and wait until any running
 // handlers on remote CPUs have completed.
@@ -29,20 +29,20 @@ irq_enable_local(hwirq_t *hwirq) REQUIRE_PREEMPT_DISABLED;
 // This function might block the calling thread, so cannot be called with
 // preemption disabled.
 void
-irq_disable_shared_sync(hwirq_t *hwirq) EXCLUDE_PREEMPT_DISABLED;
+irq_disable_shared_sync(const hwirq_t *hwirq) EXCLUDE_PREEMPT_DISABLED;
 
 // Disable a hardware IRQ, which must not be per-CPU, without waiting for
 // handlers on remote CPUs to complete.
 //
 // This may be called with preemption disabled.
 void
-irq_disable_shared_nosync(hwirq_t *hwirq);
+irq_disable_shared_nosync(const hwirq_t *hwirq);
 
 // Disable a hardware per-CPU IRQ on the local CPU.
 //
 // This may be called with preemption disabled.
 void
-irq_disable_local(hwirq_t *hwirq) REQUIRE_PREEMPT_DISABLED;
+irq_disable_local(const hwirq_t *hwirq) REQUIRE_PREEMPT_DISABLED;
 
 // Disable a hardware per-CPU IRQ on the local CPU, without waiting for the
 // physical interrupt controller to acknowledge the disable (which may allow
@@ -50,18 +50,18 @@ irq_disable_local(hwirq_t *hwirq) REQUIRE_PREEMPT_DISABLED;
 //
 // This may be called with preemption disabled.
 void
-irq_disable_local_nowait(hwirq_t *hwirq) REQUIRE_PREEMPT_DISABLED;
+irq_disable_local_nowait(const hwirq_t *hwirq) REQUIRE_PREEMPT_DISABLED;
 
 // Deactivate an interrupt that has been handled after returning false from
 // the irq_received handler. This is called automatically if the handler returns
 // true.
 void
-irq_deactivate(hwirq_t *hwirq);
+irq_deactivate(const hwirq_t *hwirq);
 
 // Deactivate a forwarded IRQ which has been disabled
 // with irq_disable_shared_nosync during IRQ unbinding.
 void
-irq_deactivate_forwarded(hwirq_t *hwirq);
+irq_deactivate_forwarded(const hwirq_t *hwirq);
 
 // Register a range of HW IRQs provided by the platform.
 //
@@ -81,6 +81,14 @@ irq_range_add_hwirq(irq_t base, count_t size);
 // result. Returns NULL if the specified IRQ is not in a registered hwirq range.
 hwirq_t *
 irq_lookup_hwirq(irq_t irq) REQUIRE_RCU_READ;
+
+// Obtain the IRQ number for a specific HW IRQ
+irq_t
+irq_get_irq(const hwirq_t *hwirq);
+
+// Obtain the irq handler's opaque for a specific HW IRQ
+uint64_t
+irq_get_opaque(const hwirq_t *hwirq);
 
 // Register a range of IRQ numbers.
 //

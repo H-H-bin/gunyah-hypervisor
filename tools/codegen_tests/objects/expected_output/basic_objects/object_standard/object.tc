@@ -1,0 +1,148 @@
+// Automatically generated. Do not modify.
+
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define object_header structure {
+	type		enumeration object_type;
+	state		enumeration object_state(atomic);
+	refcount	structure refcount;
+	lock		structure spinlock;
+	rcu_entry	structure rcu_entry(contained);
+};
+
+
+// TODO: add priority support to the type system to place the object_header
+//			at the start of the object, needed for partition_revoke
+//	"	header structure object_header priority=first;"
+extend addrspace object {
+	header structure object_header(contained, group(__object_header));
+};
+
+// TODO: add priority support to the type system to place the object_header
+//			at the start of the object, needed for partition_revoke
+//	"	header structure object_header priority=first;"
+extend cspace object {
+	header structure object_header(contained, group(__object_header));
+};
+
+// TODO: add priority support to the type system to place the object_header
+//			at the start of the object, needed for partition_revoke
+//	"	header structure object_header priority=first;"
+extend doorbell object {
+	header structure object_header(contained, group(__object_header));
+};
+
+// TODO: add priority support to the type system to place the object_header
+//			at the start of the object, needed for partition_revoke
+//	"	header structure object_header priority=first;"
+extend gicv3_its object {
+	header structure object_header(contained, group(__object_header));
+};
+
+// TODO: add priority support to the type system to place the object_header
+//			at the start of the object, needed for partition_revoke
+//	"	header structure object_header priority=first;"
+extend hwirq object {
+	header structure object_header(contained, group(__object_header));
+};
+
+// TODO: add priority support to the type system to place the object_header
+//			at the start of the object, needed for partition_revoke
+//	"	header structure object_header priority=first;"
+extend memextent object {
+	header structure object_header(contained, group(__object_header));
+};
+
+// TODO: add priority support to the type system to place the object_header
+//			at the start of the object, needed for partition_revoke
+//	"	header structure object_header priority=first;"
+extend msgqueue object {
+	header structure object_header(contained, group(__object_header));
+};
+
+// TODO: add priority support to the type system to place the object_header
+//			at the start of the object, needed for partition_revoke
+//	"	header structure object_header priority=first;"
+extend partition object {
+	header structure object_header(contained, group(__object_header));
+};
+
+// TODO: add priority support to the type system to place the object_header
+//			at the start of the object, needed for partition_revoke
+//	"	header structure object_header priority=first;"
+extend thread object {
+	header structure object_header(contained, group(__object_header));
+};
+
+// TODO: add priority support to the type system to place the object_header
+//			at the start of the object, needed for partition_revoke
+//	"	header structure object_header priority=first;"
+extend vic object {
+	header structure object_header(contained, group(__object_header));
+};
+
+// TODO: add priority support to the type system to place the object_header
+//			at the start of the object, needed for partition_revoke
+//	"	header structure object_header priority=first;"
+extend virtio_backend object {
+	header structure object_header(contained, group(__object_header));
+};
+
+// TODO: add priority support to the type system to place the object_header
+//			at the start of the object, needed for partition_revoke
+//	"	header structure object_header priority=first;"
+extend vpm_group object {
+	header structure object_header(contained, group(__object_header));
+};
+
+// TODO: add priority support to the type system to place the object_header
+//			at the start of the object, needed for partition_revoke
+//	"	header structure object_header priority=first;"
+extend vrtc object {
+	header structure object_header(contained, group(__object_header));
+};
+
+extend cap_rights_addrspace bitfield {
+	31	object_activate bool;
+};
+extend cap_rights_cspace bitfield {
+	31	object_activate bool;
+};
+extend cap_rights_doorbell bitfield {
+	31	object_activate bool;
+};
+extend cap_rights_gicv3_its bitfield {
+	31	object_activate bool;
+};
+extend cap_rights_hwirq bitfield {
+	31	object_activate bool;
+};
+extend cap_rights_memextent bitfield {
+	31	object_activate bool;
+};
+extend cap_rights_msgqueue bitfield {
+	31	object_activate bool;
+};
+extend cap_rights_partition bitfield {
+	31	object_activate bool;
+};
+extend cap_rights_thread bitfield {
+	31	object_activate bool;
+};
+extend cap_rights_vic bitfield {
+	31	object_activate bool;
+};
+extend cap_rights_virtio_backend bitfield {
+	31	object_activate bool;
+};
+extend cap_rights_vpm_group bitfield {
+	31	object_activate bool;
+};
+extend cap_rights_vrtc bitfield {
+	31	object_activate bool;
+};
+extend cap_rights_generic bitfield {
+	31	object_activate bool;
+};

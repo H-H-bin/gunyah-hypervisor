@@ -1,0 +1,103 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+#if defined(ARCH_ARM_FEAT_MPAM) && ARCH_ARM_FEAT_MPAM
+define MPAMIDR_EL1 bitfield<64> {
+	15:0		PARTID_MAX	uint16;
+	16		unknown=0;
+	17		HAS_HCR		bool;
+	20:18		VPMR_MAX	uint8;
+	31:21		unknown=0;
+	39:32		PMG_MAX		uint8;
+	57:40		unknown=0;
+	58		HAS_TIDR	bool;
+	59		unknown=0;
+	60		HAS_FORCE_NS	bool;
+	61		HAS_SDEFLT	bool;
+	63:62		unknown=0;
+};
+
+#define MPAM(n, el)							\
+define MPAM##n##_##el bitfield<64> {					\
+	15:0		PARTID_I	uint16;				\
+	31:16		PARTID_D	uint16;				\
+	39:32		PMG_I		uint8;				\
+	47:40		PMG_D		uint8;				\
+	63:48		unknown=0;					\
+};
+MPAM(0, EL1)
+MPAM(1, EL1)
+MPAM(2, EL2)
+
+extend MPAM1_EL1 bitfield {
+	63		MPAMEN		bool(const);
+};
+
+#if defined(ARCH_ARM_FEAT_MPAMv0p1)
+extend MPAM1_EL1 bitfield {
+	60		FORCED_NS	bool;
+};
+#endif
+
+#if defined(ARCH_ARM_FEAT_RME)
+extend MPAM1_EL1 bitfield {
+	54		ALTSP_FRCD	bool;
+};
+#endif
+
+extend MPAM2_EL2 bitfield {
+	48		TRAPMPAM1EL1	bool;
+	49		TRAPMPAM0EL1	bool;
+	62:50		unknown=0;
+	63		MPAMEN		bool(const);
+};
+
+#if defined(ARCH_ARM_FEAT_SME)
+extend MPAM2_EL2 bitfield {
+	50		EnMPAMSM	bool;
+};
+#endif
+
+#if defined(ARCH_ARM_FEAT_MPAMv0p1) || defined(ARCH_ARM_FEAT_MPAMv1p1)
+extend MPAM2_EL2 bitfield {
+	58		TIDR		bool;
+};
+#endif
+
+#if defined(ARCH_ARM_FEAT_RME)
+extend MPAM1_EL1 bitfield {
+	56		ALTSP_HFC	bool;
+	55		ALTSP_EL2	bool;
+	54		ALTSP_FRCD	bool;
+};
+#endif
+
+#if defined(ARCH_ARM_FEAT_SME)
+define MPAMSM_EL1 bitfield<64> {
+	15:0		unknown=0;
+	31:16		PARTID_D	uint16;
+	39:32		unknown=0;
+	47:40		PMG_D		uint16;
+	63:48		unknown=0;
+};
+#endif
+
+define MPAMHCR_EL2 bitfield<64> {
+	0		EL0_VPMEN		bool;
+	1		EL1_VPMEN		bool;
+	7:2		unknown=0;
+	8		GSTAPP_PLK		bool;
+	30:9		unknown=0;
+	31		TRAP_MPAMIDR_EL1	bool;
+	63:32		unknown=0;
+};
+#endif
+
+extend platform_cpu_features bitfield {
+	auto		mpam_disable	bool = 1;
+};
+
+extend global_options bitfield {
+	auto		mpam		bool = 0;
+};

@@ -1,10 +1,10 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 module gicv3
 
-subscribe boot_cold_init
+subscribe irq_init
 
 // Since other modules might be enabling their hardware interrupts in
 // cpu_cold_init, we need to make sure GIC's handler for this event runs before
@@ -31,6 +31,7 @@ subscribe power_cpu_resume()
 #if defined(INTERFACE_VCPU) && INTERFACE_VCPU && GICV3_HAS_1N
 
 subscribe vcpu_poweron(vcpu)
+	unwinder(vcpu)
 	require_scheduler_lock(vcpu)
 
 subscribe vcpu_poweroff(current)
@@ -43,8 +44,8 @@ subscribe scheduler_affinity_changed(thread, prev_cpu, next_cpu)
 	require_scheduler_lock(thread)
 
 #if GICV3_HAS_VLPI_V4_1
-subscribe boot_cold_init
-	handler gicv3_its_vpe_handle_boot_cold_init()
+subscribe irq_init
+	handler gicv3_its_vpe_handle_irq_init()
 	priority -1
 
 subscribe object_create_thread
@@ -58,7 +59,13 @@ subscribe irq_dispatch[IRQ_RANGE_TYPE_GICV3_VPE_DOORBELL]
 
 #if GICV3_HAS_ITS
 subscribe abort_kernel()
-#endif
+
+subscribe object_create_gicv3_its
+
+#if defined(INTERFACE_ROOTVM)
+subscribe rootvm_init(root_partition, root_cspace, qcbor_enc_ctxt)
+#endif //INTERFACE_ROOTVM
+#endif // GICV3_HAS_ITS
 
 subscribe boot_hypervisor_handover
 	require_preempt_disabled
@@ -68,3 +75,10 @@ subscribe power_cpu_online()
 
 subscribe power_cpu_offline()
 	require_preempt_disabled
+
+#if defined(PLATFORM_ENABLE_SYSTEM_SUSPEND) && PLATFORM_ENABLE_SYSTEM_SUSPEND
+subscribe power_system_suspend()
+	unwinder gicv3_handle_power_system_resume()
+
+subscribe power_system_resume()
+#endif // GICV3_HAS_ITS && PLATFORM_ENABLE_SYSTEM_SUSPEND

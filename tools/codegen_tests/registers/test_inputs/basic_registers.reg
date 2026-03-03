@@ -1,0 +1,156 @@
+// Comprehensive test file for all register syntax variations
+
+TEST_REG_o <uint64> o
+TEST_REG_O <uint64> O
+TEST_REG_r <uint64> r
+TEST_REG_w <uint64> w
+TEST_REG_R <uint64> R
+TEST_REG_W <uint64> W
+TEST_REG_m <uint64> m
+
+TEST_REG_oO <uint64> oO
+TEST_REG_or <uint64> or
+TEST_REG_ow <uint64> ow
+TEST_REG_oR <uint64> oR
+TEST_REG_oW <uint64> oW
+TEST_REG_om <uint64> om
+TEST_REG_Or <uint64> Or
+TEST_REG_Ow <uint64> Ow
+TEST_REG_OR <uint64> OR
+TEST_REG_OW <uint64> OW
+TEST_REG_Om <uint64> Om
+TEST_REG_rw <uint64> rw
+TEST_REG_rR <uint64> rR
+TEST_REG_rW <uint64> rW
+TEST_REG_rm <uint64> rm
+TEST_REG_wR <uint64> wR
+TEST_REG_wW <uint64> wW
+TEST_REG_wm <uint64> wm
+TEST_REG_RW <uint64> RW
+TEST_REG_Rm <uint64> Rm
+TEST_REG_Wm <uint64> Wm
+
+
+TEST_REG_oOr <uint64> oOr
+TEST_REG_oOw <uint64> oOw
+TEST_REG_oOR <uint64> oOR
+TEST_REG_oOW <uint64> oOW
+TEST_REG_oOm <uint64> oOm
+TEST_REG_orw <uint64> orw
+TEST_REG_orR <uint64> orR
+TEST_REG_orW <uint64> orW
+TEST_REG_orm <uint64> orm
+TEST_REG_owR <uint64> owR
+TEST_REG_owW <uint64> owW
+TEST_REG_owm <uint64> owm
+TEST_REG_oRW <uint64> oRW
+TEST_REG_oRm <uint64> oRm
+TEST_REG_oWm <uint64> oWm
+TEST_REG_Orw <uint64> Orw
+TEST_REG_OrR <uint64> OrR
+TEST_REG_OrW <uint64> OrW
+TEST_REG_Orm <uint64> Orm
+TEST_REG_OwR <uint64> OwR
+TEST_REG_OwW <uint64> OwW
+TEST_REG_Owm <uint64> Owm
+TEST_REG_ORW <uint64> ORW
+TEST_REG_ORm <uint64> ORm
+TEST_REG_OWm <uint64> OWm
+TEST_REG_rwR <uint64> rwR
+TEST_REG_rwW <uint64> rwW
+TEST_REG_rwm <uint64> rwm
+TEST_REG_rRW <uint64> rRW
+TEST_REG_rRm <uint64> rRm
+TEST_REG_rWm <uint64> rWm
+TEST_REG_wRW <uint64> wRW
+TEST_REG_wRm <uint64> wRm
+TEST_REG_wWm <uint64> wWm
+TEST_REG_RWm <uint64> RWm
+
+
+TEST_REG_oOrw <uint64> oOrw
+TEST_REG_oOrR <uint64> oOrR
+TEST_REG_oOrW <uint64> oOrW
+TEST_REG_oOrm <uint64> oOrm
+TEST_REG_oOwR <uint64> oOwR
+TEST_REG_oOwW <uint64> oOwW
+TEST_REG_oOwm <uint64> oOwm
+TEST_REG_oORW <uint64> oORW
+TEST_REG_oORm <uint64> oORm
+TEST_REG_oOWm <uint64> oOWm
+TEST_REG_orwR <uint64> orwR
+TEST_REG_orwW <uint64> orwW
+TEST_REG_orwm <uint64> orwm
+TEST_REG_orRW <uint64> orRW
+TEST_REG_orRm <uint64> orRm
+TEST_REG_orWm <uint64> orWm
+TEST_REG_owRW <uint64> owRW
+TEST_REG_owRm <uint64> owRm
+TEST_REG_owWm <uint64> owWm
+TEST_REG_oRWm <uint64> oRWm
+TEST_REG_OrwR <uint64> OrwR
+TEST_REG_OrwW <uint64> OrwW
+TEST_REG_Orwm <uint64> Orwm
+TEST_REG_OrRW <uint64> OrRW
+TEST_REG_OrRm <uint64> OrRm
+TEST_REG_OrWm <uint64> OrWm
+TEST_REG_OwRW <uint64> OwRW
+TEST_REG_OwRm <uint64> OwRm
+TEST_REG_OwWm <uint64> OwWm
+TEST_REG_ORWm <uint64> ORWm
+TEST_REG_rwRW <uint64> rwRW
+TEST_REG_rwRm <uint64> rwRm
+TEST_REG_rwWm <uint64> rwWm
+TEST_REG_rRWm <uint64> rRWm
+TEST_REG_wRWm <uint64> wRWm
+
+
+TEST_REG_oOrwR <uint64> oOrwR
+TEST_REG_oOrwW <uint64> oOrwW
+TEST_REG_oOrwm <uint64> oOrwm
+TEST_REG_oOrRW <uint64> oOrRW
+TEST_REG_oOrRm <uint64> oOrRm
+TEST_REG_oOrWm <uint64> oOrWm
+TEST_REG_oOwRW <uint64> oOwRW
+TEST_REG_oOwRm <uint64> oOwRm
+TEST_REG_oOwWm <uint64> oOwWm
+TEST_REG_oORWm <uint64> oORWm
+TEST_REG_orwRW <uint64> orwRW
+TEST_REG_orwRm <uint64> orwRm
+TEST_REG_orwWm <uint64> orwWm
+TEST_REG_orRWm <uint64> orRWm
+TEST_REG_owRWm <uint64> owRWm
+TEST_REG_OrwRW <uint64> OrwRW
+TEST_REG_OrwRm <uint64> OrwRm
+TEST_REG_OrwWm <uint64> OrwWm
+TEST_REG_OrRWm <uint64> OrRWm
+TEST_REG_OwRWm <uint64> OwRWm
+TEST_REG_rwRWm <uint64> rwRWm
+
+
+TEST_REG_oOrwRW <uint64> oOrwRW
+TEST_REG_oOrwRm <uint64> oOrwRm
+TEST_REG_oOrwWm <uint64> oOrwWm
+TEST_REG_oOrRWm <uint64> oOrRWm
+TEST_REG_oOwRWm <uint64> oOwRWm
+TEST_REG_orwRWm <uint64> orwRWm
+TEST_REG_OrwRWm <uint64> OrwRWm
+
+// ============================================================================
+// Registers with Features
+// ============================================================================
+TEST_FEAT_multi +fp,sve <uint64> rw
+TEST_FEAT_type +fp <uint64> Orw
+
+// ============================================================================
+// Complex Combinations
+// ============================================================================
+TEST_COMB_feat_var +fp <TEST_COMB_feat_var> [VAR1 VAR2] Orw
+TEST_COMB_multi_over +fp,sve <uint64> [TEST_COMB_multi_over_VAR1! TEST_COMB_multi_over_VAR2!] OR
+
+// ============================================================================
+// Default Access (no explicit access specified)
+// ============================================================================
+TEST_DEFAULT_plain
+TEST_DEFAULT_type <uint32>
+TEST_DEFAULT_feat +fp

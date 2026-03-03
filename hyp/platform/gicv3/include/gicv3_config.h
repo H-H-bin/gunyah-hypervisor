@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -12,7 +12,7 @@
 // Command queue length
 #define GICV3_ITS_QUEUE_LEN 128U
 
-#if GICV3_HAS_VLPI
+#if defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 
 // Default vPE ID range. We don't support sharing these, so this limits the
 // number of VCPUs that may be attached to at least one VGITS.

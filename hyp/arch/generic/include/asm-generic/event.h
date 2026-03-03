@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -48,7 +48,7 @@
 #if !defined(asm_event_wait)
 #define ASM_EVENT_WAIT_IS_NOOP 1
 #define asm_event_wait(p)      ((void)0)
-#elif !defined(ASM_EVENT_WAIT_IS_NOOP)
+#else
 #define ASM_EVENT_WAIT_IS_NOOP 0
 #endif
 

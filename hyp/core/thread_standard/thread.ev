@@ -1,14 +1,13 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 module thread_standard
 
-subscribe boot_runtime_first_init ()
-	priority last
-
 subscribe boot_runtime_warm_init
 	priority last
+
+subscribe object_init_thread(thread_create)
 
 subscribe object_create_thread
 	unwinder

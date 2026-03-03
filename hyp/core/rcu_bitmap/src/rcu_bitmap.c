@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -11,6 +11,7 @@
 #include <enum.h>
 #include <idle.h>
 #include <ipi.h>
+#include <misc.h>
 #include <platform_cpu.h>
 #include <preempt.h>
 #include <rcu.h>
@@ -25,24 +26,6 @@ static_assert(PLATFORM_MAX_CORES <= 32U, "PLATFORM_MAX_CORES > 32");
 
 static rcu_state_t rcu_state;
 CPULOCAL_DECLARE_STATIC(rcu_cpu_state_t, rcu_state);
-
-// The grace period counts can wrap around, so we can't use a simple comparison
-// to distinguish between a token in the past and a token in the future. When
-// comparing two tokens, we use the following value as a threshold difference,
-// above which the token is presumed to have wrapped around.
-static const count_t a_long_time =
-	(count_t)util_bit((sizeof(count_t) * 8U) - 1U);
-
-// Compare two counts, and return true if the first is before the second,
-// assuming that both counts belong to CPUs actively participating in the
-// counter ring. (This is effectively the same as a signed comparison, but
-// performed manually on unsigned values because the behaviour of signed
-// overflow is undefined.)
-static inline bool
-is_before(count_t a, count_t b)
-{
-	return (a - b) >= a_long_time;
-}
 
 void
 rcu_read_start(void) LOCK_IMPL
@@ -453,7 +436,8 @@ rcu_bitmap_request_grace_period(rcu_cpu_state_t *my_state, count_t current_gen)
 	rcu_grace_period_t new_period =
 		atomic_load_relaxed(&rcu_state.current_period);
 
-	if (compiler_unexpected(!is_before(new_period.generation, target))) {
+	if (compiler_unexpected(
+		    !util_is_before(new_period.generation, target))) {
 		// Another core has already completed our requested grace
 		// period. It may have done so before this core updated the
 		// target variable, in which case it won't have sent a
@@ -464,7 +448,7 @@ rcu_bitmap_request_grace_period(rcu_cpu_state_t *my_state, count_t current_gen)
 		count_t old_max_target =
 			atomic_load_relaxed(&rcu_state.max_target);
 		do {
-			if (is_before(target, old_max_target)) {
+			if (util_is_before(target, old_max_target)) {
 				// We don't need to update the max target.
 				break;
 			}
@@ -509,7 +493,7 @@ rcu_bitmap_notify(void)
 	count_t		   target = atomic_load_relaxed(&my_state->target);
 	rcu_grace_period_t current_period =
 		atomic_load_acquire(&rcu_state.current_period);
-	if (is_before(current_period.generation, target)) {
+	if (util_is_before(current_period.generation, target)) {
 		goto out;
 	}
 

@@ -1,0 +1,7 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+extend vcpu_option_flags bitfield {
+	7		mpam_allowed		bool = 0;
+};

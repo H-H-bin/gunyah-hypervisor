@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -14,7 +14,7 @@ define object_header structure {
 #set o = str(obj)
 
 // TODO: add priority support to the type system to place the object_header
-//       at the start of the object, needed for partition_revoke
+//			at the start of the object, needed for partition_revoke
 //	"	header structure object_header priority=first;"
 extend $o object {
 	header structure object_header(contained, group(__object_header));

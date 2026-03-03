@@ -1,5 +1,4 @@
-// © 2019 Qualcomm Innovation Center, Inc. All rights reserved.
-// All Rights Reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -33,12 +32,14 @@
 static range_tree_t irq_range_tree;
 
 void
-irq_handle_boot_cold_init(void)
+irq_handle_boot_cold_init(cpu_index_t boot_cpu_index)
 {
 	error_t err = range_tree_init(&irq_range_tree, partition_get_private());
 	if (err != OK) {
 		panic("Unable to initialise IRQ range tree");
 	}
+
+	trigger_irq_init_event(boot_cpu_index);
 }
 
 error_t
@@ -58,8 +59,10 @@ irq_range_add(irq_range_t *range, irq_range_type_t range_type, irq_t base,
 	}
 
 	range->range_type = range_type;
+	range_tree_lock(&irq_range_tree);
 	ret = range_tree_insert(&irq_range_tree, &range->node, (size_t)base,
 				(size_t)size);
+	range_tree_unlock(&irq_range_tree);
 	if (ret != OK) {
 		range->range_type = IRQ_RANGE_TYPE_INVALID;
 	}
@@ -71,7 +74,10 @@ out:
 error_t
 irq_range_remove(irq_range_t *range)
 {
-	return range_tree_remove(&irq_range_tree, &range->node);
+	range_tree_lock(&irq_range_tree);
+	error_t ret = range_tree_remove(&irq_range_tree, &range->node);
+	range_tree_unlock(&irq_range_tree);
+	return ret;
 }
 
 irq_range_t *
@@ -160,14 +166,29 @@ irq_lookup_hwirq(irq_t irq)
 	return (entry == NULL) ? NULL : atomic_load_consume(entry);
 }
 
+irq_t
+irq_get_irq(const hwirq_t *hwirq)
+{
+	assert_debug(hwirq != NULL);
+	return hwirq->irq;
+}
+
+uint64_t
+irq_get_opaque(const hwirq_t *hwirq)
+{
+	assert_debug(hwirq != NULL);
+	return hwirq->opaque;
+}
+
 error_t
 irq_handle_object_create_hwirq(hwirq_create_t hwirq_create)
 {
 	hwirq_t *hwirq = hwirq_create.hwirq;
-	assert(hwirq != NULL);
+	assert_debug(hwirq != NULL);
 
 	hwirq->irq    = hwirq_create.irq;
 	hwirq->action = hwirq_create.action;
+	hwirq->opaque = hwirq_create.opaque;
 
 	return OK;
 }
@@ -215,37 +236,37 @@ out:
 }
 
 void
-irq_enable_shared(hwirq_t *hwirq)
+irq_enable_shared(const hwirq_t *hwirq)
 {
 	platform_irq_enable_shared(hwirq->irq);
 }
 
 void
-irq_enable_local(hwirq_t *hwirq)
+irq_enable_local(const hwirq_t *hwirq)
 {
 	platform_irq_enable_local(hwirq->irq);
 }
 
 void
-irq_disable_shared_nosync(hwirq_t *hwirq)
+irq_disable_shared_nosync(const hwirq_t *hwirq)
 {
 	platform_irq_disable_shared(hwirq->irq);
 }
 
 void
-irq_disable_local(hwirq_t *hwirq)
+irq_disable_local(const hwirq_t *hwirq)
 {
 	platform_irq_disable_local(hwirq->irq);
 }
 
 void
-irq_disable_local_nowait(hwirq_t *hwirq)
+irq_disable_local_nowait(const hwirq_t *hwirq)
 {
 	platform_irq_disable_local_nowait(hwirq->irq);
 }
 
 void
-irq_disable_shared_sync(hwirq_t *hwirq)
+irq_disable_shared_sync(const hwirq_t *hwirq)
 {
 	irq_disable_shared_nosync(hwirq);
 
@@ -260,13 +281,13 @@ irq_disable_shared_sync(hwirq_t *hwirq)
 }
 
 void
-irq_deactivate_forwarded(hwirq_t *hwirq)
+irq_deactivate_forwarded(const hwirq_t *hwirq)
 {
 	platform_irq_deactivate_forwarded(hwirq->irq);
 }
 
 void
-irq_deactivate(hwirq_t *hwirq)
+irq_deactivate(const hwirq_t *hwirq)
 {
 	platform_irq_deactivate(hwirq->irq);
 }
@@ -389,10 +410,21 @@ irq_interrupt_dispatch(void)
 
 	while (irq_interrupt_dispatch_one()) {
 		spurious = false;
+
+#if defined(CPU_ERRATUM_1297) && CPU_ERRATUM_1297
+		const global_options_t *global_options = globals_get_options();
+		if (compiler_unexpected(global_options_get_cpu_erratum_1297(
+			    global_options))) {
+			// Don't try to handle multiple IRQs in one ISR entry.
+			// This significantly reduces the chances of hitting the
+			// erratum.
+			break;
+		}
+#endif
 	}
 
 	if (spurious) {
-		TRACE(INFO, INFO, "spurious EL2 IRQ");
+		TRACE(INFO, INFO, "{:s}: no IRQs pending", (uintptr_t)__func__);
 	}
 
 	return ipi_handle_relaxed();

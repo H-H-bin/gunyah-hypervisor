@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -83,7 +83,7 @@ event power_cpu_resume
 // ERROR_DENIED. If the suspend should be delayed with a WFI idle until some
 // event occurs, this should return ERROR_BUSY. Any other error is treated as
 // fatal.
-setup_event power_system_suspend
+setup_event power_system_idle_enter
 	param state: platform_power_state_t
 	return: error_t = OK
 	success: OK
@@ -97,8 +97,37 @@ setup_event power_system_suspend
 //
 // This is called during power_cpu_resume when the first_cpu argument is true,
 // but only if it matches a preceding power_system_suspend that returned OK.
-event power_system_resume
+event power_system_idle_exit
 	param state: platform_power_state_t
+
+#if defined(PLATFORM_ENABLE_SYSTEM_SUSPEND) && PLATFORM_ENABLE_SYSTEM_SUSPEND
+// Triggered when the system is about to enter a system-level suspend state
+// from which it can only wake in response to an external signal, such as a
+// power key press or an RTC alarm.
+//
+// Entry to the low-power state is aborted if any registered handler returns
+// an error. Unlike power_system_idle_enter, this is expected to occur only if
+// there is some error condition preventing the system's state being saved.
+// Handlers should return ERROR_DENIED if the error is transient and any other
+// nonzero value if the error is fatal. It should not occur simply due to a
+// pending internal wakeup event; ERROR_BUSY will be treated as fatal.
+//
+// Handlers that change the state of the hardware rather than only saving the
+// state should register an unwinder.
+//
+// This is called immediately before platform_system_suspend().
+setup_event power_system_suspend
+	return: error_t = OK
+	success: OK
+
+// Triggered when the system has woken from a system-level suspend state.
+//
+// The was_suspended argument indicates whether the platform actually
+// suspended. A handler that does not change the state of the hardware need
+// not handle the event if was_suspended is false.
+event power_system_resume
+	param was_suspended: bool
+#endif
 
 // Triggered when a system reset request is received. This does not follow the
 // same path as the kernel_abort as it is not a failure or hypervisor error.

@@ -1,12 +1,14 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <assert.h>
 #include <hyptypes.h>
+#include <string.h>
 
 #include <atomic.h>
 #include <bitmap.h>
+#include <bootmem.h>
 #include <compiler.h>
 #include <cpulocal.h>
 #include <hyp_aspace.h>
@@ -35,25 +37,64 @@ CPULOCAL_DECLARE_STATIC(thread_t *, idle_thread);
 
 static uintptr_t idle_stack_base;
 
-static thread_t *
-idle_thread_create(cpu_index_t i)
+// Idle thread creation is special, since it has to happen very early for the
+// boot CPU and we perform part of the boot with an incomplete idle thread
+// structure. We need to manually trigger the object manager's
+// object_init_thread event early, and later trigger the object_create_thread
+// event.
+
+const static thread_create_t idle_default_params = {
+	.scheduler_affinity	  = 0U, // must be updated before use
+	.scheduler_affinity_valid = true,
+	.scheduler_priority	  = SCHEDULER_MIN_PRIORITY,
+	.scheduler_priority_valid = true,
+	.kind			  = THREAD_KIND_IDLE,
+	.thread			  = NULL, // must be updated before use
+};
+
+extern void
+thread_switch_boot_thread(thread_t *new_thread);
+
+// Thread size is the size of the whole thread TLS area to be allocated,
+// which is larger than 'struct thread'
+extern const size_t thread_size;
+extern const size_t thread_align;
+
+void
+idle_handle_boot_runtime_first_init(cpu_index_t boot_cpu_index)
 {
-	thread_create_t params = {
-		.scheduler_affinity	  = i,
-		.scheduler_affinity_valid = true,
-		.scheduler_priority	  = SCHEDULER_MIN_PRIORITY,
-		.scheduler_priority_valid = true,
-		.kind			  = THREAD_KIND_IDLE,
-	};
+	void_ptr_result_t ret;
+	thread_t	 *boot_thread;
 
-	thread_ptr_result_t ret =
-		partition_allocate_thread(partition_get_private(), params);
-
+	// Allocate boot CPU idle thread and TLS out of bootmem.
+	ret = bootmem_allocate(thread_size, thread_align);
 	if (ret.e != OK) {
-		panic("Unable to create idle thread");
+		panic("Unable to allocate boot idle thread");
 	}
 
-	return ret.r;
+	// For now, we just zero-initialise the thread and TLS data and call
+	// thread init event. The real setup will be done in the idle module
+	// after partitions and allocators are working.
+	boot_thread = (thread_t *)ret.r;
+
+	assert(thread_size >= sizeof(*boot_thread));
+	errno_t err_mem = memset_s(boot_thread, thread_size, 0, thread_size);
+	if (err_mem != 0) {
+		panic("Error in memset_s operation!");
+	}
+
+	thread_create_t idle_params = idle_default_params;
+
+	idle_params.scheduler_affinity = boot_cpu_index;
+	idle_params.thread	       = boot_thread;
+
+	partition_t *hyp_partition = partition_get_private();
+	trigger_object_init_thread_event(idle_params, hyp_partition);
+
+	boot_thread->cpulocal_current_cpu = boot_cpu_index;
+
+	// This must be the last operation in boot_runtime_first_init.
+	thread_switch_boot_thread(boot_thread);
 }
 
 error_t
@@ -62,35 +103,37 @@ idle_handle_object_create_thread(thread_create_t thread_create)
 	thread_t *thread = thread_create.thread;
 	assert(thread != NULL);
 
-	if (thread->kind == THREAD_KIND_IDLE) {
+	if (thread_is_kind(thread, THREAD_KIND_IDLE)) {
 		scheduler_block_init(thread, SCHEDULER_BLOCK_IDLE);
 	}
 
 	return OK;
 }
 
+static thread_t *
+idle_thread_create(cpu_index_t i)
+{
+	thread_create_t idle_params    = idle_default_params;
+	idle_params.scheduler_affinity = i;
+
+	thread_ptr_result_t ret =
+		partition_allocate_thread(partition_get_private(), idle_params);
+
+	if (ret.e != OK) {
+		panic("Unable to create idle thread");
+	}
+
+	return ret.r;
+}
+
 static void
 idle_thread_init_boot(thread_t *thread, cpu_index_t i)
 {
-	thread_create_t params = {
-		.scheduler_affinity	  = i,
-		.scheduler_affinity_valid = true,
-		.scheduler_priority	  = SCHEDULER_MIN_PRIORITY,
-		.scheduler_priority_valid = true,
-		.kind			  = THREAD_KIND_IDLE,
-	};
+	thread_create_t idle_params    = idle_default_params;
+	idle_params.scheduler_affinity = i;
+	idle_params.thread	       = thread;
 
-	// Open-coded partition_allocate_thread minus the actual allocation,
-	// which is done out of early bootmem in thread_early_init(), and the
-	// refcount init which is done at the same time.
-	partition_t *hyp_partition = partition_get_private();
-	thread->header.partition =
-		object_get_partition_additional(hyp_partition);
-	thread->header.type = OBJECT_TYPE_THREAD;
-	atomic_init(&thread->header.state, OBJECT_STATE_INIT);
-	params.thread = thread;
-
-	if (trigger_object_create_thread_event(params) != OK) {
+	if (trigger_object_create_thread_event(idle_params) != OK) {
 		panic("Unable to create idle thread");
 	}
 }
@@ -145,33 +188,12 @@ idle_thread_init(void)
 	}
 }
 
-extern void *aarch64_boot_stack;
-
 static cpu_index_t idle_boot_cpu = CPU_INDEX_INVALID;
 
 void
 idle_handle_boot_cold_init(cpu_index_t boot_cpu_index)
 {
 	idle_boot_cpu = boot_cpu_index;
-}
-
-void
-idle_handle_idle_start(void)
-{
-	partition_t *private = partition_get_private();
-
-	size_t stack_size = BOOT_STACK_SIZE;
-
-	// Free the boot stack
-	// Find a better place to free the boot stack
-	// FIXME:
-	error_t err = partition_add_heap(
-		private,
-		partition_virt_to_phys(private, (uintptr_t)&aarch64_boot_stack),
-		stack_size);
-	if (err != OK) {
-		panic("Error freeing stack to hypervisor partition");
-	}
 }
 
 static noreturn void

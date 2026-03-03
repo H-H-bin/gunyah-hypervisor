@@ -1,6 +1,6 @@
 # coding: utf-8
 #
-# © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -33,6 +33,9 @@ graph = graph  # noqa: F821
 
 logging.basicConfig()
 logger = logging.getLogger(__name__)
+
+true_strings = ('true', 't', '1', 'yes', 'y')
+false_strings = ('false', 'f', '0', 'no', 'n')
 
 
 #
@@ -69,6 +72,7 @@ config_base = 'config'
 module_base = 'hyp'
 arch_base = os.path.join(module_base, 'arch')
 interface_base = os.path.join(module_base, 'interfaces')
+map_file = os.path.join(os.getcwd(), build_dir, 'hyp.elf.map')
 
 conf_includes = set()
 modules = module_set()
@@ -76,16 +80,26 @@ modules.add('arch')
 
 interfaces = set()
 objects = set()
+objects_ast_json = set()
 external_objects = set()
 guestapis = set()
 types = set()
 hypercalls = set()
-registers = list()
+registers = set()
 test_programs = set()
 sa_html = set()
 asts = set()
 defmap_frags = set()
 deferred_aliases = []
+guestapi_only = False
+uses_interface_gen_dir = False
+
+bsp_dirs_arg = graph.get_argument('bsp_dirs', '')
+bsp_dirs = tuple(bsp_dirs_arg.split(',')) if bsp_dirs_arg else ()
+
+# check for whether need to generate unreachable functions list
+gen_callgraph = graph.get_argument(
+    "callgraph", 'false').lower() in true_strings
 
 
 def deferred_alias(alias):
@@ -155,21 +169,40 @@ def var_subst(w):
 # Variant setup
 #
 def arch_match(arch_name):
+    if not target_arch_names:
+        raise KeyError("Cannot match arch in quality config")
     return arch_name in target_arch_names
 
 
-def process_variant_conf(variant_key, conf, basename):
-    graph.add_gen_source(conf)
+def quality_match(quality_name):
+    return quality_name in quality_aliases
 
+
+def process_variant_conf(variant_key, conf, basename):
+    quality = variant_key == 'quality'
     platform = variant_key == 'platform'
     featureset = variant_key == 'featureset'
     allow_arch = variant_key and not platform
 
-    if platform:
+    if platform and basename is not None:
         if basename in target_arch_names:
             logger.error("existing arch: %s", basename)
         target_arch_names.append(basename)
-    with open(conf, 'r', encoding='utf-8') as f:
+
+    if quality and basename is not None:
+        quality_aliases.append(basename)
+
+    for src_dir in bsp_dirs:
+        conf_path = os.path.join(src_dir, conf)
+        if os.path.isfile(conf_path):
+            break
+    else:
+        src_dir = '.'
+        conf_path = conf
+
+    graph.add_gen_source(conf_path)
+
+    with open(conf_path, 'r', encoding='utf-8') as f:
         for s in f.readlines():
             words = s.split()
             if not words or words[0].startswith('#'):
@@ -177,17 +210,21 @@ def process_variant_conf(variant_key, conf, basename):
                 pass
             elif words[0] == 'include':
                 include_conf = os.path.join(config_base,
-                                            words[1] + '.conf')
+                                            words[1] + '.inc')
                 if include_conf not in conf_includes:
-                    process_variant_conf(None, include_conf, None)
+                    process_variant_conf(variant_key, include_conf, None)
                     conf_includes.add(include_conf)
+            elif quality and words[0] == 'alias_quality':
+                quality_aliases.extend(words[1:])
             elif featureset and words[0] == 'platforms':
-                global featureset_platforms
-                featureset_platforms = words[1:]
+                featureset_platforms.update(words[1:])
             elif platform and words[0] == 'base_arch':
                 arch_conf = os.path.join(config_base, 'arch',
                                          words[1] + '.conf')
                 process_variant_conf(variant_key, arch_conf, words[1])
+            elif platform and words[0] == 'includes':
+                d = os.path.join(src_dir, arch_base, basename, 'include')
+                graph.append_env('CPPFLAGS', '-I ' + relpath(d))
             elif platform and words[0] == 'alias_arch':
                 if words[1] in target_arch_names:
                     logger.error("Alias existing arch: %s",
@@ -200,11 +237,9 @@ def process_variant_conf(variant_key, conf, basename):
                                    abi_arch, basename)
                 abi_arch = basename
             elif platform and words[0] == 'defines_link':
-                global link_arch
-                if link_arch is not None:
-                    logger.warning("Duplicate link definitions: %s and %s",
-                                   link_arch, basename)
-                link_arch = basename
+                global linker_script
+                linker_script = os.path.join(src_dir, arch_base, basename,
+                                             'link.lds')
             elif platform and words[0] == 'target_triple':
                 global target_triple
                 if target_triple is not None:
@@ -226,6 +261,20 @@ def process_variant_conf(variant_key, conf, basename):
             elif words[0] == 'configs':
                 for c in map(var_subst, words[1:]):
                     add_global_define(c)
+            elif words[0] == 'guestapi_only':
+                global guestapi_only
+                guestapi_only = True
+            elif words[0] == 'quality_configs':
+                if quality_match(words[1]):
+                    for c in map(var_subst, words[2:]):
+                        add_global_define(c)
+            elif words[0] == 'quality_configs_override':
+                if quality_match(words[1]):
+                    for c in map(var_subst, words[2:]):
+                        add_global_define_override(c)
+            elif words[0] == 'quality_flags':
+                if quality_match(words[1]):
+                    variant_cflags.extend(map(var_subst, words[2:]))
             elif words[0] == 'arch_configs_override':
                 if arch_match(words[1]):
                     for c in map(var_subst, words[2:]):
@@ -250,8 +299,6 @@ def process_variant_conf(variant_key, conf, basename):
                 sys.exit(1)
 
 
-true_strings = ('true', 't', '1', 'yes', 'y')
-false_strings = ('false', 'f', '0', 'no', 'n')
 all_arg = graph.get_argument('all', 'false').lower()
 if all_arg in true_strings:
     default_all_variants = True
@@ -263,16 +310,17 @@ else:
 
 missing_variant = False
 abi_arch = None
-link_arch = None
+linker_script = None
 target_triple = None
 target_arch_names = []
+quality_aliases = []
 variant_cc_wrapper = []
 variant_cflags = []
 variant_cppflags = []
 variant_defines = {}
 variant_ldflags = []
 
-featureset_platforms = ['*']
+featureset_platforms = set()
 
 #
 # Configs sanity checking
@@ -322,7 +370,7 @@ def add_global_define_override(d):
     variant_defines[define] = val
 
 
-for variant_key in ('platform', 'featureset', 'quality'):
+for variant_key in ('quality', 'platform', 'featureset'):
     try:
         variant_value = graph.get_env('VARIANT_' + variant_key)
     except KeyError:
@@ -332,8 +380,9 @@ for variant_key in ('platform', 'featureset', 'quality'):
         import glob
         known_variants = frozenset(
             os.path.splitext(os.path.basename(f))[0]
+            for d in bsp_dirs + ('.',)
             for f in glob.iglob(os.path.join(
-                config_base, variant_key, '*.conf')))
+                d, config_base, variant_key, '*.conf')))
         if not known_variants:
             logger.error('No variants known for key %s', variant_key)
             sys.exit(1)
@@ -368,13 +417,10 @@ for variant_key in ('platform', 'featureset', 'quality'):
                                 variant_value + '.conf')
     process_variant_conf(variant_key, variant_conf, variant_value)
 
-if len(featureset_platforms) == 1 and \
-        featureset_platforms[0] == '*':
-    pass
-else:
-    if graph.get_env('VARIANT_platform') not in featureset_platforms:
-        # Skip plaforms not supported in the featureset
-        sys.exit(0)
+if featureset_platforms and ('*' not in featureset_platforms) and \
+        (graph.get_env('VARIANT_platform') not in featureset_platforms):
+    # Skip platforms not supported in the featureset
+    sys.exit(0)
 
 if missing_variant:
     sys.exit(1)
@@ -412,11 +458,6 @@ def template_match(template_engine, d):
 #
 # Architecture setup
 #
-
-# Add the arch-specific include directories for asm/ headers
-for arch_name in target_arch_names:
-    d = os.path.join(arch_base, arch_name, 'include')
-    graph.append_env('CPPFLAGS', '-I ' + relpath(d))
 
 # Add the arch generic include directory for asm-generic/ headers
 graph.append_env('CPPFLAGS', '-I ' + os.path.join(
@@ -456,7 +497,10 @@ graph.add_env('CLANG', os.path.join(llvm_root, 'bin', 'clang'))
 graph.add_env('CLANG_MAP', os.path.join(
     llvm_root, 'bin', 'clang-extdef-mapping'))
 
-graph.add_env('FORMATTER', os.path.join(llvm_root, 'bin', 'clang-format'))
+graph.add_env('FORMATTER',
+              '{:s} --style=file:{:s}'.format(
+                  os.path.join(llvm_root, 'bin', 'clang-format'),
+                  relpath('.clang-format')))
 
 # Use Clang to compile.
 graph.add_env('TARGET_TRIPLE', target_triple)
@@ -465,6 +509,14 @@ if variant_cc_wrapper:
     graph.append_env('TARGET_CC', '${CLANG} -target ${TARGET_TRIPLE}')
 else:
     graph.add_env('TARGET_CC', '${CLANG} -target ${TARGET_TRIPLE}')
+
+unreach_func_gen_script = os.path.join(
+    'tools', 'cpptest', 'get_unreachable_functions.py')
+graph.add_env('GEN_UNREACHABLE_FUNCTIONS', relpath(unreach_func_gen_script))
+
+# LDFLAGS to create crt map file
+graph.append_env("LDFLAGS", '-Wl,-Map,' + map_file)
+
 
 # Use Clang with LLD to link.
 graph.add_env('TARGET_LD', '${TARGET_CC} -fuse-ld=lld')
@@ -488,14 +540,17 @@ graph.append_env('CFLAGS', '-Wno-covered-switch-default')
 # No need for C++ compatibility
 graph.append_env('CFLAGS', '-Wno-c++98-compat')
 graph.append_env('CFLAGS', '-Wno-c++-compat')
-# No need for pre-C99 compatibility; we always use C18
+# No need for pre-C11 compatibility, we always use C18
+graph.append_env('CFLAGS', '-Wno-pre-c11-compat')
 graph.append_env('CFLAGS', '-Wno-declaration-after-statement')
 # No need for GCC compatibility
 graph.append_env('CFLAGS', '-Wno-gcc-compat')
 # Allow GCC's _Alignof(lvalue) as a project deviation from MISRA rule 1.2.
 graph.append_env('CFLAGS', '-Wno-gnu-alignof-expression')
-# Allow GCC's case ranges as a project deviation from MISRA rule 1.2
+# Allow GCC's case ranges as a project deviation from MISRA rule 1.2. These
+# are also a proposed extension for C2y, so disable that warning too.
 graph.append_env('CFLAGS', '-Wno-gnu-case-range')
+graph.append_env('CFLAGS', '-Wno-c2y-extensions')
 # Allow Clang nullability as a project deviation from MISRA rule 1.2.
 graph.append_env('CFLAGS', '-Wno-nullability-extension')
 # Automatically requiring negative capabilities breaks analysis of reentrant
@@ -551,6 +606,18 @@ graph.add_rule('cc',
                '$TARGET_CPPFLAGS $LOCAL_CFLAGS $LOCAL_CPPFLAGS -MD -MF '
                '${out}.d -c -o ${out} ${in}',
                depfile='${out}.d', compdbs=[compdb_file])
+# Generate a JSON format AST dump for each source file. The dumps are
+# very large so we gzip them.
+graph.add_rule('cc_ast_json',
+               '$TARGET_CC $CFLAGS $CPPFLAGS $TARGET_CFLAGS '
+               '$TARGET_CPPFLAGS $LOCAL_CFLAGS $LOCAL_CPPFLAGS '
+               ' -fsyntax-only -Xclang -ast-dump=json ${in} '
+               '| gzip -9 > ${out}')
+# Generate callgraph from AST dumps and then use it to find out a list
+# of unreachable functions. Output is generated in the format expected
+# by Parasoft tools.
+graph.add_rule('gen_unreachable_psrc',
+               'python $GEN_UNREACHABLE_FUNCTIONS ${in} -m $MAP -o ${out}')
 # Preprocess a DSL file.
 graph.add_rule('cpp-dsl', '${CPP} $CPPFLAGS $TARGET_CPPFLAGS $LOCAL_CPPFLAGS '
                '-undef $DSL_DEFINES -x c -P -MD -MF ${out}.d -MT ${out} '
@@ -560,12 +627,28 @@ graph.add_rule('cpp-dsl', '${CPP} $CPPFLAGS $TARGET_CPPFLAGS $LOCAL_CPPFLAGS '
 graph.add_rule('ld', '$TARGET_LD $LDFLAGS $TARGET_LDFLAGS $LOCAL_LDFLAGS '
                '${in} -o ${out}')
 
-# CTU rule to generate the .ast files
+
+# Directory to hold all the .ast files for CTU analysis
 ctu_dir = os.path.join(build_dir, "ctu")
 graph.add_env('CTU_DIR', relpath(ctu_dir))
+
+
+# Map the source paths to their corresponding .ast locations under CTU_DIR
+ctu_src_map = [
+    (os.path.abspath(os.getcwd()), '.'),
+    (os.path.abspath(graph.build_dir), 'build'),
+]
+for (i, bsp) in enumerate(bsp_dirs):
+    ctu_src_map.append((os.path.abspath(bsp), 'bsp' + str(i)))
+
+ctu_map_sed = '; '.join(r's| \+{:s}/| {:s}/|g'.format(*m) for m in ctu_src_map)
+graph.add_env('CTU_MAP_SED', ctu_map_sed)
+
+# CTU rule to generate the .ast files
 graph.add_rule('cc-ctu-ast',
                '$TARGET_CC $CFLAGS $CPPFLAGS $TARGET_CFLAGS $TARGET_CPPFLAGS '
                '$LOCAL_CFLAGS $LOCAL_CPPFLAGS -DCLANG_CTU_AST '
+               '-D__clang_analyzer__=1 '
                '-MD -MF ${out}.d -Wno-unused-command-line-argument '
                '-emit-ast -o${out} ${in}',
                depfile='${out}.d')
@@ -575,7 +658,7 @@ graph.add_env('COMPDB_DIR', compdb_file)
 # CTU rule to generate the externalDefMap files
 graph.add_rule('cc-ctu-map',
                '$CLANG_MAP -p $COMPDB_DIR ${in} | '
-               'sed -e "s/\\$$/.ast/g; s| \\+${ROOT_DIR}/| |g" > '
+               'sed -e "s/\\$$/.ast/g; ${CTU_MAP_SED}" > '
                '${out}')
 
 graph.add_rule('cc-ctu-all', 'cat ${in} > ${out}')
@@ -596,7 +679,9 @@ graph.add_rule('cc-analyze',
                '-Xanalyzer -analyzer-config '
                '-Xanalyzer ctu-dir=$CTU_DIR '
                '-Xanalyzer -analyzer-disable-checker '
-               '-Xanalyzer alpha.core.FixedAddr '
+               '-Xanalyzer core.FixedAddressDereference '
+               '-Xanalyzer -analyzer-disable-checker '
+               '-Xanalyzer security.ArrayBound '
                '-o ${out} '
                '${in}')
 
@@ -606,23 +691,35 @@ graph.add_rule('cc-analyze',
 #
 def process_dir(d, handler):
     conf = os.path.join(d, 'build.conf')
+
     with open(conf, 'r', encoding='utf-8') as f:
         handler(d, f)
         graph.add_gen_source(conf)
 
 
-def module_local_headers_path(d):
-    return os.path.join(build_dir, d, 'local_headers_gen')
+def module_build_path(d, obj_type):
+    return os.path.join(build_dir, obj_type,
+                        os.path.basename(os.path.dirname(d)),
+                        os.path.basename(d))
 
 
-def module_local_headers_gen(d):
-    return deferred_alias(module_local_headers_path(d))
+def module_gen_path(d):
+    return module_build_path(d, 'autogen')
+
+
+def module_obj_path(d):
+    return module_build_path(d, 'obj')
+
+
+def module_local_headers_target(d):
+    return os.path.join(module_gen_path(d), 'local_headers_gen')
 
 
 def parse_module_conf(d, f):
     local_env = {}
     module = os.path.basename(d)
-    local_headers_gen, local_headers = module_local_headers_gen(d)
+    local_headers_gen, local_headers = \
+        deferred_alias(module_local_headers_target(d))
     add_include_dir(get_event_local_inc_dir(module), local_env)
     src_requires = (
         hyptypes_header,
@@ -637,7 +734,13 @@ def parse_module_conf(d, f):
     )
     have_events = False
 
-    for s in f.readlines():
+    # Use a queue to process all config lines, including included ones
+    from collections import deque
+    config_queue = deque(f.readlines())
+    processed_includes = set()  # Prevent circular includes
+
+    while config_queue:
+        s = config_queue.popleft()
         words = s.split()
         if not words or words[0].startswith('#'):
             # Skip comments or blank lines
@@ -645,9 +748,9 @@ def parse_module_conf(d, f):
         elif words[0] == 'interface':
             for w in map(var_subst, words[1:]):
                 # Temporarily exclude legacy interface duplicates
-                # FIXME:
-                if w in interfaces and w not in ['platform', 'platform_qcom',
-                                                 'smccc', 'watchdog', 'psci']:
+                # FIXME: QC Gunyah issue #261
+                if w in interfaces and w not in ['platform', 'smccc',
+                                                 'watchdog', 'psci']:
                     raise KeyError(
                         "duplicate interface: {:s}, in {}".format(w, f.name))
                 interfaces.add(w)
@@ -663,10 +766,7 @@ def parse_module_conf(d, f):
                 have_events = True
         elif words[0] == 'registers':
             for w in map(var_subst, words[1:]):
-                f = os.path.join(d, w)
-                if f in registers:
-                    raise KeyError("duplicate registers: {:s}".format(f))
-                registers.append(f)
+                registers.add(add_register_dsl(d, w, local_env))
         elif words[0] == 'local_include':
             add_include(d, 'include', local_env)
         elif words[0] == 'source':
@@ -688,7 +788,7 @@ def parse_module_conf(d, f):
             if arch_match(words[1]):
                 for w in map(var_subst, words[2:]):
                     types.add(add_type_dsl(
-                        os.path.join(d, words[1]), w, local_env))
+                        d, os.path.join(words[1], w), local_env))
         elif words[0] == 'arch_hypercalls':
             if arch_match(words[1]):
                 for w in map(var_subst, words[2:]):
@@ -698,16 +798,13 @@ def parse_module_conf(d, f):
             if arch_match(words[1]):
                 for w in map(var_subst, words[2:]):
                     event_sources.add(add_event_dsl(
-                        os.path.join(d, words[1]), w, local_env))
+                        d, os.path.join(words[1], w), local_env))
                     have_events = True
         elif words[0] == 'arch_registers':
             if arch_match(words[1]):
                 for w in map(var_subst, words[2:]):
-                    f = os.path.join(d, words[1], w)
-                    if f in registers:
-                        raise KeyError(
-                            "duplicate arch_registers: {:s}".format(f))
-                    registers.append(f)
+                    registers.add(add_register_dsl(
+                        d, os.path.join(words[1], w), local_env))
         elif words[0] == 'arch_local_include':
             if arch_match(words[1]):
                 add_include(d, os.path.join(words[1], 'include'), local_env)
@@ -737,24 +834,25 @@ def parse_module_conf(d, f):
         elif words[0] == 'base_module':
             for w in map(var_subst, words[1:]):
                 # Require the base module's generated headers
+                module_dir = find_module_dir(w)
                 local_headers.append(graph.future_alias(
-                    module_local_headers_path(w)))
+                    module_local_headers_target(w)))
+                module_gen_dir = module_gen_path(w)
                 # FIXME: We can't properly determine whether there are
                 # local_includes or not unless we do two-pass parsing of the
                 # build configs, so we just add them all.
                 logger.disabled = True
-                add_include(w, 'include', local_env)
-                add_include(os.path.join(build_dir, w), 'include', local_env)
+                add_include(module_dir, 'include', local_env)
+                add_include(module_gen_dir, 'include', local_env)
                 # FIXME: We assume module has all possible arch include dirs
                 for arch_name in target_arch_names:
                     arch_dir = os.path.join(arch_name, 'include')
-                    add_include(w, arch_dir, local_env)
-                    add_include(os.path.join(build_dir, w),
-                                arch_dir, local_env)
+                    add_include(module_dir, arch_dir, local_env)
+                    add_include(module_gen_dir, arch_dir, local_env)
                 logger.disabled = False
                 modules.add(os.path.relpath(w, module_base))
-                if w not in module_dirs:
-                    module_dirs.append(w)
+                if module_dir not in module_dirs:
+                    module_dirs.append(module_dir)
         elif words[0] == 'template':
             ts = template_match(words[1], d)
             for w in map(var_subst, words[2:]):
@@ -786,6 +884,29 @@ def parse_module_conf(d, f):
             logger.error('assert_config failed "%s" in module conf for %s',
                          test, d)
             sys.exit(1)
+        elif words[0] == 'build_include':
+            inc_dir = words[1]
+            inc_build_conf = os.path.join(d, inc_dir, 'build.conf')
+
+            # Prevent circular includes
+            abs_inc_path = os.path.abspath(inc_build_conf)
+            if abs_inc_path in processed_includes:
+                logger.error(
+                    'Circular build_include detected: %s', inc_build_conf)
+                sys.exit(1)
+
+            if not os.path.exists(inc_build_conf):
+                logger.error('build_include file: %s is missing',
+                             inc_build_conf)
+                sys.exit(1)
+
+            processed_includes.add(abs_inc_path)
+            graph.add_gen_source(inc_build_conf)
+
+            with open(inc_build_conf, 'r', encoding='utf-8') as inc:
+                inc_lines = inc.readlines()
+                # Add to front of queue for immediate processing
+                config_queue.extendleft(reversed(inc_lines))
         else:
             # TODO: dependencies, configuration variables, etc
             # Restructure this to use a proper parser first
@@ -802,11 +923,15 @@ def parse_interface_conf(d, f):
     local_env = {}
     interface = os.path.basename(d)
     have_events = False
+
     for s in f.readlines():
         words = s.split()
         if not words or words[0].startswith('#'):
             # Skip comments or blank lines
             pass
+        elif words[0] == 'includes':
+            inc_dir = os.path.join(d, 'include')
+            graph.append_env('CPPFLAGS', '-I ' + relpath(inc_dir))
         elif words[0] == 'types':
             for w in map(var_subst, words[1:]):
                 types.add(add_type_dsl(d, w, local_env))
@@ -819,18 +944,21 @@ def parse_interface_conf(d, f):
                 have_events = True
         elif words[0] == 'registers':
             for w in map(var_subst, words[1:]):
-                f = os.path.join(d, w)
-                if f in registers:
-                    raise KeyError("duplicate {:s}".format(f))
-                registers.append(f)
+                registers.add(add_register_dsl(d, w, local_env))
         elif words[0] == 'macros':
             for w in map(var_subst, words[1:]):
                 add_macro_include(d, 'include', w)
+        elif words[0] == 'arch_includes':
+            for arch in words[1:]:
+                if arch_match(arch):
+                    inc_dir = os.path.join(interface_base, interface, arch,
+                                           'include')
+                    graph.append_env('CPPFLAGS', '-I ' + relpath(inc_dir))
         elif words[0] == 'arch_types':
             if arch_match(words[1]):
                 for w in map(var_subst, words[2:]):
                     types.add(add_type_dsl(
-                        os.path.join(d, words[1]), w, local_env))
+                        d, os.path.join(words[1], w), local_env))
         elif words[0] == 'arch_hypercalls':
             if arch_match(words[1]):
                 for w in map(var_subst, words[2:]):
@@ -840,7 +968,7 @@ def parse_interface_conf(d, f):
             if arch_match(words[1]):
                 for w in map(var_subst, words[2:]):
                     event_sources.add(add_event_dsl(
-                        os.path.join(d, words[1]), w, local_env))
+                        d, os.path.join(words[1], w), local_env))
                     have_events = True
         elif words[0] == 'arch_macros':
             if arch_match(words[1]):
@@ -867,7 +995,7 @@ def parse_interface_conf(d, f):
 def add_include_dir(d, local_env):
     if not d.startswith(build_dir):
         if not os.path.isdir(d):
-            logger.warning("include path: '{:s}' non-existant!".format(d))
+            logger.warning("include path: '{:s}' non-existent!".format(d))
     if 'LOCAL_CPPFLAGS' in local_env:
         local_env['LOCAL_CPPFLAGS'] += ' '
     else:
@@ -899,7 +1027,14 @@ def add_source_file(src, obj, requires, local_env):
     objects.add(obj)
 
     if do_sa_html and src.endswith(".c"):
-        ast = os.path.join(ctu_dir, src + ".ast")
+        for src_base, ctu_subdir in ctu_src_map:
+            if os.path.abspath(src).startswith(src_base):
+                ast = os.path.join(ctu_dir, ctu_subdir,
+                                   os.path.relpath(src + '.ast', src_base))
+                break
+        else:
+            logger.error('No ctu map matching %s', src)
+            sys.exit(1)
         graph.add_target([ast], 'cc-ctu-ast', [src], requires=requires,
                          **file_env)
         asts.add(ast)
@@ -914,12 +1049,18 @@ def add_source_file(src, obj, requires, local_env):
                          depends=(ast_gen, defmap), **file_env)
         sa_html.add(sa_html_dir)
 
+    if gen_callgraph and src.endswith(".c"):
+        ast_json = obj + '.ast.json.gz'
+        graph.add_target([ast_json], 'cc_ast_json', [src], requires=requires,
+                         depends=[obj], **file_env)
+        objects_ast_json.add(ast_json)
+
 
 def add_source(module_dir, src, requires, local_env):
     if not src.endswith(".c") and not src.endswith(".S"):
         logger.error('unknown source file type for: %s', src)
         sys.exit(1)
-    out_dir = os.path.join(build_dir, module_dir, 'obj')
+    out_dir = module_obj_path(module_dir)
     i = os.path.join(module_dir, 'src', src)
     o = os.path.join(out_dir, src + '.o')
     add_source_file(i, o, requires, local_env)
@@ -932,7 +1073,7 @@ def add_macro_include(module_dir, include, src):
 
 
 def add_preproc_dsl(module_dir, src, **local_env):
-    out_dir = os.path.join(build_dir, module_dir)
+    out_dir = module_gen_path(module_dir)
     i = os.path.join(module_dir, src)
     o = os.path.join(out_dir, src + '.pp')
     graph.add_target([o], 'cpp-dsl', [i], **local_env)
@@ -954,13 +1095,17 @@ def add_event_dsl(module_dir, src, local_env):
                            DSL_DEFINES='-D__EVENTS_DSL__', **local_env)
 
 
+def add_register_dsl(module_dir, src, local_env):
+    return add_preproc_dsl(module_dir, src, **local_env)
+
+
 def add_template(ts, d, arch, tmpl_file, requires, local_env, module, headers):
     ext = os.path.splitext(tmpl_file)[1]
     is_module = module is not None
 
-    if ext == '.h' and not headers:
+    if ext == '.h':
         if is_module:
-            mod_gen_dir = os.path.join(build_dir, d, arch)
+            mod_gen_dir = os.path.join(module_gen_path(d), arch)
             add_include(mod_gen_dir, 'include', local_env)
         else:
             assert headers is None
@@ -986,15 +1131,14 @@ def add_event_handlers(module):
     event_src_requires = (
         hyptypes_header,
         typed_headers_gen,
+        interface_headers_gen,
         get_event_inc_file(module),
     )
-    add_source_file(get_event_src_file(module), obj, event_src_requires,
-                    {})
+    add_source_file(get_event_src_file(module), obj, event_src_requires, {})
 
 
 # Header locations
 interface_gen_dir = os.path.join(build_dir, 'interface', 'include')
-graph.append_env('CPPFLAGS', '-I ' + relpath(interface_gen_dir))
 objects_build_dir = os.path.join(build_dir, 'objects')
 events_inc_dir = os.path.join(build_dir, 'events', 'include')
 
@@ -1062,7 +1206,7 @@ guestapis.add(hypguest_interface_src)
 codegen_script = os.path.join('tools', 'codegen', 'codegen.py')
 graph.add_env('CODEGEN', relpath(codegen_script))
 graph.add_rule('code_gen_c', '${CODEGEN} ${CODEGEN_ARCHS} ${CODEGEN_CONFIGS} '
-               '-f ${FORMATTER} -o ${out} -d ${out}.d ${in}',
+               '-f "${FORMATTER}" -o ${out} -d ${out}.d ${in}',
                depfile='${out}.d')
 graph.add_rule('code_gen', '${CODEGEN} ${CODEGEN_ARCHS} '
                '${CODEGEN_CONFIGS} -o ${out} -d ${out}.d ${in}',
@@ -1093,11 +1237,24 @@ for c in variant_defines:
 #
 # Collect the lists of objects, modules and interfaces
 #
-module_dirs = sorted(os.path.join(module_base, m) for m in modules)
+
+
+def find_module_dir(m, prefix=None):
+    d = os.path.join(prefix, m) if prefix else m
+    for src_dir in bsp_dirs:
+        path = os.path.join(src_dir, d)
+        if os.path.isfile(os.path.join(path, 'build.conf')):
+            break
+    else:
+        path = d
+    return path
+
+
+module_dirs = sorted(find_module_dir(m, prefix=module_base) for m in modules)
 for d in module_dirs:
     process_dir(d, parse_module_conf)
 for i in sorted(interfaces):
-    d = os.path.join(interface_base, i)
+    d = find_module_dir(i, prefix=interface_base)
     process_dir(d, parse_interface_conf)
 
 
@@ -1146,24 +1303,25 @@ for module_dir, target, arch, src_requires, is_module, local_env, headers \
     template = os.path.join(module_dir, arch, 'templates', target + '.tmpl')
     if ext == '.h':
         if is_module:
-            out_dir = os.path.join(build_dir, module_dir, arch, 'include')
-            add_include_dir(out_dir, local_env)
+            out_dir = os.path.join(
+                module_gen_path(module_dir), arch, 'include')
         else:
             assert not arch
             out_dir = interface_gen_dir
+            uses_interface_gen_dir = True
         out_source = os.path.join(out_dir, target)
         headers.append(out_source)
     elif ext in ('.c', '.S') and objects is not None:
-        out_dir = os.path.join(build_dir, module_dir, arch, 'src')
+        out_dir = os.path.join(module_gen_path(module_dir), arch, 'src')
         out_source = os.path.join(out_dir, target)
         out_obj = out_source + '.o'
         add_source_file(out_source, out_obj, src_requires, local_env)
     elif ext == '.ev':
-        out_dir = os.path.join(build_dir, module_dir)
+        out_dir = module_gen_path(module_dir)
         out_source = os.path.join(out_dir, target)
         event_sources.add(out_source)
     elif ext == '.tc':
-        out_dir = os.path.join(build_dir, module_dir)
+        out_dir = module_gen_path(module_dir)
         out_source = os.path.join(out_dir, target)
         types.add(add_type_dsl(out_dir, target, local_env))
     else:
@@ -1172,6 +1330,11 @@ for module_dir, target, arch, src_requires, is_module, local_env, headers \
     graph.add_target([out_source],
                      'code_gen_c' if ext in ('.c', '.h') else 'code_gen',
                      [template], depends=[codegen_script])
+
+
+# A template produced output in interface_gen_dir; add it to the include path
+if uses_interface_gen_dir:
+    graph.append_env('CPPFLAGS', '-I ' + relpath(interface_gen_dir))
 
 
 #
@@ -1217,7 +1380,7 @@ objects_script = os.path.join('tools', 'objects', 'object_gen.py')
 graph.add_env('OBJECTS', relpath(objects_script))
 graph.add_rule('object_gen', '${OBJECTS} -t ${in} '
                '${OBJ} -o ${out}')
-graph.add_rule('object_gen_c', '${OBJECTS} -t ${in} -f ${FORMATTER} '
+graph.add_rule('object_gen_c', '${OBJECTS} -t ${in} -f "${FORMATTER}" '
                '${OBJ} -o ${out}')
 
 
@@ -1267,23 +1430,24 @@ graph.add_rule('types_parse', '${TYPED} -a ${ABI} -d ${out}.d '
 graph.add_target([types_pickle], 'types_parse', sorted(types), ABI=abi_arch)
 
 graph.add_env('TYPED', relpath(types_script))
-graph.add_rule('gen_types', '${TYPED} -a ${ABI} -f ${FORMATTER} -d ${out}.d '
+graph.add_rule('gen_types', '${TYPED} -a ${ABI} -f "${FORMATTER}" -d ${out}.d '
                '-p ${in} -o ${out}', depfile='${out}.d')
 graph.add_target(hyptypes_header, 'gen_types', types_pickle, ABI=abi_arch)
 
 # gen guest type
 graph.add_rule('gen_public_types',
-               '${TYPED} --public -a ${ABI} -f ${FORMATTER} -d ${out}.d '
+               '${TYPED} --public -a ${ABI} -f "${FORMATTER}" -d ${out}.d '
                '-p ${in} -o ${out}', depfile='${out}.d')
 graph.add_target(guestapi_interface_types, 'gen_public_types',
                  types_pickle, ABI=abi_arch)
 
-graph.add_rule('gen_types_tmpl', '${TYPED} -a ${ABI} -f ${FORMATTER} '
+graph.add_rule('gen_types_tmpl', '${TYPED} -a ${ABI} -f "${FORMATTER}" '
                '-d ${out}.d -t ${TEMPLATE} -p ${in} -o ${out}',
                depfile='${out}.d')
 
 graph.add_rule('gen_public_types_tmpl', '${TYPED} --public -a ${ABI} '
-               '-f ${FORMATTER} -d ${out}.d -t ${TEMPLATE} -p ${in} -o ${out}',
+               '-f "${FORMATTER}" -d ${out}.d -t ${TEMPLATE} '
+               '-p ${in} -o ${out}',
                depfile='${out}.d')
 
 typed_headers = []
@@ -1292,14 +1456,14 @@ for module_dir, target, arch, src_requires, is_module, local_env, headers \
     ext = os.path.splitext(target)[1]
     template = os.path.join(module_dir, arch, 'templates', target + '.tmpl')
     if ext == '.h':
-        out = os.path.join(build_dir, 'include', target)
+        out = os.path.join(build_includes, target)
         typed_headers.append(out)
 
         graph.add_target([out], 'gen_types_tmpl', types_pickle,
                          depends=[template], TEMPLATE=relpath(template),
                          ABI=abi_arch)
     elif ext == '.c':
-        out = os.path.join(build_dir, module_dir, target)
+        out = os.path.join(module_gen_path(module_dir), 'src', target)
 
         graph.add_target([out], 'gen_types_tmpl', types_pickle,
                          depends=[template], TEMPLATE=relpath(template),
@@ -1333,10 +1497,6 @@ for module_dir, target, arch, src_requires, is_module, local_env, headers in \
 
 guestapis.add(guestapi_interface_types)
 
-guestapi_gen = os.path.join(build_dir, 'guestapi_gen')
-graph.add_alias(guestapi_gen, sorted(guestapis))
-graph.add_default_target(guestapi_gen, True)
-
 #
 # Setup the hypercalls generator
 #
@@ -1347,10 +1507,10 @@ hypercalls_template_path = os.path.join('tools', 'hypercalls', 'templates')
 hypercalls_guest_templates = (('guest_interface.c', hypguest_interface_src),
                               ('guest_interface.h', hypguest_interface_header))
 
-# FIXME:
+# FIXME: QC Gunyah issue #51
 # FIXME: upgrade Lark and remove LANG env workaround.
 graph.add_rule('hypercalls_gen', 'LANG=C.UTF-8'
-               ' ${HYPERCALLS} -a ${ABI} -f ${FORMATTER}'
+               ' ${HYPERCALLS} -a ${ABI} -f "${FORMATTER}"'
                ' -d ${out}.d -t ${TEMPLATE} -p ${TYPES_PICKLE} ${in}'
                ' -o ${out}', depfile='${out}.d')
 
@@ -1359,9 +1519,9 @@ for module_dir, target, arch, src_requires, is_module, local_env, headers in \
     template = os.path.join(module_dir, arch, 'templates', target + '.tmpl')
     out_ext = os.path.splitext(target)[1]
     if out_ext == '.h':
-        out = os.path.join(build_dir, 'include', target)
+        out = os.path.join(build_includes, target)
     elif out_ext in ('.c', '.S'):
-        out = os.path.join(build_dir, module_dir, 'src', target)
+        out = os.path.join(module_gen_path(module_dir), 'src', target)
     else:
         logger.error("Unsupported template file: %s", target)
         sys.exit(1)
@@ -1377,7 +1537,8 @@ for module_dir, target, arch, src_requires, is_module, local_env, headers in \
             hyptypes_header,
             hypercalls_headers_gen,
             typed_headers_gen,
-            event_headers_gen
+            interface_headers_gen,
+            event_headers_gen,
         )
         add_source_file(out, oo, requires, local_env)
 
@@ -1422,8 +1583,8 @@ for module in sorted(interfaces_with_events | modules_with_events):
     event_out = get_event_src_file(module)
     graph.add_target([event_out], 'event_gen', events_pickle,
                      MODULE=module, TEMPLATE=relpath(event_src_tmpl),
+                     OPTIONS='-f "${FORMATTER}"',
                      depends=[event_src_tmpl])
-#                     OPTIONS='-f ${FORMATTER}',
 
 for module in sorted(modules_with_events):
     # Gen handler headers
@@ -1442,23 +1603,16 @@ graph.add_alias(ast_gen, sorted(asts))
 
 registers_script = os.path.join('tools', 'registers', 'register_gen.py')
 graph.add_env('REGISTERS', relpath(registers_script))
-graph.add_rule('registers_gen', '${REGISTERS} -t ${TEMPLATE} -f ${FORMATTER} '
+graph.add_rule('registers_gen',
+               '${REGISTERS} -t ${TEMPLATE} -f "${FORMATTER}" '
                '-o ${out} -p ${TYPES_PICKLE} ${in}')
-
-registers_pp = list()
-
-# Pre-process the register scripts
-for f in registers:
-    f_pp = os.path.join(build_dir, f + '.pp')
-    graph.add_target([f_pp], 'cpp-dsl', [f])
-    registers_pp.append(f_pp)
 
 for module_dir, target, arch, src_requires, is_module, local_env, headers in \
         registers_templates:
     template = os.path.join(module_dir, arch, 'templates', target + '.tmpl')
 
     header = os.path.join(build_includes, target)
-    graph.add_target([header], 'registers_gen', registers_pp,
+    graph.add_target([header], 'registers_gen', sorted(registers),
                      TEMPLATE=relpath(template),
                      TYPES_PICKLE=relpath(types_pickle),
                      depends=[types_pickle, template, registers_script])
@@ -1469,7 +1623,8 @@ for alias, deps in deferred_aliases:
 #
 # Build version setup
 #
-version_file = os.path.join('hyp', 'core', 'boot', 'include', 'version.h')
+version_module_dir = find_module_dir('core/version', prefix=module_base)
+version_file = os.path.join(version_module_dir, 'include', 'version.h')
 
 if os.path.exists(version_file):
     graph.add_rule('version_copy', 'cp ${in} ${out}')
@@ -1479,12 +1634,9 @@ else:
     graph.add_rule('version_gen', 'PYTHONPATH=' +
                    relpath(os.path.join('tools', 'utils')) + ' ' +
                    relpath(ver_script) + ' -C ' + relpath('.') +
+                   ''.join(f' -O {d:s}' for d in bsp_dirs) +
                    ' -o ${out}', restat=True)
-    import subprocess
-    gitdir = subprocess.check_output(['git', 'rev-parse', '--git-dir'])
-    gitdir = gitdir.decode('utf-8').strip()
-    graph.add_target([version_header], 'version_gen',
-                     ['{:s}/logs/HEAD'.format(gitdir)], always=True)
+    graph.add_target([version_header], 'version_gen', always=True)
 
 #
 # Symbols version setup
@@ -1494,17 +1646,15 @@ graph.add_rule('sym_version_gen', relpath(sym_ver_script) + ' > ${out}')
 graph.add_target([sym_version_header], 'sym_version_gen', always=True)
 
 #
-# Includes setup
-#
-
-# Add module interfaces to the global CPPFLAGS
-for interface in sorted(interfaces):
-    d = os.path.join(interface_base, interface, 'include')
-    graph.append_env('CPPFLAGS', '-I ' + relpath(d))
-
-#
 # Top-level targets
 #
+
+guestapi_gen = os.path.join(build_dir, 'guestapi_gen')
+graph.add_alias(guestapi_gen, sorted(guestapis))
+graph.add_default_target(guestapi_gen, True)
+
+if guestapi_only:
+    sys.exit(0)
 
 # Run the static analyser if 'enable_sa' is set in command line
 if do_sa_html:
@@ -1513,20 +1663,27 @@ if do_sa_html:
     graph.add_default_target(sa_alias)
 
 # Pre-process the linker script
-linker_script_in = os.path.join(arch_base, link_arch, 'link.lds')
-linker_script = os.path.join(build_dir, 'link.lds.pp')
-graph.add_target([linker_script], 'cpp-dsl',
-                 [linker_script_in], requires=[hypconstants_header])
+linker_script_pp = os.path.join(build_dir, 'link.lds.pp')
+graph.add_target([linker_script_pp], 'cpp-dsl',
+                 [linker_script], requires=[hypconstants_header])
 
 # Link the hypervisor ELF file
 if do_partial_link:
     hyp_elf = os.path.join(build_dir, 'hyp.o')
     graph.append_env('TARGET_LDFLAGS', '-r -Wl,-x')
-    graph.add_default_target(linker_script)
+    graph.add_default_target(linker_script_pp)
 else:
     hyp_elf = os.path.join(build_dir, 'hyp.elf')
     graph.append_env('TARGET_LDFLAGS',
-                     '-Wl,-T,{:s}'.format(relpath(linker_script)))
+                     '-Wl,-T,{:s}'.format(relpath(linker_script_pp)))
 graph.add_target([hyp_elf], 'ld', sorted(objects | external_objects),
-                 depends=[linker_script])
+                 depends=[linker_script_pp], byproducts=map_file)
 graph.add_default_target(hyp_elf)
+
+# gen callgraph
+if gen_callgraph:
+    exclusion_symbol_file = os.path.join(build_dir, 'excludeSymbols.psrc')
+    graph.add_target([exclusion_symbol_file], 'gen_unreachable_psrc',
+                     sorted(objects_ast_json), MAP=map_file,
+                     depends=[map_file])
+    graph.add_default_target(exclusion_symbol_file)

@@ -1,4 +1,4 @@
-// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -39,6 +39,7 @@
 \#include <cpulocal.h>
 \#include <log.h>
 \#include <panic.h>
+\#include <qcbor.h>
 \#include <trace.h>
 \#include <thread.h>
 
@@ -99,7 +100,16 @@ vcpu_arch_handle_boot_cpu_cold_init(cpu_index_t cpu)
 		case CORE_ID_${cpu_id}:
 #end for
 			// Needs an SMC call or switch to AArch32
+\#if defined(ARCH_ARM_SPECTRE_BHB_WARN) && !defined(NDEBUG) && defined(VERBOSE) && VERBOSE
+			CPULOCAL_BY_INDEX(vcpu_aarch64_vectors, cpu) =
+				(uintptr_t)&vcpu_aarch64_vectors;
+			LOG(ERROR, WARN,
+			    "No spectre-BHB firmware support yet for core {:d}:{:d}",
+			    cpu, (register_t)core_id);
+			break;
+\#else
 			panic("No firmware support for spectre-BHB yet!");
+\#endif
 #end if
 #if len($hwworkaround_cores)
 #for cpu_id in sorted(hwworkaround_cores):

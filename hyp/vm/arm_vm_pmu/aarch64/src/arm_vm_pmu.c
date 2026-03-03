@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -47,7 +47,6 @@
 // the context switching of the PMU registers. Currently it looks like Linux
 // does not actually comply with this standard anyway, except for writing the
 // debugger claim bits in the statistical profiling driver.
-// FIXME:
 
 #if (ARCH_ARM_PMU_VER < 3)
 #error Only PMUv3 and above can be implemented in ARMv8/ARMv9.
@@ -170,12 +169,11 @@ arm_vm_pmu_load_state(thread_t *thread)
 }
 
 void
-arm_vm_pmu_handle_thread_save_state(void)
+arm_vm_pmu_handle_vcpu_save_state(void)
 {
 	thread_t *thread = thread_get_self();
 
-	if (compiler_expected(thread->kind == THREAD_KIND_VCPU) &&
-	    compiler_unexpected(!arm_vm_pmu_is_el1_trap_enabled(thread))) {
+	if (compiler_unexpected(!arm_vm_pmu_is_el1_trap_enabled(thread))) {
 		// PMU access was enabled for this timeslice, save the state
 		arm_vm_pmu_save_state(thread);
 	}
@@ -186,7 +184,7 @@ arm_vm_pmu_handle_thread_context_switch_post(void)
 {
 	thread_t *thread = thread_get_self();
 
-	if (compiler_expected(thread->kind == THREAD_KIND_VCPU)) {
+	if (compiler_expected(vcpu_is_vcpu(thread))) {
 		bool_result_t asserted = virq_query(&thread->pmu.pmu_virq_src);
 		if ((asserted.e == OK) && !asserted.r) {
 			platform_pmu_hw_irq_deactivate();
@@ -207,15 +205,11 @@ arm_vm_pmu_handle_thread_context_switch_post(void)
 }
 
 void
-arm_vm_pmu_handle_thread_load_state(void)
+arm_vm_pmu_handle_vcpu_load_state(void)
 {
 	thread_t *thread = thread_get_self();
 
-	if (compiler_unexpected(thread->kind != THREAD_KIND_VCPU)) {
-		// Idle thread. Turn off the counters and the interrupts.
-		sysreg64_write_ordered(PMINTENCLR_EL1, ~0UL, asm_ordering);
-		sysreg64_write_ordered(PMCNTENCLR_EL0, ~0UL, asm_ordering);
-	} else if (compiler_unexpected(arm_vm_pmu_counters_enabled(thread))) {
+	if (compiler_unexpected(arm_vm_pmu_counters_enabled(thread))) {
 		// The thread is actively using PMU. The context_switch_post
 		// has already disabled traps for this thread above, and it will
 		// get loaded into MDCR_EL2 during the context switch load
@@ -236,6 +230,14 @@ arm_vm_pmu_handle_thread_load_state(void)
 		sysreg64_write_ordered(PMINTENCLR_EL1, ~0UL, asm_ordering);
 		sysreg64_write_ordered(PMCNTENCLR_EL0, ~0UL, asm_ordering);
 	}
+}
+
+void
+arm_vm_pmu_handle_vcpu_disable_state(void)
+{
+	// Hypervisor thread. Turn off the counters and the interrupts.
+	sysreg64_write_ordered(PMINTENCLR_EL1, ~0UL, asm_ordering);
+	sysreg64_write_ordered(PMCNTENCLR_EL0, ~0UL, asm_ordering);
 }
 
 bool

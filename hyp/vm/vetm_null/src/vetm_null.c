@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -15,6 +15,7 @@
 #include <thread.h>
 #include <trace.h>
 #include <trace_helpers.h>
+#include <vcpu.h>
 
 #include <asm/barrier.h>
 
@@ -54,47 +55,38 @@ vetm_null_handle_boot_cpu_warm_init(void)
 	}
 }
 
-void
-vetm_null_handle_boot_hypervisor_start(void)
-{
-	if (!platform_security_state_debug_disabled()) {
-		global_options_t options = global_options_default();
-		global_options_set_vetm_null_permit_hlos(&options, true);
-		globals_set_options(options);
-	}
-}
-
 bool
 vetm_null_handle_vcpu_activate_thread(thread_t		 *thread,
-				      vcpu_option_flags_t vcpu_options)
+				      vcpu_option_flags_t options)
 {
 	bool ret;
 
-	assert(thread->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(thread));
 
 	const global_options_t *global_options = globals_get_options();
-	bool			permit_hlos =
-		global_options_get_vetm_null_permit_hlos(global_options);
-	bool allow_sysregs =
+	bool permit_hlos = !platform_security_state_debug_disabled();
+
+	bool etm_available =
 		global_options_get_vetm_null_allow_sysregs(global_options);
 
-	bool vcpu_hlos	 = vcpu_option_flags_get_hlos_vm(&vcpu_options);
-	bool vcpu_traced = vcpu_option_flags_get_trace_allowed(&vcpu_options);
+	bool hlos	   = vcpu_option_flags_get_hlos_vm(&options);
+	bool trace_allowed = vcpu_option_flags_get_trace_allowed(&options);
 
-	// TODO: currently we always give HLOS trace access.
-	if (vcpu_traced && !allow_sysregs) {
-		// Not permitted by TZ
-		ret = false;
-	} else if (vcpu_traced && !vcpu_hlos) {
+	if (!hlos && trace_allowed) {
 		// Not implemented by vetm_null
 		ret = false;
-	} else if (vcpu_hlos && permit_hlos && allow_sysregs) {
-		// Debug device; give HLOS threads trace access, even if not
-		// requested by RM
+	} else if (!etm_available) {
+		// ETM is not accessible. Succeed without enabling trace for
+		// any of the vCPUs.
+		ret = true;
+	} else if (hlos && trace_allowed) {
+		// Give HLOS threads ETM access, if its a debug device.
+		// Otherwise don't enable (without an error) even if requested.
 		vcpu_option_flags_set_trace_allowed(&thread->vcpu_options,
-						    true);
+						    permit_hlos);
 		ret = true;
 	} else {
+		// Nothing to do
 		ret = true;
 	}
 
@@ -112,13 +104,12 @@ vetm_null_handle_vcpu_activate_thread(thread_t		 *thread,
 }
 
 void
-vetm_null_handle_thread_load_state(void)
+vetm_null_handle_vcpu_load_state(void)
 {
 	thread_t	       *current = thread_get_self();
 	const global_options_t *options = globals_get_options();
 
-	if ((current->kind == THREAD_KIND_VCPU) &&
-	    global_options_get_vetm_null_allow_sysregs(options)) {
+	if (global_options_get_vetm_null_allow_sysregs(options)) {
 		const bool enable_trace = vcpu_option_flags_get_trace_allowed(
 			&current->vcpu_options);
 		TRFCR_EL1_t trfcr = TRFCR_EL1_default();

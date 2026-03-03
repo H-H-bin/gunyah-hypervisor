@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -30,6 +30,8 @@ subscribe timer_action[TIMER_ACTION_POWER_CPU_ON_RETRY]
 	require_preempt_disabled
 
 #if defined(MODULE_VM_ROOTVM)
+subscribe rootvm_init(root_cspace, qcbor_enc_ctxt)
+
 subscribe rootvm_started()
 	require_preempt_disabled
 #endif
@@ -42,3 +44,9 @@ subscribe boot_hypervisor_start
 	priority -1000
 	require_preempt_disabled
 #endif
+
+#if defined(PLATFORM_ENABLE_SYSTEM_SUSPEND) && PLATFORM_ENABLE_SYSTEM_SUSPEND
+subscribe ipi_received[IPI_REASON_SECONDARY_CPU_OFF]
+	handler power_handle_ipi_received_secondary_cpu_off()
+	require_preempt_disabled
+#endif //PLATFORM_ENABLE_SYSTEM_SUSPEND

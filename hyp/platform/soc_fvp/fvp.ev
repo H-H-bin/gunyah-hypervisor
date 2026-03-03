@@ -6,7 +6,7 @@ module soc_fvp
 
 subscribe boot_cold_init
 	handler soc_fvp_uart_init()
-	priority 5
+	priority 2
 	require_preempt_disabled
 
 subscribe boot_cpu_cold_init

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -18,5 +18,8 @@ extend allocator structure {
 	hyp structure allocator_list;
 #if defined(PLATFORM_ALLOCATOR_S2PT_HEAP)
 	s2pt structure allocator_list;
+#endif
+#if defined(PLATFORM_ALLOCATOR_TZFFI_HEAP)
+	tzffi structure allocator_list;
 #endif
 };

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -24,7 +24,7 @@ timer_get_timer_frequency()
 ticks_t
 timer_get_current_timer_ticks()
 {
-	return platform_timer_get_current_ticks();
+	return platform_timer_get_current_ticks_sync();
 }
 
 ticks_t

@@ -1,4 +1,4 @@
-// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -22,27 +22,24 @@ error_t
 virtio_backend_handle_object_activate_virtio_backend(
 	virtio_backend_t *virtio_backend)
 {
-	// Read back the stashed configuration.
-	virtio_device_type_t device_type = virtio_backend->virtio.device_type;
-	count_t		     vqs	 = virtio_backend->virtio.vqs;
-	memextent_t	    *memextent = virtio_backend->virtio.config_cache_me;
-	virtio_backend->virtio.config_cache_me = NULL;
+	error_t ret;
 
-	// XXX: this should support other transport types.
-	error_t err = virtio_startup(
-		&virtio_backend->virtio, VIRTIO_BACKEND_TYPE_HYPERCALL,
-		VIRTIO_TRANSPORT_TYPE_MMIO, device_type, vqs,
-		VIRTIO_MAX_DEVICE_CONFIG_BYTES, memextent,
-		offsetof(virtio_mmio_regs_t, device_config));
-
-	// If the above function succeeded, it will have taken a new reference
-	// to the memextent. So, we can drop the original reference regardless
-	// of the error result.
-	if (memextent != NULL) {
-		object_put_memextent(memextent);
+	error_t err = trigger_virtio_backend_device_config_activate_event(
+		virtio_backend->virtio.device_type, virtio_backend);
+	if (err != OK) {
+		ret = err;
+		goto out;
 	}
 
-	return err;
+	err = virtio_activate(&virtio_backend->virtio);
+	if (err != OK) {
+		ret = err;
+		goto out;
+	}
+
+	ret = OK;
+out:
+	return ret;
 }
 
 void
@@ -66,11 +63,6 @@ virtio_backend_handle_object_cleanup_virtio_backend(
 		virtio_backend->virtio.device_type, virtio_backend);
 
 	(void)virtio_cleanup(&virtio_backend->virtio);
-
-	if (virtio_backend->virtio.config_cache_me != NULL) {
-		object_put_memextent(virtio_backend->virtio.config_cache_me);
-		virtio_backend->virtio.config_cache_me = NULL;
-	}
 }
 
 void
@@ -168,7 +160,7 @@ virtio_backend_handle_virtio_failed(virtio_t *virtio)
 
 	virtio_backend_notify_reason_t reason =
 		virtio_backend_notify_reason_default();
-	virtio_backend_notify_reason_set_driver_ok(&reason, true);
+	virtio_backend_notify_reason_set_failed(&reason, true);
 
 	virtio_backend_notify(virtio_backend, reason);
 
@@ -181,12 +173,21 @@ virtio_backend_handle_virtio_device_config_write(virtio_t *virtio,
 						 size_t	   access_size,
 						 uint32_t  value)
 {
+	error_t		  ret;
 	virtio_backend_t *virtio_backend =
 		virtio_backend_container_of_virtio(virtio);
 
-	return trigger_virtio_backend_device_config_write_event(
-		virtio->device_type, virtio_backend, offset, (register_t)value,
-		access_size);
+	if (virtio_backend_option_flags_get_ignore_config_writes(
+		    &virtio_backend->flags)) {
+		// Silently drop all config writes.
+		ret = OK;
+	} else {
+		ret = trigger_virtio_backend_device_config_write_event(
+			virtio->device_type, virtio_backend, offset,
+			(register_t)value, access_size);
+	}
+
+	return ret;
 }
 
 bool
@@ -201,4 +202,22 @@ virtio_backend_handle_virq_check_pending(virq_source_t *source)
 	virtio_backend_notify_reason_t reason =
 		atomic_load_relaxed(&virtio_backend->reason);
 	return !virtio_backend_notify_reason_is_empty(reason);
+}
+
+uint32_result_t
+virtio_backend_check_block_features(uint32_t feature_sel, uint32_t dev_feat)
+{
+	uint32_result_t ret;
+
+	if (feature_sel == 0U) {
+		// Implementing CONFIG_WCE safely requires synchronous writes to
+		// the configuration registers, so hide it from the frontend.
+		ret = uint32_result_ok(
+			dev_feat &
+			~(uint32_t)util_bit(VIRTIO_BLK_F_CONFIG_WCE));
+	} else {
+		ret = uint32_result_ok(dev_feat);
+	}
+
+	return ret;
 }

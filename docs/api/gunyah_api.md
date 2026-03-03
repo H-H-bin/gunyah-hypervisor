@@ -106,6 +106,7 @@ Generic rights are valid for all object types.
 |-------------------|-------------------|
 | Partition Object Create | `0x00000001`  |
 | Partition Donate        | `0x00000002`  |
+| Partition Query         | `0x00000004`  |
 
 ### Capability Space Rights
 
@@ -216,6 +217,11 @@ Generic rights are valid for all object types.
 |-------------------|-------------------|
 | Virtual GIC ITS Bind VIC | `0x00000001` |
 
+### VirtIO IOMMU Rights
+
+| Right             |  Value            |
+|-------------------|-------------------|
+| VirtIO IOMMU Bind VPCI | `0x00000001` |
 
 ## Hypervisor Identification
 
@@ -282,7 +288,7 @@ Identifies the hypervisor version and feature set.
 
 ### Partition Object Creation
 
-Allocates a new Partition object from the Partition and allocates a Capability ID from the CSpace.
+Allocates a new Partition object from the Partition and creates a master capability in the given CSpace.
 
 |    **Hypercall**:       |      `partition_create_partition`    |
 |-------------------------|--------------------------------------|
@@ -293,7 +299,7 @@ Allocates a new Partition object from the Partition and allocates a Capability I
 |     Outputs:            |     X0: Error Result                 |
 |                         |     X1: Partition CapID              |
 
-On successful creation, the new Partition object is created, and its state is OBJECT_STATE_INIT.
+On successful creation, the object's state is `OBJECT_STATE_INIT` and the newly created master Capability ID is returned.
 
 **Errors:**
 
@@ -305,7 +311,7 @@ Also see: [Capability Errors](#capability-errors)
 
 ### Capability Space Object Creation
 
-Allocates a new CSpace object from the Partition and allocates a Capability ID from the CSpace.
+Allocates a new CSpace object from the Partition and creates a master capability in the given CSpace.
 
 |    **Hypercall**:       |      `partition_create_cspace`       |
 |-------------------------|--------------------------------------|
@@ -316,7 +322,7 @@ Allocates a new CSpace object from the Partition and allocates a Capability ID f
 |     Outputs:            |     X0: Error Result                 |
 |                         |     X1: Cspace CapID                 |
 
-On successful creation, the new CSpace object is created and its state is OBJECT_STATE_INIT.
+On successful creation, the object's state is `OBJECT_STATE_INIT` and the newly created master Capability ID is returned.
 
 **Errors:**
 
@@ -329,7 +335,7 @@ Also see: [Capability Errors](#capability-errors)
 
 ### Address Space Object Creation
 
-Allocates a new Address Space object from the Partition and allocates a Capability ID from the CSpace.
+Allocates a new Address Space object from the Partition and creates a master capability in the given CSpace.
 
 |    **Hypercall**:       |      `partition_create_addrspace`    |
 |-------------------------|--------------------------------------|
@@ -339,7 +345,7 @@ Allocates a new Address Space object from the Partition and allocates a Capabili
 |                         |     X2: Reserved — Must be Zero      |
 |     Outputs:            |     X0: Error Result                 |
 
-On successful creation, the new Address Space object is created and its state is OBJECT_STATE_INIT.
+On successful creation, the object's state is `OBJECT_STATE_INIT` and the newly created master Capability ID is returned.
 
 **Errors:**
 
@@ -351,7 +357,7 @@ Also see: [Capability Errors](#capability-errors)
 
 ### Memory Extent Object Creation
 
-Allocates a new Memory Extent object from the Partition and allocates a Capability ID from the CSpace.
+Allocates a new Memory Extent object from the Partition and creates a master capability in the given CSpace.
 
 |    **Hypercall**:       |      `partition_create_memextent`    |
 |-------------------------|--------------------------------------|
@@ -362,7 +368,7 @@ Allocates a new Memory Extent object from the Partition and allocates a Capabili
 |     Outputs:            |     X0: Error Result                 |
 |                         |     X1: MemExtent CapID              |
 
-On successful creation, the new Memory Extent object is created and its state is OBJECT_STATE_INIT.
+On successful creation, the object's state is `OBJECT_STATE_INIT` and the newly created master Capability ID is returned.
 
 **Errors:**
 
@@ -374,7 +380,7 @@ Also see: [Capability Errors](#capability-errors)
 
 ### Thread (Virtual CPU) Object Creation
 
-Allocates a new Thread object from the Partition and allocates a Capability ID from the CSpace.
+Allocates a new Thread object from the Partition and creates a master capability in the given CSpace.
 
 |    **Hypercall**:       |      `partition_create_thread`       |
 |-------------------------|--------------------------------------|
@@ -385,7 +391,7 @@ Allocates a new Thread object from the Partition and allocates a Capability ID f
 |     Outputs:            |     X0: Error Result                 |
 |                         |     X1: Thread CapID                 |
 
-On successful creation, the new Thread object is created and its state is OBJECT_STATE_INIT.
+On successful creation, the object's state is `OBJECT_STATE_INIT` and the newly created master Capability ID is returned.
 
 **Errors:**
 
@@ -397,7 +403,7 @@ Also see: [Capability Errors](#capability-errors)
 
 ### Doorbell Object Creation
 
-Allocates a new Doorbell object from the Partition and allocates a Capability ID from the CSpace.
+Allocates a new Doorbell object from the Partition and creates a master capability in the given CSpace.
 
 |    **Hypercall**:       |      `partition_create_doorbell`     |
 |-------------------------|--------------------------------------|
@@ -408,7 +414,7 @@ Allocates a new Doorbell object from the Partition and allocates a Capability ID
 |     Outputs:            |     X0: Error Result                 |
 |                         |     X1: Doorbell CapID               |
 
-On successful creation, the new Doorbell object is created and its state is OBJECT_STATE_INIT.
+On successful creation, the object's state is `OBJECT_STATE_INIT` and the newly created master Capability ID is returned.
 
 **Errors:**
 
@@ -420,7 +426,7 @@ Also see: [Capability Errors](#capability-errors)
 
 ### Message Queue Object Creation
 
-Allocates a new Message Queue object from the Partition and allocates a Capability ID from the CSpace.
+Allocates a new Message Queue object from the Partition and creates a master capability in the given CSpace.
 
 |    **Hypercall**:       |      `partition_create_msgqueue`       |
 |-------------------------|----------------------------------------|
@@ -431,7 +437,7 @@ Allocates a new Message Queue object from the Partition and allocates a Capabili
 |     Outputs:            |     X0: Error Result                   |
 |                         |     X1: MessageQueue CapID             |
 
-On successful creation, the new Message Queue object is created and its state is OBJECT_STATE_INIT.
+On successful creation, the object's state is `OBJECT_STATE_INIT` and the newly created master Capability ID is returned.
 
 **Errors:**
 
@@ -443,7 +449,7 @@ Also see: [Capability Errors](#capability-errors)
 
 ### Watchdog object creation
 
-Allocates a new Watchdog object from the Partition and allocates a Capability ID from the CSpace.
+Allocates a new Watchdog object from the Partition and creates a master capability in the given CSpace.
 
 |    **Hypercall**:       |      `partition_create_watchdog`     |
 |-------------------------|--------------------------------------|
@@ -454,7 +460,7 @@ Allocates a new Watchdog object from the Partition and allocates a Capability ID
 |     Outputs:            |     X0: Error Result                 |
 |                         |     X1: Watchdog CapID               |
 
-On successful creation, the new Watchdog object is created and its state is OBJECT_STATE_INIT.
+On successful creation, the object's state is `OBJECT_STATE_INIT` and the newly created master Capability ID is returned.
 
 **Errors:**
 
@@ -466,7 +472,7 @@ Also see: [Capability Errors](#capability-errors)
 
 ### Virtual Interrupt Controller Object Creation
 
-Allocates a new Virtual Interrupt Controller object from the Partition and allocates a Capability ID from the CSpace.
+Allocates a new Virtual Interrupt Controller object from the Partition and creates a master capability in the given CSpace.
 
 |    **Hypercall**:       |      `partition_create_vic`          |
 |-------------------------|--------------------------------------|
@@ -477,7 +483,7 @@ Allocates a new Virtual Interrupt Controller object from the Partition and alloc
 |     Outputs:            |     X0: Error Result                 |
 |                         |     X1: Virtual IC CapID             |
 
-On successful creation, the new Virtual Interrupt Controller object is created and its state is OBJECT_STATE_INIT.
+On successful creation, the object's state is `OBJECT_STATE_INIT` and the newly created master Capability ID is returned.
 
 **Errors:**
 
@@ -489,7 +495,7 @@ Also see: [Capability Errors](#capability-errors)
 
 ### Virtual PM Group Object Creation
 
-Allocates a new Virtual PM Group object from the Partition and allocates a Capability ID from the CSpace.
+Allocates a new Virtual PM Group object from the Partition and creates a master capability in the given CSpace.
 
 |    **Hypercall**:       |      `partition_create_vpm_group`    |
 |-------------------------|--------------------------------------|
@@ -500,7 +506,7 @@ Allocates a new Virtual PM Group object from the Partition and allocates a Capab
 |     Outputs:            |     X0: Error Result                 |
 |                         |     X1: VPMGroup CapID               |
 
-On successful creation, the new Virtual PM Group object is created and its state is OBJECT_STATE_INIT.
+On successful creation, the object's state is `OBJECT_STATE_INIT` and the newly created master Capability ID is returned.
 
 **Errors:**
 
@@ -512,7 +518,7 @@ Also see: [Capability Errors](#capability-errors)
 
 ### Virtual IO Backend object creation
 
-Allocates a new Virtual IO Backend object from the Partition and allocates a Capability ID from the CSpace.
+Allocates a new Virtual IO Backend object from the Partition and creates a master capability in the given CSpace.
 
 |    **Hypercall**:       |      `partition_create_virtio_backend` |
 |-------------------------|----------------------------------------|
@@ -525,13 +531,239 @@ Allocates a new Virtual IO Backend object from the Partition and allocates a Cap
 
 This hypercall was formerly named `partition_create_virtio_mmio`.
 
-On successful creation, the new Virtual IO Interface object is created and its state is OBJECT_STATE_INIT.
+On successful creation, the object's state is `OBJECT_STATE_INIT` and the newly created master Capability ID is returned.
 
 **Errors:**
 
 OK – the operation was successful, and the result is valid.
 
 ERROR_NOMEM – the creation failed due to memory allocation error.
+
+Also see: [Capability Errors](#capability-errors)
+
+### Virtual PCI object creation
+
+Allocates a new Virtual PCI object from the Partition and creates a master capability in the given CSpace.
+
+|    **Hypercall**:       |      `partition_create_vpci`          |
+|-------------------------|---------------------------------------|
+|     Call number:        |     `hvc 0x606C`                      |
+|     Inputs:             |     X0: Partition CapID               |
+|                         |     X1: CSpace CapID                  |
+|                         |     X2: Reserved   – Must be Zero     |
+|     Outputs:            |     X0: Error Result                  |
+|                         |     X1: VPCI CapID                    |
+
+On successful creation, the object's state is `OBJECT_STATE_INIT` and the newly created master Capability ID is returned.
+
+**Errors:**
+
+OK – the operation was successful, and the result is valid.
+
+ERROR_NOMEM – the creation failed due to memory allocation error.
+
+Also see: [Capability Errors](#capability-errors)
+
+### Virtual ITS object creation
+
+Allocates a new Virtual ITS object from the Partition and creates a master capability in the given CSpace.
+
+|    **Hypercall**:       |      `partition_create_vgic_its`      |
+|-------------------------|---------------------------------------|
+|     Call number:        |     `hvc 0x6071`                      |
+|     Inputs:             |     X0: Partition CapID               |
+|                         |     X1: CSpace CapID                  |
+|                         |     X2: Reserved   – Must be Zero     |
+|     Outputs:            |     X0: Error Result                  |
+|                         |     X1: VITS CapID                    |
+
+On successful creation, the object's state is `OBJECT_STATE_INIT` and the newly created master Capability ID is returned.
+
+**Errors:**
+
+OK – the operation was successful, and the result is valid.
+
+ERROR_NOMEM – the creation failed due to memory allocation error.
+
+Also see: [Capability Errors](#capability-errors)
+
+### Virtual SMMUv2 object creation
+
+Allocates a new Virtual SMMUv2 object from the Partition and creates a master capability in the given CSpace.
+
+|    **Hypercall**:       |      `partition_create_vsmmuv2`       |
+|-------------------------|---------------------------------------|
+|     Call number:        |     `hvc 0x6079`                      |
+|     Inputs:             |     X0: Partition CapID               |
+|                         |     X1: CSpace CapID                  |
+|                         |     X2: Reserved   – Must be Zero     |
+|     Outputs:            |     X0: Error Result                  |
+|                         |     X1: vSMMUv2 CapID                 |
+
+On successful creation, the object's state is `OBJECT_STATE_INIT` and the newly created master Capability ID is returned.
+
+**Errors:**
+
+OK – the operation was successful, and the result is valid.
+
+ERROR_NOMEM – the creation failed due to memory allocation error.
+
+Also see: [Capability Errors](#capability-errors)
+
+### VirtIO IOMMU Object Creation
+
+Allocates a new VirtIO IOMMU object from the Partition and creates a master capability in the given CSpace.
+
+|    **Hypercall**:       |      `partition_create_virtio_iommu`  |
+|-------------------------|---------------------------------------|
+|     Call number:        |     `hvc 0x6082`                      |
+|     Inputs:             |     X0: Partition CapID               |
+|                         |     X1: CSpace CapID                  |
+|                         |     X2: Reserved   – Must be Zero     |
+|     Outputs:            |     X0: Error Result                  |
+|                         |     X1: VirtIO IOMMU CapID            |
+
+On successful creation, the object's state is `OBJECT_STATE_INIT` and the newly created master Capability ID is returned.
+
+**Errors:**
+
+OK – the operation was successful, and the result is valid.
+
+ERROR_NOMEM – the creation failed due to memory allocation error.
+
+Also see: [Capability Errors](#capability-errors)
+
+### Partition donation
+
+Donate memory from one partition to another, or to and from a partition's heap.
+
+|    **Hypercall**:       |      `partition_donate`               |
+|-------------------------|---------------------------------------|
+|     Call number:        |     `hvc 0x6075`                      |
+|     Inputs:             |     X0: Partition Donate Flags        |
+|                         |     X1: Partition CapID               |
+|                         |     X2: Arg2	                  |
+|                         |     X3: Phys Base                     |
+|                         |     X4: Size                          |
+|                         |     X5: Reserved – Must be Zero       |
+|     Outputs:            |     X0: Error Result                  |
+
+The purpose of the Arg2 input is dependent on the partition donation type and is described below.
+
+**Types:**
+
+*Partition Donate Flags*
+
+| Bits | Mask | Description |
+|-|---|-----|
+|     7:0             |     `0xFF`          |     Partition Donate Type               |
+|     31:8            |     `0xFFFFFF00`    |     Reserved — Must be Zero             |
+
+*Partition Donate Type*
+
+| Partition Donate Type | Integer Value | Description |
+|---|-|-----|
+| TO_PARTITION   | 0 | Donate memory from one partition to another. Arg2 is the destination partition cap.      |
+| ADD_HEAP       | 1 | Add memory owned by a partition to its heap. Arg2 is the allocator memory attributes.    |
+| REMOVE_HEAP    | 2 | Remove memory owned by a partition from its heap. Arg2 is reserved and must be zero.     |
+
+*Allocator Memory Attributes*
+
+| Bits | Mask | Description |
+|-|---|-----|
+|     3:0             |     `0xF`       |     Allocator Memory Type               |
+|     15:4            |     `0xFFF0`    |     Reserved — Must be Zero             |
+
+*Allocator Memory Type*
+
+| Allocator Memory Type | Integer Value | Description |
+|---|-|-----|
+| HYPERVISOR     | 0 | Memory can be used for general hypervisor allocations.           |
+| VM_PAGE_TABLE  | 1 | Memory can only be used for VM stage 2 page table allocations.   |
+
+**Errors:**
+
+OK – the operation was successful, and the result is valid.
+
+ERROR_ARGUMENT_INVALID – a value passed in an argument was invalid. This could be due to an invalid donate option, phys base or size.
+
+ERROR_ARGUMENT_SIZE – the Size provided is zero, or leads to an overflow.
+
+ERROR_ARGUMENT_ALIGNMENT – the Phys Base or Size is not page aligned.
+
+ERROR_MEMDB_NOT_OWNER – the donating partition did not have ownership of the specified memory range.
+
+ERROR_DENIED – the partition does not support additional heap regions, or the range isn't suitable for the given allocator memory type.
+
+ERROR_ALLOCATOR_MEM_INUSE – the specified range is still in use by the partition's heap.
+
+Also see: [Capability Errors](#capability-errors)
+
+### Partition query
+
+Query information about a partition and its heap.
+
+|    **Hypercall**:       |      `partition_query`                |
+|-------------------------|---------------------------------------|
+|     Call number:        |     `hvc 0x6076`                      |
+|     Inputs:             |     X0: Partition CapID               |
+|                         |     X1: Partition Query Flags         |
+|                         |     X2: Addr	                  |
+|                         |     X3: Size                          |
+|                         |     X4: Arg4                          |
+|                         |     X5: Reserved – Must be Zero       |
+|     Outputs:            |     X0: Error Result                  |
+
+The purpose of the Addr, Size and Arg4 inputs is dependent on the partition query type described below.
+
+**Types:**
+
+*Partition Query Flags*
+
+| Bits | Mask | Description |
+|-|---|-----|
+|     7:0             |     `0xFF`          |     Partition Query Type                |
+|     31:8            |     `0xFFFFFF00`    |     Reserved — Must be Zero             |
+
+*Partition Query Type*
+
+| Partition Donate Type | Integer Value | Description |
+|---|-|-----|
+| HEAP_IS_FREE   | 0 | Check if a range of heap memory is free and can be reclaimed. The range is specified via Addr and Size; Arg4 is reserved and must be zero.                  |
+| HEAP_STATS     | 1 | Get heap statistics. Addr and Size specify the guest buffer to copy the allocator stats to. Arg4 is the allocator memory attributes of the heap to query.   |
+
+*Allocator Stats*
+
+| Byte Offset | Type | Description |
+|-|---|-----|
+|   0         | Allocator Stats Info | General information about the allocator stats.               |
+|   8         | Size                 | Total amount of memory in the heap.                          |
+|   16        | Size                 | Amount of memory that has been allocated from the heap.      |
+|   24        | Size                 | Amount of memory reserved for internal use by the heap.      |
+|   32        | Size                 | The largest free chunk of memory available for allocation.   |
+
+*Allocator Stats Info*
+
+| Bits | Mask | Description |
+|-|---|-----|
+|     7:0             |     `0xFF`          |     Version = "1"              |
+|     31:8            |     `0xFFFFFF00`    |     Reserved — Must be Zero    |
+
+**Errors:**
+
+OK – the operation was successful, and the result is valid.
+
+ERROR_ARGUMENT_INVALID – a value passed in an argument was invalid. This could be due to an invalid query flag, address or size.
+
+ERROR_ARGUMENT_SIZE – the Size provided is zero, or leads to an overflow.
+
+ERROR_ARGUMENT_ALIGNMENT – the Phys Base or Size is not page aligned when querying if a heap range is free.
+
+ERROR_DENIED – the given heap range cannot be queried.
+
+ERROR_ALLOCATOR_MEM_INUSE – the given heap range is still in-use.
+
+ERROR_ADDR_INVALID – some, or the whole of the allocator stats buffer is not mapped.
 
 Also see: [Capability Errors](#capability-errors)
 
@@ -1299,20 +1531,28 @@ Also see: [Capability Errors](#capability-errors)
 
 ### MSI Source to Virtual Interrupt Controller Attachment
 
-Attaches a message-signalled interrupt (MSI) source object to a Virtual Interrupt Controller, permitting interrupt messages from the source to be routed to virtual interrupts. The Virtual Interrupt Controller object must have been activated before this function is called. An attachment index must be specified which is unique among the MSI source attachments to the controller. If the MSI source has a memory-mapped interface, the attachment index may be used to determine its address in the VM address space.
+Attaches a message-signalled interrupt (MSI) source object to a Virtual Interrupt Controller, permitting interrupt messages from the source to be routed to virtual interrupts. The Virtual Interrupt Controller object must have been activated before this function is called. An attachment index must be specified in the Source Configuration which is unique among the MSI source attachments to the controller. If the MSI source has a memory-mapped interface, the attachment index may be used to determine its address in the VM address space.
 
-Each MSI source capability represents one or more physical devices or buses. Capabilities are provided to the root VM at boot time and cannot be created dynamically, though some MSI source objects may permit capabilities to be derived with restricted rights. The number of MSI sources available depends on the target platform, and may be zero.
-
-In the current implementation, the only type of MSI source supported is a GICv4 ITS. One MSI source capability is provided to the root VM for each physical ITS present in the system.
+Each MSI source capability represents one or more devices or buses. In the current implementation, the only type of MSI source supported is a GICv4 virtual ITS. Virtual ITSes can be allocated via the partition_create_vgic_its hypercall.
 
 |    **Hypercall**:       |      `vic_bind_msi_source`                                    |
 |-------------------------|---------------------------------------------------------------|
 |     Call number:        |     `hvc 0x6056`                                              |
 |     Inputs:             |     X0: Virtual IC CapID                                      |
 |                         |     X1: MSI Source (platform-specific object type)   CapID    |
-|                         |     X2: Index                                                 |
-|                         |     X3: Reserved — Must be Zero                               |
+|                         |     X2: Source Configuration                                  |
 |     Outputs:            |     X0: Error Result                                          |
+
+**Types:**
+
+*Source Configuration:*
+
+| Bits | Mask | Description |
+|-|---|-----|
+|     15:0             |     `0xFFFF`               |     Index                       |
+|     63:16            |     `0xFFFFFFFF.FFFF0000`  |     Reserved — Must be Zero     |
+
+Index: Indicates that the attachment index of the MSI source. If a virtual ITS is attached as MSI source it corresponds to the virtual ITS number. If the virtual ITS has a memory-mapped interface, the attachment index may be used to determine its address in the VM address space.
 
 **Errors:**
 
@@ -1325,6 +1565,50 @@ ERROR_ARGUMENT_INVALID – the specified attachment index is outside the range s
 ERROR_OBJECT_STATE – The VCPU object has already been activated, or the Virtual Interrupt Controller object has not yet been activated.
 
 Also see: [Capability Errors](#capability-errors)
+
+### Platform Devices to Virtual ITS Binding
+
+Attaches one or multiple platform devices with consecutive device IDs to a virtual ITS, permitting events from the specified devices to be sent to the virtual ITS. The virtual ITS can then be configured by a guest to generate virtual LPIs based on these events. A capability for the physical ITS the platform device's controller is attached to must be specified. Capabilities for all physical ITSes in the system are provided to the root VM at boot time.
+
+|    **Hypercall**:       |      `vgic_its_bind_devices`                                  |
+|-------------------------|---------------------------------------------------------------|
+|     Call number:        |     `hvc 0x6072`                                              |
+|     Inputs:             |     X0: Virtual ITS CapID                                     |
+|                         |     X1: Physical ITS CapID                                    |
+|                         |     X2: First Device ID                                       |
+|                         |     X3: Number of Consecutive Devices                         |
+|                         |     X4: Reserved — Must be Zero                               |
+|     Outputs:            |     X0: Error Result                                          |
+
+**Errors:**
+
+OK – the operation was successful, and the result is valid.
+
+ERROR_NOMEM – the operation failed due to memory allocation error.
+
+ERROR_ARGUMENT_INVALID – the specified devices or the virtual ITS or the physical ITS were not found.
+
+ERROR_BUSY — the virtual ITS is already assigned to a different physical ITS or one of the devices is already attached to a different virtual ITS.
+
+### Platform Devices Unbinding from Virtual ITS
+
+Detaches one or multiple platform devices with consecutive device IDs from a virtual ITS. Returns the number of successfully detached devices, even in case an error was encountered while detaching further devices.
+
+|    **Hypercall**:       |      `vgic_its_unbind_devices`                                |
+|-------------------------|---------------------------------------------------------------|
+|     Call number:        |     `hvc 0x6073`                                              |
+|     Inputs:             |     X0: Virtual ITS CapID                                     |
+|                         |     X1: First Device ID                                       |
+|                         |     X2: Number of Consecutive Devices                         |
+|                         |     X3: Reserved — Must be Zero                               |
+|     Outputs:            |     X0: Error Result                                          |
+|                         |     X1: Number of Successfully Detached Devices               |
+
+**Errors:**
+
+OK – the operation was successful, and the result is valid.
+
+ERROR_ARGUMENT_INVALID – the specified devices or the virtual ITS were not found or were already attached to a different virtual ITS.
 
 ## Address Space Management
 
@@ -1371,13 +1655,18 @@ Apart from the capability rights, map operations that have the Private flag set 
 * The memory region must be wholly owned by the specified memory extent.
 * The specified address range must have previously been marked as paged memory by a call to `addrspace_configure_range`.
 * The Kernel Access field of the Map Attributes must specify write permission. Note that this may also constrain the User Access field of the Map Attributes, if the architecture requires the fields to be consistent.
-* The memory region will be cleaned and invalidated in all caches prior to being mapped.
-* Each mapped page will be marked as private.
+* The hypervisor will ensure that the memory is cache-coherent prior to mapping it.
+* Each mapped page will be marked as private and locked.
 
-Pages marked as private may subsequently be automatically marked as locked by the hypervisor, possibly with assistance from the hardware. This has the following effects:
+Marking a page as private has the following effects:
 
-* A map or unmap operation with the Private flag set can only remove or replace a private page if it is not marked as locked.
-* If an unlocked private page is written by the guest, it will be automatically locked before the write completes.
+* A map or unmap operation that removes or replaces the page will zero it, unless the page is unlocked and sanitisation was explicitly disabled when it was unlocked. This includes all map and unmap operations performed implicitly by `memextent_donate` or during the lifecycle of any Memory Extent or Address Space object.
+* If the page is not locked, it will be automatically locked if it is written by the guest VM. It may also be marked as locked if it is read or executed by the guest VM. If the page has recently been unlocked by a call to `addrspace_modify_pages`, the automatic locking is subject to the synchronisation guarantees documented for that call.
+
+Marking a page as locked has the following effects:
+
+* A map or unmap operation with the Private flag set cannot remove or replace the page.
+* A call to `addrspace_modify_pages` can mark the page as unlocked, and optionally also exclude it from sanitisation.
 
 Note that it is not specified whether a private page is initially locked when mapped, or whether it will be automatically locked upon a read access by the guest. However, a private page will never be automatically locked by a speculative memory access.
 
@@ -1441,7 +1730,7 @@ If the Private flag is set, then any mappings created by this operation will rem
 |     1                |     `0x2`                  |     Private (protected)           |
 |     2                |     `0x4`                  |     VMMIO (protected)             |
 |     31               |     `0x80000000`           |     NoSync                        |
-|     30:1             |     `0x7FFFFFF8`           |     Reserved, Must be Zero        |
+|     30:3             |     `0x7FFFFFF8`           |     Reserved, Must be Zero        |
 
 **Errors:**
 
@@ -1461,11 +1750,15 @@ Also see: [capability errors](#capability-errors)
 
 ### Address Space Unmap
 
-Unmaps a memory extent from a specified address space. By default, the entire memory extent range is unmapped, except for any carveouts contained within the extent.
+Unmaps a memory extent from a specified address space. By default, the entire memory extent is unmapped starting at a specified base IPA, except for any carveouts contained within the extent.
 
 #### Partial Unmapping
 
 If the Partial flag is set in Map Flags, only the range of the Memory Extent specified by Offset and Size will be unmapped. If not set, these arguments are ignored. Partial unmappings are only supported by sparse memory memextents.
+
+#### Whole Extent Unmapping
+
+If the Whole Extent flag is set in Map Flags, the Base argument will be ignored, and every mapping of the extent in the given address space will be removed regardless of its IPA. This flag is mutually exclusive with the Partial flag.
 
 #### Private Unmapping
 
@@ -1495,10 +1788,21 @@ The implicit synchronisation is skipped if the NoSync flag is set. In this case,
 |     Inputs:             |     X0: Address Space CapID          |
 |                         |     X1: Memory Extent CapID          |
 |                         |     X2: Base VMAddr                  |
-|                         |     X3: Map Flags                    |
+|                         |     X3: Unmap Flags                  |
 |                         |     X4: Offset                       |
 |                         |     X5: Size                         |
 |     Outputs:            |     X0: Error Result                 |
+
+*Unmap Flags:*
+
+| Bits | Mask | Description |
+|-|---|-----|
+|     0                |     `0x1`                  |     Partial                       |
+|     1                |     `0x2`                  |     Private (protected)           |
+|     2                |     `0x4`                  |     VMMIO (protected)             |
+|     3                |     `0x4`                  |     VMMIO (protected)             |
+|     31               |     `0x80000000`           |     NoSync                        |
+|     30:4             |     `0x7FFFFFF0`           |     Reserved, Must be Zero        |
 
 **Errors:**
 
@@ -1560,7 +1864,7 @@ Also see: [capability errors](#capability-errors)
 
 Perform one or more of the following operations on pages in a specified range of the address space:
 * Unlock private pages, allowing a subsequent `addrspace_unmap` operation with the Private flag set to unmap them.
-* Sanitise locked private pages.
+* Optionally mark unlocked private pages as not requiring sanitisation.
 
 These operations may fail after partial completion. To allow the operation to be retried or resumed after a failure, this API returns the size of the address space range that was not modified prior to the failure. This value is always 0 on success.
 
@@ -1572,17 +1876,17 @@ This call operates directly on a virtual address range in an Address Space, and 
 
 The hypervisor does not guarantee that all VCPUs in the guest VM have completed any concurrent accesses to an unlocked page before it is unlocked, and therefore before the host VM reclaims it. It is the caller's responsibility to ensure this is the case.
 
-The hypervisor normally guarantees that after this call returns, the guest VM is no longer able to access the unlocked page without faulting, unless it is re-mapped (and thus re-locked) by the host VM. However, providing this guarantee is expensive. Therefore, a guest that wishes to unlock a large number of pages may wish to postpone this operation until after the last page is unlocked. To do this, the guest may set the No Unlock Sync flag in the Modify Flags argument.
+Additionally, a call made with the No Unlock Sync flag set does not provide any guarantee that the unlocked pages will be automatically re-locked on the next write access.
 
-A call made with the No Unlock Sync flag set does not guarantee that the unlocked pages will fault afterwards. A call made with the No Unlock Sync flag clear (and the Unlock flag set) guarantees that all pages unlocked by this or any preceding call will fault if an access happens after the call returns success, other than pages that have been subsequently re-locked. This is the case even if the call does not unlock any pages because the specified size is zero.
+A call made with the No Unlock Sync flag clear and the Unlock flag set guarantees that all pages unlocked by this or any preceding call will be automatically re-locked if they are written after the call returns success but have not yet been unmapped or re-locked by the host VM. This is the case even if the call does not unlock any pages because the specified size is zero.
 
 #### Sanitisation
 
-If the Sanitise flag is set in the Modify Flags argument, the hypervisor will zero and cache clean the contents of any private and locked pages. This is done in addition to unlocking the pages, if the Unlock flag is also set.
+Normally, private pages are zeroed by the hypervisor when they are unmapped. This will happen regardless of whether the page is unmapped by an explicit `addrspace_unmap` operation with or without the Private flag, by replacement of the page with an `addrspace_map` operation specifying different physical memory, or by a memory ownership change caused by a Memory Extent operation such as `memextent_donate`.
 
-The hypervisor does not provide any guarantee that all VCPUs in the guest VM have completed any concurrent accesses to a sanitised page before sanitisation occurs. It is the caller's responsibility to ensure this is the case.
+If the Do Not Sanitise flag is set in the Modify Flags argument, then any pages unlocked by the operation will also be marked as not requiring sanitisation when they are unmapped. Note that this will allow the host VM to access the contents of those pages after reclaiming them.
 
-Note that sanitisation may be performed with internal locks held in the hypervisor, which may delay other operations on the same Address Space. Therefore, a caller that is performing this operation on its own address space may achieve better performance by performing the sanitisation itself prior to the call.
+Sanitisation of pages during unmapping is performed with locks held in the hypervisor and may cause operations on large address ranges to be interrupted and restarted, which is potentially expensive. Therefore, guest VMs are recommended to perform their own sanitisation, by zeroing the pages and cleaning the CPU caches prior to unlocking the pages with the Do Not Sanitise flag set.
 
 |    **Hypercall**:       |      `addrspace_modify_pages`        |
 |-------------------------|--------------------------------------|
@@ -1601,15 +1905,13 @@ Note that sanitisation may be performed with internal locks held in the hypervis
 | Bits | Mask | Description |
 |-|---|-----|
 | 0    | `0x1`                  | Unlock                  |
-| 1    | `0x2`                  | Sanitise                |
-| 2    | `0x4`                  | No Sync Unlock          |
-| 63:3 | `0xFFFFFFFF.FFFFFFF8`  | Reserved — Must be Zero |
+| 2    | `0x4`                  | No Unlock Sync          |
+| 3    | `0x8`                  | Do Not Sanitise |
+| 63:4,1 | `0xFFFFFFFF.FFFFFFF2` | Reserved — Must be Zero |
 
 **Errors:**
 
 OK – the operation was successful, and the result is valid.
-
-ERROR_RETRY — the operation was interrupted or exceeded an internal time limit.
 
 ERROR_ARGUMENT_INVALID – a value passed in an argument was invalid. This could be due to an invalid Address Space, or unrecognised bits set in Unlock Flags.
 
@@ -1733,6 +2035,21 @@ The hypervisor info area allocator may result in unused info_area data due to th
 |     Outputs:            |     X0: Error Result                 |
 |                         |     X1: Info entry IPA               |
 
+*Entry Type:*
+
+| Bits |Description |
+|-|-----|
+| 15:0 | Id |
+| 31:16 | Owner |
+
+| Owner | Value |
+| OWNER_INVALID |  0 |
+| OWNER_GUNYAH | 1 |
+| OWNER_ROOTVM | 2 |
+| OWNER_RM | 3 |
+| OWNER_QCRM | 16 |
+| OWNER_DEV | 65535 |
+
 *Data Info:*
 
 | Bits |Description |
@@ -1746,13 +2063,50 @@ OK – The operation was successful, and the result is valid.
 
 ERROR_OBJECT_STATE – The Address Space object has not been activated.
 
-ERROR_ARGUMENT_SIZE – The specified alignment is too large.
+ERROR_ARGUMENT_SIZE – The specified size is too large.
 
 ERROR_ARGUMENT_ALIGNMENT – The specified alignment is too large.
 
 ERROR_IDLE – The specified Address Space object has no info area.
 
 ERROR_NOMEM – There is insufficient free space in the info area to allocate with the requested size and alignment.
+
+ERROR_ADDR_INVALID – The specified payload buffer is not mapped in the caller's address space.
+
+Also see: [capability errors](#capability-errors)
+
+### Get an Information Area Entry
+
+Get an entry in an Address Space's information area, and copies the data into the provided buffer.
+
+If the Entry Type owner field is zero (INVALID), the Entry Type id is used as an index into the info area entry array instead of an entry match argument.
+
+If successful, returns the entry's payload in the provided buffer, and the size of the payload as the Entry Size output. Also returns the Entry Type.
+
+|    **Hypercall**:       |     `addrspace_info_area_get_entry`  |
+|-------------------------|--------------------------------------|
+|     Call number:        |     `hvc 0x6077`                     |
+|     Inputs:             |     X0: Entry Type                   |
+|                         |     X1: Buffer VMAddr                |
+|                         |     X2: Buffer Size                  |
+|                         |     X3: Reserved — Must be Zero      |
+|     Outputs:            |     X0: Error Result                 |
+|                         |     X1: Entry Size                   |
+|                         |     X2: Entry Type                   |
+
+*Entry Type:*
+
+See `addrspace_info_area_add_entry`
+
+**Errors:**
+
+OK – The operation was successful, and the result is valid.
+
+ERROR_ADDR_NOTFOUND – The specified Entry Type (or index) was not found.
+
+ERROR_ARGUMENT_SIZE – The specified buffer size is too small.
+
+ERROR_IDLE – The specified Address Space object has no info area.
 
 ERROR_ADDR_INVALID – The specified payload buffer is not mapped in the caller's address space.
 
@@ -1937,7 +2291,11 @@ ERROR_ADDR_OVERFLOW – the specified range wraps around the end of the address 
 
 ERROR_ADDR_INVALID – the specified range is not completely within the input address range of the address space.
 
-ERROR_ARGUMENT_INVALID – the specified range to be added overlaps a previously added range, or the specified range to be removed does not match a previously added range.
+ERROR_BUSY — the specified range to be added is the same as or completely within an existing range of the same type.
+
+ERROR_IDLE — the specified range to be removed is removed is already completely empty.
+
+ERROR_ARGUMENT_INVALID – the specified range to be added partially overlaps a previously added range, or completely overlaps a previously added range of a different type; or the specified range to be removed is not empty, but does not exactly match a previously added range.
 
 ERROR_NORESOURCES – the number of nominated ranges has reached an implementation-defined limit, or the hypervisor was unable to allocate memory for bookkeeping.
 
@@ -2312,7 +2670,7 @@ The last-VCPU bit in the flags argument must be set if, and only if, the caller 
 |    **Hypercall**:       |      `vcpu_poweroff`                 |
 |-------------------------|--------------------------------------|
 |     Call number:        |     `hvc 0x6039`                     |
-|     Inputs:             |     X0:   vCPU CapID                 |
+|     Inputs:             |     X0: vCPU CapID                   |
 |                         |     X1: vCPUPowerOffFlags            |
 |     Outputs:            |     X0: Error Result                 |
 
@@ -2463,6 +2821,40 @@ OK – the operation was successful.
 ERROR_ARGUMENT_INVALID – a value passed in an argument was invalid. This could be due to an invalid VCPU.
 
 ERROR_OBJECT_STATE – the VCPU thread was not active, or has already been killed.
+
+Also see: [Capability Errors](#capability-errors)
+
+### Set Local VIRQ for a VCPU
+
+Configure a per-VCPU local virtual IRQ (PPI) such as timer or PMU interrupts. This allows VMs to use different interrupt numbers than the hardware, which is necessary on platforms that don't follow ARM's recommended PPI numbering.
+
+This hypercall sets the virtual IRQ number for a per-VCPU local interrupt source. The VCPU Local VIRQ Type specifies which local interrupt source to configure, and the VIRQ Number specifies the virtual interrupt number that will be used to deliver that interrupt to the VCPU.
+
+The caller must have the appropriate capability to modify the VCPU's local VIRQ configuration. This is typically restricted to the resource manager. By allowing the resource manager to configure the VIRQ numbers, VMs can use consistent interrupt numbers regardless of the underlying hardware configuration.
+
+|    **Hypercall**:       |      `vcpu_set_local_virq`           |
+|-------------------------|--------------------------------------|
+|     Call number:        |     `hvc 0x6085`                     |
+|     Inputs:             |     X0: VCPU CapID                   |
+|                         |     X1: VCPU Local VIRQ Type         |
+|                         |     X2: VIRQ Number                  |
+|                         |     X3: Reserved — Must be Zero      |
+|     Outputs:            |     X0: Error Result                 |
+
+**Types:**
+
+|      VCPU Local VIRQ Type     |      Integer Value     |
+|-------------------------------|------------------------|
+|     VIRTUAL_TIMER             |     0                  |
+|     PHYSICAL_TIMER            |     1                  |
+
+**Errors:**
+
+OK – the operation was successful.
+
+ERROR_ARGUMENT_INVALID – a value passed in an argument was invalid. This could be due to an invalid VCPU capability or an unsupported VCPU Local VIRQ Type.
+
+ERROR_DENIED – the caller does not have permission to configure VCPU local VIRQs.
 
 Also see: [Capability Errors](#capability-errors)
 
@@ -2671,6 +3063,10 @@ A Virtual PM Group is a collection of VCPUs which share a virtual power manageme
 
 Set configuration options for a Virtual PM Group whose state is `OBJECT_STATE_INIT`. Making this call is optional.
 
+When bit 0 is set, this VPM Group is excluded from physical power-state aggregation. The hypervisor might enter a deeper physical suspend state than requested by the VM. For example when a VCPU requests a shallow CPU_SUSPEND level, or an ARM WFI was trapped, the CPU might be put into a deeper sleep state.
+
+When bit 1 is set, this VPM Group requires an explicit call to `vpm_group_wakeup` to wake it up from a system-level suspend state. The VM will not be woken up by any interrupts, and there is no guarantee that any interrupts signalled to the VM while in the system level suspend state will be received when the VM is woken up.
+
 |    **Hypercall**:       |      `vpm_group_configure`           |
 |-------------------------|--------------------------------------|
 |     Call number:        |     `hvc 0x6066`                     |
@@ -2683,10 +3079,11 @@ Set configuration options for a Virtual PM Group whose state is `OBJECT_STATE_IN
 
 *VPMGroupOptionFlags:*
 
-|      Bit Numbers     |      Mask                  |      Description                |
-|----------------------|----------------------------|---------------------------------|
-|     0                |     `0x1`                  |     Exclude from aggregation    |
-|     63:1             |     `0xFFFFFFFF.FFFFFFFE`  |     Reserved — Must be Zero     |
+|      Bit Numbers     |      Mask                  |      Description                                  |
+|----------------------|----------------------------|---------------------------------------------------|
+|     0                |     `0x1`                  |     Exclude from aggregation                      |
+|     1                |     `0x2`                  |     Require explicit wake-up from SYSTEM_SUSPEND  |
+|     63:2             |     `0xFFFFFFFF.FFFFFFFC`  |     Reserved — Must be Zero                       |
 
 **Errors:**
 
@@ -2800,24 +3197,176 @@ OK – the operation was successful, the result is valid.
 
 Also see: [Capability Errors](#capability-errors)
 
-## Trace Buffer Management
+### Virtual PM Group Bind to Power object
 
-### Update trace class flags
+Bind a VPM Group to the system power object. This is required to permit a VPM group controlling entering a physical system-level suspend.
 
-Update the trace class flags values by specifying which flags to set and clear. Some bits are internal to the hypervisor, so their values passed in this hypercall will be ignored. This call will return the values of the flags after being updated.
-
-|    **Hypercall**:       |      `trace_update_class_flags`      |
+|    **Hypercall**:       |      `vpm_group_bind_power`         |
 |-------------------------|--------------------------------------|
-|     Call number:        |     `hvc 0x603f`                     |
-|     Inputs:             |     X0: SetFlags                     |
-|                         |     X1: ClearFlags                   |
+|     Call number:        |     `hvc 0x6074`                     |
+|     Inputs:             |     X0: VPMGroup CapID               |
+|                         |     X1: Power CapID                  |
 |                         |     X2: Reserved — Must be Zero      |
 |     Outputs:            |     X0: Error Result                 |
-|                         |     X1: SetFlags                     |
+
+**Errors:**
+
+OK – the operation was successful, the result is valid.
+
+Also see: [Capability Errors](#capability-errors)
+
+### Virtual PM Group Wakeup VM
+
+Wake a VM that has used a platform-specific mechanism to enter a virtual system-level suspend state. For example, if PSCI is implemented, this will wake a VM that has called `PSCI_SYSTEM_SUSPEND`.
+
+|    **Hypercall**:       |      `vpm_group_wakeup`         |
+|-------------------------|--------------------------------------|
+|     Call number:        |     `hvc 0x606f`                     |
+|     Inputs:             |     X0: VPMGroup CapID               |
+|                         |     X1: Reserved — Must be Zero      |
+|     Outputs:            |     X0: Error Result                 |
+
+**Errors:**
+
+OK – the operation was successful, the result is valid.
+
+Also see: [Capability Errors](#capability-errors)
+
+### Virtual PM Group Set Managed Wakeup Threshold
+
+Configure a system-level virtual idle state beyond which a VM's power state is expected to be handled by a separate power management VM.
+
+A virtual idle state is one that is intended to be used by a running VM to reduce its power consumption, as opposed to a long-term deep sleep or suspend state. In the terms of the Arm PSCI specification, this is a state entered with a `CPU_SUSPEND` call, rather than `SYSTEM_SUSPEND`.
+
+If the VPM group enters a system-level state exceeding this threshold, then:
+* The VPM group IRQ will be asserted, if it is registered.
+* If the VPM group has explicit wakeups enabled, it must be explicitly woken with the `vpm_group_wakeup()` hypercall.
+
+If this threshold is not set, or is set to 0, then any enabled virtual interrupt will be able to wake the VM from any idle state even if explicit wakeups are enabled for the VPM group, assuming that the physical device is awake or can be woken by the interrupt. Also, if the VPM group IRQ is registered, it will not be asserted on idle state entry.
+
+The argument must either be a valid system-level power state (not core- or cluster-level), or 0.
+
+
+|    **Hypercall**:       |      `vpm_group_set_threshold`       |
+|-------------------------|--------------------------------------|
+|     Call number:        |     `hvc 0x6083`                     |
+|     Inputs:             |     X0: VPMGroup CapID               |
+|                         |     X1: Power State                  |
+|                         |     X2: Reserved — Must be Zero      |
+|     Outputs:            |     X0: Error Result                 |
+
+**Errors:**
+
+OK – the operation was successful, the result is valid.
+
+Also see: [Capability Errors](#capability-errors)
+
+## System Suspend Management
+
+### Power System Suspend
+
+Request immediate entry into a physical system-level deep sleep state, such as Suspend-to-RAM or hibernate. This hypercall requires that the caller has system-suspend rights on the system power object. This power object is created at boot and provided to the root VM.
+
+The power state of all vcpus in the system is saved, all other physical CPUs are put into power-off state, and the last remaining CPU requests entry to the system suspend state. On external wakeup, the system vcpu power states are restored, including powering on any physical CPUs that were online prior to the system suspend.
+
+|    **Hypercall**:       |      `power_system_suspend`          |
+|-------------------------|--------------------------------------|
+|     Call number:        |     `hvc 0x6070`                     |
+|     Inputs:             |     X0: Power CapID                  |
+|                         |     X1: Reserved — Must be Zero      |
+|     Outputs:            |     X0: Error Result                 |
+
+**Errors:**
+
+OK – the operation was successful, the result is valid.
+
+ERROR_DENIED – the operation failed because the firmware rejected the suspend request.
+
+ERROR_ARGUMENT_INVALID – the Virtual PM Group is not Controller Virtual PM Group.
+
+ERROR_BUSY – this operation failed because other core already in System Suspend.
+
+ERROR_FAILURE – core state polling fialed as the core power off failed.
+
+Also see: [Capability Errors](#capability-errors)
+
+### Power CPU Suspend
+
+Request immediate entry into physical system-level suspend state. This hypercall requires that the caller has system-suspend rights on the system power object. This power object is created at boot and provided to the root VM.
+
+The specified power state is a platform-specific power state descriptor that will be forwarded to the firmware. The hypervisor and firmware will both validate the requested state against the set of states implemented by the hardware, and the firmware may also validate the request based on the current states of other physical CPUs.
+
+|    **Hypercall**:       |      `power_cpu_suspend`             |
+|-------------------------|--------------------------------------|
+|     Call number:        |     `hvc 0x6084`                     |
+|     Inputs:             |     X0: Power CapID                  |
+|                         |     X1: Power State                  |
+|                         |     X2: Reserved — Must be Zero      |
+|     Outputs:            |     X0: Error Result                 |
+
+**Errors:**
+
+OK – the operation was successful, the result is valid.
+
+ERROR_DENIED – The operation failed because the firmware rejected the suspend request. Typically this occurs because the request would require powering off another core which is currently active.
+
+ERROR_ARGUMENT_INVALID – The requested power state failed validation by either the hypervisor or the firmware.
+
+Also see: [Capability Errors](#capability-errors)
+
+## Trace Buffer Management
+
+### Configure trace buffer
+
+|    **Hypercall**:       |      `trace_configure`               |
+|-------------------------|--------------------------------------|
+|     Call number:        |     `hvc 0x603f`                     |
+|     Inputs:             |     X0: Arg1                         |
+|                         |     X1: Arg2                         |
+|                         |     X2: Trace Param                  |
+|     Outputs:            |     X0: Error Result                 |
+|                         |     X1: Ret1                         |
+
+**Types:**
+
+*Trace Param*:
+
+|      Operation Enumerator               |      Integer Value     |
+|-----------------------------------------|------------------------|
+|     CLASS_FLAGS                         |     0                  |
+|     NOTIFY_ENABLE                       |     1                  |
 
 **Errors:**
 
 OK – the operation was successful, and the result is valid.
+
+ERROR_ARGUMENT_INVALID – a value passed in an argument was invalid. This could be due to invalid Trace Param or arguments.
+
+ERROR_DENIED – the operation was denied.
+
+#### Update trace class flags
+
+When Trace Param is set to `CLASS_FLAGS`.
+
+Update the trace class flags values by specifying which flags to set and clear. The internal enabled hypervisor trace flags are first masked with `clear_flags` and then ORed with `set_flags`. Some flags are internal to the hypervisor, so their masks passed in this hypercall will be ignored.
+
+The operation returns the resulting mask of enabled trace flags in Ret1.
+
+|      Field       |      Argument          |
+|------------------|------------------------|
+|   set_flags      |     Arg1               |
+|   clear_flags    |     Arg2               |
+
+
+#### Configure trace buffer notifications
+
+When Trace Param is set to `NOTIFY_ENABLE`.
+
+Enables or disables trace notifications. Trace notifications are signalled via a doorbell interrupt. The `enable` argument must be `0` or `1`.
+
+|      Field       |      Argument          |
+|------------------|------------------------|
+|   enable         |     (bool)Arg1         |
 
 ## Watchdog Management
 
@@ -2984,28 +3533,38 @@ Also see: [Capability Errors](#capability-errors)
 
 Configure a Virtual IO Backend Object whose state is OBJECT_STATE_INIT.
 
-This hypercall currently only supports creation of a backend interface that is presented to the frontend VM as an MMIO transport device. This call may be extended in future to support other transport types.
+If the type valid flag is set in the flags argument, then the specified device and transport types must be known to the hypervisor, and any appropriate type-specific hypercalls must be made before the device is permitted to exit its reset state. If the flag is not set, the transport type is presumed to be MMIO, and the device type is presumed to be 0 (i.e. invalid, to be set later by a configuration space write).
 
-Every Virtual IO Backend using the MMIO transport must be attached to a Memory Extent Object that contains its common registers and assumed to be mapped with write permissions into the backend VM's address space. The caller must also bind the backend IRQs to the backend VM's Virtual Interrupt Controller.
+If the transport type is MMIO, a Memory Extent object must be provided, which must be 4KiB in size. It is presumed to have been mapped with write permissions in the backend VM's address space and with read-only permissions in the frontend VM's address space. Its layout matches the register layout specified for MMIO devices in section 4.2.2 of the Virtual I/O Device (VIRTIO) 1.1 specification, followed by optional device-specific configuration starting at offset 0x100. The caller must also bind the MMIO frontend VIRQ source to the frontend VM's interrupt controller.
 
-The number of queues presented by the device must be set at configuration time, because it may determine the size of memory allocations made in the backend implementation.
+If the transport type is not MMIO, the Memory Extent is optional. It contains only the device-specific configuration registers, if the protocol defines any. If provided, it is presumed to have been mapped with write permissions in the backend VM's address space, but not mapped in the frontend VM.
 
-The Memory Extent must be 4KiB in size. Its layout matches the register layout specified for MMIO devices in section 4.2.2 of the Virtual I/O Device (VIRTIO) 1.1 specification, followed by optional device-specific configuration starting at offset 0x100. The caller must map it with read-only permissions into the frontend VM's address space, and bind the device's frontend IRQs to the frontend VM's Virtual Interrupt Controller.
+If the transport type is PCI, the backend must be attached to the frontend VM's Virtual PCI Bus, which will take care of mapping and IRQ routing for the frontend VM.
 
-If the device type valid flag is set, then the specified device type must be one that is known to the hypervisor, and any appropriate type-specific hypercalls must be made before the device is permitted to exit its reset state. Otherwise, the device type argument is ignored.
+The maximum number of queues presented by the device must be specified at configuration time, because it may determine the size of memory allocations made in the backend implementation.
+
+If the device configuration size valid flag is not set in the flags argument, then the size argument is ignored, and the configuration area size is calculated from the size of the specified Memory Extent. If the size argument is valid, it must not cause the configuration to extend past the end of the Memory Extent. Note that this size is explicitly reported to the frontend VM when the PCI interface is active, but other transports may not report it.
+
+If the ignore configuration writes flag is set in the flags argument, all writes to the device configuration registers will be ignored. Depending on the transport type, failures of the writes may or may not be directly reported to the frontend VM. If the ignore configuration writes flag is not set, and the device type valid flag is set, then the device type must be one that has specific backend configuration APIs supported by the hypervisor.
+
+If the synchronous reset flag is set in the flags argument, a reset requested by the frontend will not complete until the backend has acknowledged it. Otherwise, the reset will complete immediately and the backend will be asynchronously notified that it has happened. Note that the MMIO transport's specification does not require the frontend to wait for reset completion, so setting this flag may be ineffective for the MMIO transport unless the frontend driver has a non-standard patch to poll the status after resetting.
+
+If the per-queue interrupts flag is set in the flags argument, the frontend may provide a separate buffer-used notification for each queue, if possible; for example, if the frontend is using the PCI transport, an MSI-X capability will be presented. If the per-queue interrupts flag is not set, calls to the `virtio_backend_notify` hypercall are permitted to clear the per-queue flag in that call's flags argument, for backwards compatibility with the legacy `virtio_mmio_backend_assert_virq` hypercall. If the maximum number of queues is set to one, both per-queue frontend notifications and legacy backend hypercalls will be enabled regardless of the value of the per-queue interrupts flag.
 
 The newly created interface will initially have the `DEVICE_NEEDS_RESET` status flag set, to prevent the device being probed by the frontend before the backend has initialised it.
 
-|    **Hypercall**:       |      `virtio_mmio_configure`         |
+|    **Hypercall**:       |      `virtio_backend_configure`      |
 |-------------------------|--------------------------------------|
 |     Call number:        |     `hvc 0x6049`                     |
 |     Inputs:             |     X0: Virtio CapID                 |
 |                         |     X1: Memextent CapID              |
 |                         |     X2: VQsNum Integer               |
 |                         |     X3: VirtioOptionFlags            |
-|                         |     X4: DeviceType Integer           |
+|                         |     X4: VirtioInterfaceType          |
 |                         |     X5: DeviceConfigSize Integer     |
 |     Outputs:            |     X0: Error Result                 |
+
+This hypercall was formerly named `virtio_mmio_configure`.
 
 **Types:**
 
@@ -3013,8 +3572,26 @@ The newly created interface will initially have the `DEVICE_NEEDS_RESET` status 
 
 | Bit Numbers |  Mask                 | Description                             |
 |-------------|-----------------------|-----------------------------------------|
-| 6           | `0x40`                | Device type argument is valid           |
-| 63:7,5:0    | `0xFFFFFFFF.FFFFFFBF` | Reserved — Must be Zero                 |
+| 0           | `0x1`                 | Synchronous reset completion |
+| 1           | `0x2`                 | Enable per-queue interrupts to the frontend |
+| 2           | `0x4`                 | Ignore writes to the device config area |
+| 3           | `0x8`                 | Device config area size is valid |
+| 6           | `0x40`                | Device type argument is valid |
+| 63:7,5:4    | `0xFFFFFFFF.FFFFFFB0` | Reserved — Must be Zero |
+
+*VirtioInterfaceType:*
+
+| Bit Numbers |  Mask                 | Description                             |
+|-------------|-----------------------|-----------------------------------------|
+| 7:0         | `0xFF`                | Device type |
+| 23:16       | `0xFF0000`            | Transport type |
+| 63:24,15:8  | `0xFFFFFFFF.FF00FF00` | Reserved — Must be Zero |
+
+*Virtio Transport Type*:
+
+| Value | Name | Description |
+| 0x0 | `VIRTIO_BACKEND_TRANSPORT_MMIO` | Simple MMIO (platform) device |
+| 0x1 | `VIRTIO_BACKEND_TRANSPORT_PCI`  | PCI device |
 
 **Errors:**
 
@@ -3123,25 +3700,62 @@ OK – the operation was successful, or the Virtual IO MMIO Backend interrupt wa
 
 Also see: [Capability Errors](#capability-errors)
 
-### Virtual IO Backend Notify
+### Virtual IO Backend Send Notification
 
 The backend makes this call to signal to the frontend that a configuration change has occurred or a queue has had buffers used.
 
-This call was formerly known as `virtio_mmio_backend_assert_virq`.
+The interpretation of the NotifyStatus argument depends on whether per-queue status is enabled in the NotifyFlags argument.
 
-|    **Hypercall**:       |      `virtio_backend_notify`             |
-|-------------------------|------------------------------------------|
-|     Call number:        |     `hvc 0x604e`                         |
-|     Inputs:             |     X0: Virtio CapID                     |
-|                         |     X1: InterruptStatus                  |
-|                         |     X2: Reserved — Must be Zero          |
-|     Outputs:            |     X0: Error Result                     |
+If per-queue status is disabled, then NotifyStatus has the same content as the level-triggered interrupt status register presented to the frontend: bit 0 is set to indicate that the backend has consumed at least one buffer from at least one queue, and bit 1 is set to indicate that the device configuration has changed. Note that disabling per-queue status is not permitted if the object was configured with per-queue IRQs enabled and a maximum number of queues greater than one.
+
+If per-queue status is enabled, then bits 62:0 of NotifyStatus form a bitmap indicating which queues have had at least one buffer used, and bit 63 indicates that the device configuration has changed.
+
+If the NotifyFlags argument has the Config Update flag set, the hypervisor will start incrementing the configuration generation field in the common registers every time the frontend traps a read of that field. This flag must be set before the start of any non-atomic update to the device configuration registers; it need not be set before atomic updates, i.e. those which change only a single size-aligned 32-bit or smaller field. It is implicitly cleared by notification of a configuration change.
+
+|    **Hypercall**:       |      `virtio_backend_notify`    |
+|-------------------------|---------------------------------|
+|     Call number:        |     `hvc 0x604e`                |
+|     Inputs:             |     X0: Virtio CapID            |
+|                         |     X1: NotifyStatus            |
+|                         |     X2: NotifyFlags             |
+|     Outputs:            |     X0: Error Result            |
+
+**Types:**
+
+*NotifyStatus:*
+
+When per-queue status is not enabled in NotifyFlags:
+
+| Bit Numbers | Mask                  | Description            |
+|-------------|-----------------------|------------------------|
+| 0           | `0x1`                 | Queue ready            |
+| 1           | `0x2`                 | Config updated         |
+| 63:2        | `0xFFFFFFFF.FFFFFFFC` | Reserved, Must be Zero |
+
+When per-queue status is enabled in NotifyFlags:
+
+| Bit Numbers | Mask                  | Description            |
+|-------------|-----------------------|------------------------|
+| 62:0        | `0x7FFFFFFF.FFFFFFFF` | Per-queue ready bitmap |
+| 63          | `0x80000000.00000000` | Config updated         |
+
+*NotifyFlags:*
+
+| Bit Numbers | Mask                  | Description              |
+|-------------|-----------------------|--------------------------|
+| 0           | `0x1`                 | Per-queue NotifyStatus   |
+| 1           | `0x2`                 | Non-atomic config update |
+| 63:1        | `0xFFFFFFFF.FFFFFFFE` | Reserved, Must be Zero   |
+
+This hypercall was formerly named `virtio_mmio_backend_assert_virq`.
 
 **Errors:**
 
 OK – the operation was successful.
 
-ERROR_DENIED – Cannot assert the IRQ since there is a reset currently pending.
+ERROR_BUSY – Cannot assert the IRQ since there is a reset currently pending.
+
+ERROR_DENIED – The device is multi-queue and has per-queue IRQs enabled, but the caller did not specify per-queue status.
 
 ERROR_ARGUMENT_INVALID – A value passed in an argument was invalid.
 
@@ -3274,11 +3888,11 @@ This hypercall was formerly named `virtio_mmio_backend_set_dev_features`.
 
 | Bits | Mask | Description |
 |-|---|-----|
-|     0                |     `0x1`                  |     1 = NEW_BUFFER: notifies the device that there are new buffers to process in a queue.                       |
-|     1                |     `0x2`                  |     1 = RESET_RQST: notifies the device that a device reset has been requested.                                 |
-|     3                |     `0x8`                  |     1 = DRIVER_OK: notifies the device that the frontend has set the DRIVER_OK bit of the Status register.      |
-|     4                |     `0x10`                 |     1 = FAILED: notifies the device that the frontend has set the FAILED bit of the Status register.            |
-|     63:5,2           |     `0xFFFFFFFF.FFFFFFE4`  |     Reserved = 0 [TBD notify reasons]                                                                           |
+|     0                |     `0x1`                  |     1 = `NEW_BUFFER`: notifies the device that there are new buffers to process in a queue.                       |
+|     1                |     `0x2`                  |     1 = `RESET_RQST`: notifies the device that a device reset has been requested.                                 |
+|     3                |     `0x8`                  |     1 = `DRIVER_OK`: notifies the device that the frontend has set the DRIVER_OK bit of the Status register.      |
+|     4                |     `0x10`                 |     1 = `FAILED`: notifies the device that the frontend has set the FAILED bit of the Status register.            |
+|     63:5,2           |     `0xFFFFFFFF.FFFFFFE4`  |     Reserved |
 
 **Errors:**
 
@@ -3337,7 +3951,36 @@ ERROR_DENIED — A status bit was specified that can be set by this call, but se
 
 Also see: [Capability Errors](#capability-errors)
 
+### Configure a VirtIO IOMMU
+
+Configure a VirtIO IOMMU object whose state is OBJECT_STATE_INIT. This hypercall configures the VirtIO IOMMU device with the associated SMMU hardware and sets the maximum number of streams that can be managed.
+
+|    **Hypercall**:       |      `virtio_iommu_configure`         |
+|-------------------------|---------------------------------------|
+|     Call number:        |     `hvc 0x6081`                      |
+|     Inputs:             |     X0: VirtIO IOMMU CapID            |
+|                         |     X1: SMMU Handle                   |
+|                         |     X2: Max Streams                   |
+|                         |     X3: Reserved — Must be Zero       |
+|     Outputs:            |     X0: Error Result                  |
+
+The SMMU Handle parameter identifies the physical SMMU hardware that this VirtIO IOMMU will virtualize. This handle is used by the Resource Manager to match the VirtIO IOMMU with the appropriate physical SMMU base addresses and configuration.
+
+The Max Streams parameter limits the maximum number of stream IDs that can be managed by this VirtIO IOMMU instance. This is used to control memory usage and prevent the VirtIO IOMMU from consuming excessive hypervisor memory. The actual limit may be further constrained by platform-specific factors such as the number of PCI buses or SoC devices.
+
+**Errors:**
+
+OK – the operation was successful, and the result is valid.
+
+ERROR_OBJECT_STATE – if the VirtIO IOMMU object is not in OBJECT_STATE_INIT state.
+
+ERROR_ARGUMENT_INVALID – a value passed in an argument was invalid. This could be due to an invalid SMMU Handle (must be non-zero) or Max Streams value.
+
+Also see: [Capability Errors](#capability-errors)
+
 ## Virtio Input Config Hypercalls
+
+The following hypercalls are used to define the device configuration area for a Virtual I/O Backend object that has been configured with a device type of Input. The configuration area for this device type contains banked read-only registers that require immediate updates when the write-only bank select registers are written, so it is necessary to provide the contents of each bank to the hypervisor.
 
 ### Virtio Input Configure
 
@@ -3415,6 +4058,108 @@ ERROR_ARGUMENT_INVALID – A value passed in an argument was invalid.
 
 Also see: [Capability Errors](#capability-errors)
 
+## Virtual PCI Bus Management
+
+### Configure a Virtual PCI Bus
+
+Configure a Virtual PCI Bus whose state is OBJECT_STATE_INIT.
+
+A Virtual PCI Bus requires attachments to an Address Space object and a Virtual Interrupt Controller object before it can be activated. It also requires at least two specified address ranges, with two further optional address ranges, all of which are input address ranges for the specified Address Space object.
+
+The mandatory address ranges are for the Configuration Access Mechanism (CAM) aperture (or Enhanced Configuration Access Mechanism, ECAM, for PCIe buses), and the Non-prefetchable Memory aperture. The optional ranges are for the Prefetchable Memory aperture and the I/O aperture.
+
+Prefetchable Memory BARs are permitted to be mapped into the Non-Prefetchable Memory aperture. This allows them to be mapped even if no Prefetchable Memory aperture is defined.
+
+Each of the specified apertures must be kept clear of other mappings by the address space manager. If the apertures overlap with each other, with the apertures of another Virtual PCI Bus, or with mappings in the address space created by other mechanisms, the behaviour of accesses to those address ranges is unpredictable. Furthermore, the VM can cause mappings in the specified Memory and I/O apertures to be created or destroyed at any time, by writing to a device's BARs; for this reason, the specified Address Space CapID is required to have the Address Space Map right.
+
+The size of each aperture is specified as a base-two exponent; that is, as the number of low address bits required to index it. For the two optional apertures, a size of 0 means the aperture is absent. For the memory and I/O apertures, the minimum size is the address space's page size (typically 12 bits, for 4KiB pages), and the maximum size is half of the address space (i.e. one bit less than its configured address size).
+
+For the CAM / ECAM aperture, the PCIe specification mandates that the aperture is large enough to map between 2 and 256 buses. Each bus has 32 slots, and each slot has 8 functions. Therefore, a CAM aperture with 256B per function must cover between 17 and 24 address bits (128KiB to 16MiB of IPA space), and an ECAM aperture with 4KiB per function must cover between 21 and 28 address bits (2MiB to 256MiB of IPA space). Note that PCI-PCI bridges are not implemented, so all devices will be on bus 0 and the minimum size is always sufficient.
+
+The two memory-typed apertures will be given the same base address in the PCI Memory address space as the specified base IPA, so the guest can directly write physical addresses into the BAR configuration registers. However, if a Memory BAR is assigned an address below the 4GiB boundary, the assigned address is not within either aperture, and the base address of the Non-prefetchable Memory aperture is above 4GiB, the BAR will be treated as if the high 32 bits of its base address match those of the base address of the Non-prefetchable Memory aperture. This effectively aliases the first 4GiB of the Non-prefetchable Memory aperture in the PCI Memory address space, allowing 32-bit Memory BARs to be mapped without reserving any of the low 4GiB of the IPA space (though the same behaviour is applied to 64-bit Memory BARs for consistency).
+
+The I/O aperture always starts at address 0 in the PCI I/O address space.
+
+The option flags argument specifies the attributes of the bus. The only defined option flag is bit 0, which must be set to indicate that the Virtual PCI Bus is a PCIe bus, and therefore that the CAM aperture is used for ECAM. Conventional PCI is currently not implemented.
+
+|    **Hypercall**:       |      `vpci_configure`                    |
+|-------------------------|------------------------------------------|
+|     Call number:        |     `hvc 0x606D`                         |
+|     Inputs:             |     X0: VPCI CapID                       |
+|                         |     X1: Address Space CapID              |
+|                         |     X2: VIC CapID                        |
+|                         |     X3: CAM Aperture                     |
+|                         |     X4: Non-prefetchable Memory Aperture |
+|                         |     X5: Prefetchable Memory Aperture     |
+|                         |     X6: I/O Aperture                     |
+|                         |     X7: vPCIOptionFlags                  |
+|     Outputs:            |     X0: Error Result                     |
+
+**Types:**
+
+*vPCIOptionFlags:*
+
+|      Bit Numbers     |      Mask                  |      Description                        |
+|----------------------|----------------------------|-----------------------------------------|
+|     0                |     `0x1`                  |     1: PCIe Bus; 0: PCI Bus             |
+|     63:1             |     `0xFFFFFFFF.FFFFFFFE`  |     Reserved,   Must be Zero            |
+
+*Aperture:*
+
+| Bit Numbers | Mask                  | Description                                     |
+|-------------|-----------------------|-------------------------------------------------|
+| 5:0         | `0x0000003F`          | Size of the aperture, measured in address bits. |
+| 11:6        | `0x00000FC0`          | Reserved,   Must be Zero                        |
+| 63:12       | `0xFFFFFFFF.FFFFF000` | Base address of the aperture (VMPhysAddr).      |
+
+**Errors:**
+
+OK – the operation was successful.
+
+ERROR_OBJECT_STATE – if the Virtual PCI object is not in OBJECT_STATE_INIT state.
+
+ERROR_ADDR_INVALID – One of the specified address ranges was not within the address space's valid address range.
+
+ERROR_ARGUMENT_SIZE — One of the specified apertures was too small or too large.
+
+ERROR_ARGUMENT_INVALID — A zero size was specified for the Non-prefetchable Memory aperture.
+
+Also see: [Capability Errors](#capability-errors)
+
+### Attach a Virtual PCI Device
+
+Attach a Virtual PCI device object to a bus. The device may be any hypervisor object that supports presenting a PCI interface to a VM.
+
+This operation can only be performed prior to activating the Virtual PCI Bus object. Attaching a device to a Virtual PCI Bus that is already active is akin to hot-plugging a physical device, which may be supported in future releases.
+
+The slot index is a value between 0 and 31 inclusive that is not already used by a device on the virtual PCI bus. If an index of -1 is specified, the bus will allocate a slot index automatically; the allocated index will be returned. Note that slot 0 of bus 0 is reserved for the host bridge.
+
+Any other requirements are specific to the virtual device type.
+
+|    **Hypercall**:       |      `vpci_attach`                |
+|-------------------------|-----------------------------------|
+|     Call number:        |     `hvc 0x606E`                  |
+|     Inputs:             |     X0: VPCI CapID                |
+|                         |     X1: Slot Index                |
+|                         |     X2: Device CapID              |
+|                         |     X3: Reserved   – Must be Zero |
+|     Outputs:            |     X0: Error Result              |
+|                         |     X1: Slot Index                |
+
+**Errors:**
+
+OK – the operation was successful.
+
+ERROR_BUSY – The specified device is already attached to a bus.
+
+ERROR_NORESOURCES – The specified slot has a device in it, or there is no free slot if none was specified.
+
+ERROR_FAILURE – The device is misconfigured or invalid in some way, such as not having a function 0.
+
+ERROR_ARGUMENT_INVALID — An out-of-range slot index was specified.
+
+Also see: [Capability Errors](#capability-errors)
+
 ## PRNG Management
 
 ### PRNG Get Entropy
@@ -3439,6 +4184,120 @@ OK – the operation was successful, and the result is valid.
 ERROR_ARGUMENT_SIZE – the NumBytes provided is zero, or exceeds the possible bytes to be returned in the Data output registers.
 
 ERROR_BUSY – Called within the read rate-limit window.
+
+ERROR_UNIMPLEMENTED – if functionality not implemented.
+
+Also see: [Capability Errors](#capability-errors)
+
+## SDEI
+
+### SDEI Get Error Flags
+
+Gets the error flags for the running SDEI error event. This should be called from the error event handler.
+
+|    **Hypercall**:   |  `sdei_get_error_flags`        |
+|---------------------|--------------------------------|
+|     Call number:    |  `hvc 0x6080`                  |
+|     Inputs:         |  X0: Reserved — Must be zero   |
+|     Outputs:        |  X0: Error Result              |
+|                     |  X1: SDEI Error Flags          |
+
+**Types:**
+
+*SDEI Error Flags*
+
+| Bit Numbers |  Mask                 |  Description                          |
+|-------------|-----------------------|---------------------------------------|
+| 31:0        | `0xFFFFFFFF`          | SDEI Error Reason                     |
+| 62:32       | `0x7FFFFFFF.00000000` | Reserved,   Must be Zero              |
+| 63          | `0x80000000.00000000` | 1: System error; 0: VM-specific error |
+
+*SDEI Error Reason*
+
+| Reason                | Integer Value | Description                                             |
+|-----------------------|---------------|---------------------------------------------------------|
+| UNKNOWN               | 0             | Unknown reason.                                         |
+| SENT_BY_USER          | 1             | The event was sent by the user across VMs.              |
+| VIRTUAL_WATCHDOG_BITE | 2             | The event was triggered due to a virtual watchdog bite. |
+
+**Errors:**
+
+OK – the operation was successful, and the result is valid.
+
+ERROR_DENIED – if not called from the error event handler.
+
+ERROR_UNIMPLEMENTED – if functionality not implemented.
+
+## Virtual IOMMU
+
+### Virtual IOMMU Bind Streams
+
+Bind streams to a virtual IOMMU.
+
+|    **Hypercall**:   |  `viommu_bind_streams`                       |
+|---------------------|----------------------------------------------|
+|     Call number:    |  `hvc 0x6090`                                |
+|     Inputs:         |  X0: vIOMMU CapID                            |
+|                     |  X1: IOMMU CapID                             |
+|                     |  X2: First Stream ID                         |
+|                     |  X3: Number of Consecutive Streams           |
+|                     |  X4: Reserved — Must be Zero                 |
+|     Outputs:        |  X0: Error Result                            |
+|                     |  X1: Number of Successfully Bound Streams    |
+
+**Stream ID format:**
+
+*Virtual SMMUv2:*
+
+| Bits  | Mask                  | Description             |
+|-------|-----------------------|-------------------------|
+| 63:32 | `0xFFFFFFFF.00000000` | Reserved — Must be Zero |
+| 31:16 | `0x00000000.FFFF0000` | Mask                    |
+| 15:0  | `0x00000000.0000FFFF` | ID                      |
+
+**Errors:**
+
+OK – the operation was successful, or the streams were already bound.
+
+ERROR_ARGUMENT_SIZE – the number of consecutive streams is invalid.
+
+ERROR_ARGUMENT_INVALID – the specified devices or streams were not found.
+
+ERROR_ADDR_INVALID – an address space is not attached to the virtual IOMMU.
+
+ERROR_DENIED – the provided streams are not compatible with the virtual IOMMU.
+
+ERROR_BUSY – the provided streams are currently in use.
+
+ERROR_UNIMPLEMENTED – if functionality not implemented.
+
+Also see: [Capability Errors](#capability-errors)
+
+### Virtual IOMMU Unbind Streams
+
+Unbind streams from a virtual IOMMU.
+
+|    **Hypercall**:   |  `viommu_unbind_streams`                     |
+|---------------------|----------------------------------------------|
+|     Call number:    |  `hvc 0x6091`                                |
+|     Inputs:         |  X0: vIOMMU CapID                            |
+|                     |  X1: First Stream ID                         |
+|                     |  X2: Number of Consecutive Streams           |
+|                     |  X3: Reserved — Must be Zero                 |
+|     Outputs:        |  X0: Error Result                            |
+|                     |  X1: Number of Successfully Unbound Streams  |
+
+**Errors:**
+
+OK – the operation was successful, or the streams were already unbound.
+
+ERROR_ARGUMENT_SIZE – the number of consecutive streams is invalid.
+
+ERROR_ARGUMENT_INVALID – the specified devices or streams were not found.
+
+ERROR_ADDR_INVALID – an address space is not attached to the virtual IOMMU.
+
+ERROR_BUSY – the provided streams are currently in use.
 
 ERROR_UNIMPLEMENTED – if functionality not implemented.
 

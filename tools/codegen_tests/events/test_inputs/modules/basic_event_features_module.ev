@@ -1,0 +1,122 @@
+
+module basic_event_features_module
+
+// Basic event subscription tests
+
+// Test basic event subscription with explicit handler
+subscribe basic_event_features_interface_simple_event
+		handler test_simple_event_handler()
+
+// Test priority levels
+subscribe basic_event_features_interface_priority_max_event
+		priority max
+
+subscribe basic_event_features_interface_priority_min_event
+		priority min
+
+subscribe basic_event_features_interface_priority_default_event
+		priority default
+
+// Test noreturn attribute
+subscribe basic_event_features_interface_noreturn_event
+		handler test_noreturn_handler() noreturn
+
+// Lock operation tests
+
+// Test different lock operations in subscriptions
+subscribe basic_event_features_interface_require_lock_event
+		require_lock(lock)
+
+subscribe basic_event_features_interface_acquire_lock_event
+		acquire_lock(lock)
+
+subscribe basic_event_features_interface_exclude_lock_event
+		exclude_lock(lock)
+
+subscribe basic_event_features_interface_release_lock_event
+		release_lock(lock)
+
+subscribe basic_event_features_interface_require_read_event
+		require_read(lock)
+
+
+// Test release-then-acquire pattern
+subscribe basic_event_features_interface_lock_ordering_event
+		handler handle_release_acquire_1()
+		priority 1
+		release_lock(lock)
+
+subscribe basic_event_features_interface_lock_ordering_event
+		handler handle_release_acquire_2()
+		priority 2
+		acquire_lock(lock)
+
+// Test acquire-then-release pattern
+subscribe basic_event_features_interface_lock_ordering_event
+		handler handle_acquire_release_1()
+		priority 3
+		acquire_lock(lock2)
+
+subscribe basic_event_features_interface_lock_ordering_event
+		handler handle_acquire_release_2()
+		priority 4
+		release_lock(lock2)
+
+// Parameterized event test
+
+// Test event with parameters and custom priority
+subscribe basic_event_features_interface_parameterized_event()
+		priority 2000
+
+// Selector event tests
+
+// Test selector event with different selectors and options
+subscribe basic_event_features_interface_selector_event[SELECTOR_1]
+		handler test_selector_event_handler(param0, param1)
+
+subscribe basic_event_features_interface_selector_event[SELECTOR_2]
+
+subscribe optional basic_event_features_interface_selector_event[SELECTOR_3]
+
+subscribe basic_event_features_interface_selector_event[SELECTOR_4]
+		constant OK
+
+// Test selector events with different lock operations
+subscribe basic_event_features_interface_selector_with_lock[SELECTOR_1]
+		release_lock(lock)
+
+subscribe basic_event_features_interface_selector_with_lock[SELECTOR_2]
+		release_lock(lock2)
+
+// Handled event test
+
+// Test handled event subscription
+subscribe optional basic_event_features_interface_handled_event
+		handler test_handled_event_handler(param0, param1)
+
+// Multi event tests
+
+// Test multiple subscriptions to the same multi event
+subscribe optional basic_event_features_interface_multi_event
+
+subscribe optional basic_event_features_interface_multi_event
+		handler test_multi_event_handler(param0) public
+
+// Setup event tests
+
+// Test setup event with unwinder
+subscribe basic_event_features_interface_setup_event
+		unwinder
+
+// Test setup event with multiple unwinders and different lock operations
+subscribe basic_event_features_interface_setup_with_unwinders
+		unwinder setup_event_unwinder1()
+		acquire_lock(lock)
+
+subscribe basic_event_features_interface_setup_with_unwinders
+		unwinder setup_event_unwinder2()
+		release_lock(lock)
+
+subscribe basic_event_features_interface_setup_with_unwinders
+		unwinder setup_event_unwinder3()
+		exclude_lock(lock)

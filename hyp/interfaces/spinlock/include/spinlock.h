@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -46,4 +46,4 @@ spinlock_release_nopreempt(spinlock_t *lock) RELEASE_SPINLOCK_NP(lock);
 // This might only be a static check, especially in non-debug builds.
 void
 assert_spinlock_held(const spinlock_t *lock) REQUIRE_LOCK(lock)
-	REQUIRE_PREEMPT_DISABLED;
+REQUIRE_PREEMPT_DISABLED;

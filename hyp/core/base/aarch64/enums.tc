@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier; BSD-3-Clause
 
@@ -115,6 +115,15 @@ define iss_serror_dfsc enumeration {
 	Async_Int	= 0b010001;
 };
 
+#if defined(ARCH_ARM_FEAT_SME)
+define iss_sme_smtc enumeration {
+	access_trap	= 0b000;
+	streaming	= 0b001;
+	non_streaming	= 0b010;
+	inactive_za	= 0b011;
+};
+#endif
+
 define spsr_64bit_mode enumeration {
 	el0t		= 0x00;
 	el1t		= 0x04;
@@ -173,11 +182,34 @@ define tlbi_range_tg enumeration {
 };
 #endif
 
+#if defined(ARCH_ARM_FEAT_SVE)
+define cpacr_zen enumeration {
+	trap_el0		= 0x01;
+	trap_all		= 0x02;
+	trap_none		= 0x03;
+};
+
 define cptr_zen enumeration {
 	trap_tge		= 0x01;
 	trap_all		= 0x02;
 	trap_none		= 0x03;
 };
+#endif
+
+#if defined(ARCH_ARM_FEAT_SME)
+define cptr_smen enumeration {
+	trap_tge		= 0x01;
+	trap_all		= 0x02;
+	trap_none		= 0x03;
+};
+
+define smidr_sh enumeration {
+	affinity		= 0b00;
+	reserved		= 0b01;
+	not_shared		= 0b10;
+	shared			= 0b11;
+};
+#endif
 
 #if defined(ARCH_ARM_FEAT_WFxT)
 extend iss_wfx_ti enumeration {

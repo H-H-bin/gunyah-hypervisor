@@ -1,5 +1,4 @@
-// © 2019 Qualcomm Innovation Center, Inc. All rights reserved.
-// All Rights Reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -171,7 +170,7 @@ function_end aarch64_init_generate_seed
 #if defined(__ARM_FEATURE_UNALIGNED)
 #define SCTLR_EL2_VM_HYP_DEBUG 0
 #else
-// FIXME:
+// FIXME: QC Gunyah issue #21
 //#define SCTLR_EL2_VM_HYP_DEBUG SCTLR_EL2_VM_A_MASK
 #define SCTLR_EL2_VM_HYP_DEBUG 0
 #endif
@@ -323,6 +322,7 @@ function aarch64_init_address_space, section=nosection
 	orr	x9, x12, TTBR1_EL2_CNP_MASK
 	// -- note, preserve x12 for use below
 	msr	TTBR1_EL2, x9
+	// Qualcomm erratum (405,522,322,632) workaround:
 	// Set TTBR0_EL2 to an invalid address, even though we set EPD0=1
 	// - a dummy ASID - 0xffff, CnP=0
 	mov	x10, ~0x1
@@ -369,7 +369,7 @@ function aarch64_init_address_space, section=nosection
 	// -- construct Level-1 table entry
 	// Set initial entry count in the level below. Assume there's two entries.
 	// Update with the actual count of entries used.
-#ifndef HYPVM_WITH_COVERAGE
+#if !defined(ARCH_AARCH64_CODE_MODEL_SMALL) || !ARCH_AARCH64_CODE_MODEL_SMALL
 	mov	x9, (VSMAv8_TABLE_TYPE | (2 << VSMAv8_TABLE_REFCOUNT_SHIFT))
 #else
 	mov	x9, (VSMAv8_TABLE_TYPE | (3 << VSMAv8_TABLE_REFCOUNT_SHIFT))
@@ -389,7 +389,7 @@ function aarch64_init_address_space, section=nosection
 	orr	x9, x9, x10
 	str	x9, [x11]
 
-#ifdef HYPVM_WITH_COVERAGE
+#if defined(ARCH_AARCH64_CODE_MODEL_SMALL) && ARCH_AARCH64_CODE_MODEL_SMALL
 	// create 2nd entry of Level-2 for next page
 	sub	x10, x11, x13				// x10 = x11 - x13 = (x11 << 3) == old entry
 	lsr	x10, x10, VSMAv8_ENTRY_BITS		// x10 = x10 >> 3

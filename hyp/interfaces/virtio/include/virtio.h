@@ -1,15 +1,15 @@
-// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-// Configure and start a virtio frontend device.
+// Configure a virtio frontend device.
 //
-// This function must be called by a backend implementation prior to enabling
-// the device, generally in its object activate handler. The backend must
-// allocate memory for the virtio_t structure within an enclosing structure or
-// object, and supply its own type which will be used to trigger backend events.
-// The specified transport type must be one that has been registered by a
-// frontend driver module; otherwise, ERROR_UNIMPLEMENTED will be returned.
+// This function must be called by a backend implementation prior to activating
+// the device. The backend must allocate memory for the virtio_t structure
+// within an enclosing structure or object, and supply its own type which will
+// be used to trigger backend events. The specified transport type must be one
+// that has been registered by a frontend driver module; otherwise,
+// ERROR_UNIMPLEMENTED will be returned.
 //
 // The specified memextent contains a cache of the device configuration space.
 // This will be mapped in the hypervisor address space and used to implement
@@ -27,14 +27,25 @@
 // The entire memextent will be presented to the guest VM through a BAR, and the
 // VIRTIO_PCI_CAP_DEVICE_CFG capability will declare the given offset and size.
 //
-// If this function returns OK, virtio_shutdown() and virtio_cleanup() must be
-// called before the virtio structure is freed or reused.
+// If this function returns OK, virtio_cleanup() must be called before the
+// virtio structure is freed or reused.
 error_t
-virtio_startup(virtio_t *virtio, virtio_backend_type_t backend_type,
-	       virtio_transport_type_t transport_type,
-	       virtio_device_type_t device_type, count_t vqs,
-	       size_t config_size, memextent_t *config_cache_me,
-	       size_t config_offset);
+virtio_configure(virtio_t *virtio, partition_t *partition,
+		 virtio_backend_type_t	 backend_type,
+		 virtio_transport_type_t transport_type,
+		 virtio_device_type_t device_type, count_t vqs,
+		 size_t config_size, memextent_t *config_cache_me,
+		 size_t config_offset, bool per_queue_notify);
+
+// Activate a frontend.
+//
+// This function must be called after virtio_configure() to activate the device.
+// Normally this will happen in the enclosing object's activate handler.
+//
+// If this function returns OK, virtio_shutdown() must be called at least one
+// RCU grace period prior to calling virtio_cleanup().
+error_t
+virtio_activate(virtio_t *virtio);
 
 // Deactivate a frontend.
 //
@@ -53,17 +64,17 @@ virtio_cleanup(virtio_t *virtio);
 
 // Start an access or update that must be synchronised with status changes.
 void
-virtio_status_lock(virtio_t *virtio) ACQUIRE_SPINLOCK(virtio->status_lock);
+virtio_status_lock(virtio_t *virtio) ACQUIRE_SPINLOCK(virtio -> status_lock);
 void
 virtio_status_lock_nopreempt(virtio_t *virtio)
-	ACQUIRE_SPINLOCK_NP(virtio->status_lock);
+	ACQUIRE_SPINLOCK_NP(virtio -> status_lock);
 
 // Finish an access or update that must be synchronised with status changes.
 void
-virtio_status_unlock(virtio_t *virtio) RELEASE_SPINLOCK(virtio->status_lock);
+virtio_status_unlock(virtio_t *virtio) RELEASE_SPINLOCK(virtio -> status_lock);
 void
 virtio_status_unlock_nopreempt(virtio_t *virtio)
-	RELEASE_SPINLOCK_NP(virtio->status_lock);
+	RELEASE_SPINLOCK_NP(virtio -> status_lock);
 
 //
 // Backend control plane API.
@@ -80,20 +91,22 @@ virtio_status_unlock_nopreempt(virtio_t *virtio)
 error_t
 virtio_set_dev_features(virtio_t *virtio, index_t feature_sel,
 			uint32_t features)
-	REQUIRE_SPINLOCK(virtio->status_lock);
+	REQUIRE_SPINLOCK(virtio -> status_lock);
 
 // Set the maximum size for one of the virtqueues. Returns ERROR_BUSY if there
 // is no pending device reset.
 error_t
 virtio_set_queue_size_max(virtio_t *virtio, index_t queue_sel,
 			  uint32_t queue_size_max)
-	REQUIRE_SPINLOCK(virtio->status_lock);
+	REQUIRE_SPINLOCK(virtio -> status_lock);
 
 // Fetch the driver's requested features. Returns ERROR_IDLE if the driver has
-// not set the FEATURES_OK bit yet.
+// not set the FEATURES_OK bit yet and the finalised flag is true. If the
+// finalised flag is false, this may return bits that have not been accepted by
+// the backend.
 uint32_result_t
-virtio_get_drv_features(virtio_t *virtio, index_t feature_sel)
-	REQUIRE_SPINLOCK(virtio->status_lock);
+virtio_get_drv_features(const virtio_t *virtio, index_t feature_sel,
+			bool finalised) REQUIRE_SPINLOCK(virtio -> status_lock);
 
 // Clear feature bits to eliminate combinations that can't be supported by the
 // backend. This is only permitted after the virtio_check_features event
@@ -103,18 +116,19 @@ virtio_get_drv_features(virtio_t *virtio, index_t feature_sel)
 error_t
 virtio_clear_drv_features(virtio_t *virtio, index_t feature_sel,
 			  uint32_t clear_features)
-	REQUIRE_SPINLOCK(virtio->status_lock);
+	REQUIRE_SPINLOCK(virtio -> status_lock);
 
 // Acknowledge the features requested by the driver.
 error_t
-virtio_ack_features_ok(virtio_t *virtio) REQUIRE_SPINLOCK(virtio->status_lock);
+virtio_ack_features_ok(virtio_t *virtio)
+	REQUIRE_SPINLOCK(virtio -> status_lock);
 
 // Fetch virtqueue information set by the driver. Returns ERROR_IDLE if
 // the queue configuration is not active yet (i.e. DRIVER_OK is not set) and
 // the finalised flag is true.
 virtio_queue_info_result_t
 virtio_get_queue_info(virtio_t *virtio, index_t queue_sel, bool finalised)
-	REQUIRE_SPINLOCK(virtio->status_lock);
+	REQUIRE_SPINLOCK(virtio -> status_lock);
 
 // Begin a non-atomic config space update. This does not need to be called for
 // atomic updates.
@@ -130,12 +144,12 @@ error_t
 virtio_queue_ready(virtio_t *virtio, index_t vq);
 
 // Notify the frontend that a reset is required.
-error_t
-virtio_needs_reset(virtio_t *virtio) REQUIRE_SPINLOCK(virtio->status_lock);
+void
+virtio_needs_reset(virtio_t *virtio) REQUIRE_SPINLOCK(virtio -> status_lock);
 
 // Notify the frontend that a requested reset is complete.
 error_t
-virtio_reset_complete(virtio_t *virtio) REQUIRE_SPINLOCK(virtio->status_lock);
+virtio_reset_complete(virtio_t *virtio) REQUIRE_SPINLOCK(virtio -> status_lock);
 
 //
 // Frontend control plane API.
@@ -166,13 +180,17 @@ virtio_get_generation(virtio_t *virtio) REQUIRE_RCU_READ;
 // Read a queue's maximum size.
 count_result_t
 virtio_get_queue_size_max(virtio_t *virtio, index_t queue_sel)
-	REQUIRE_SPINLOCK(virtio->status_lock) REQUIRE_RCU_READ;
+	REQUIRE_SPINLOCK(virtio -> status_lock) REQUIRE_RCU_READ;
 
 // Obtain a queue configuration structure for read or update. Returns ERROR_BUSY
 // if the queue configuration is already active (i.e. DRIVER_OK is set).
 virtio_queue_info_ptr_result_t
 virtio_get_queue_info_ptr(virtio_t *virtio, index_t queue_sel)
-	REQUIRE_SPINLOCK(virtio->status_lock) REQUIRE_RCU_READ;
+	REQUIRE_SPINLOCK(virtio -> status_lock) REQUIRE_RCU_READ;
+
+// Determine whether the backend generates per-queue ready signals.
+bool
+virtio_supports_per_queue_notify(const virtio_t *virtio);
 
 // Notify the backend that a queue is ready.
 error_t
@@ -207,3 +225,8 @@ virtio_device_config_write(virtio_t *virtio, size_t offset, size_t access_size,
 uint32_result_t
 virtio_device_config_read(virtio_t *virtio, size_t offset, size_t access_size)
 	RELEASE_RCU_READ;
+
+// Default handler for virtio_device_config_read.
+uint32_result_t
+virtio_device_config_read_cached(virtio_t *virtio, size_t offset,
+				 size_t access_size) REQUIRE_RCU_READ;

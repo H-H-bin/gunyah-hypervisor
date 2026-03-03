@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -39,3 +39,7 @@
 		__asm__ volatile("msr daifset, 0x7" ::"m"(*(flag_ptr)));       \
 		atomic_signal_fence(memory_order_acquire);                     \
 	} while ((_Bool)0)
+
+// Check whether there are currently any interrupts pending.
+bool
+asm_interrupt_is_pending(void);

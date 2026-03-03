@@ -1,0 +1,155 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define smmu_v3_event_id enumeration {
+	F_UUT			= 0x1;
+	C_BAD_STREAMID		= 0x2;
+	F_STE_FETCH		= 0x3;
+	C_BAD_STE		= 0x4;
+	F_BAD_ATS_TREQ		= 0x5;
+	F_STREAM_DISABLED	= 0x6;
+	F_TRANSL_FORBIDDEN	= 0x7;
+	C_BAD_SUBSTREAMID	= 0x8;
+	F_CD_FETCH		= 0x9;
+	C_BAD_CD		= 0xA;
+	F_WALK_EABT		= 0xB;
+	F_TRANSLATION		= 0x10;
+	F_ADDR_SIZE		= 0x11;
+	F_ACCESS		= 0x12;
+	F_PERMISSION		= 0x13;
+	F_TLB_CONFLICT		= 0x20;
+	F_CFG_CONFLICT		= 0x21;
+	E_PAGE_REQUEST		= 0x24;
+	F_VMS_FETCH		= 0x25;
+};
+
+define smmu_v3_event_base bitfield<256>(const) {
+	// Fields that are common to all standard event types.
+	7:0	event		enumeration smmu_v3_event_id;
+	63:32	StreamID	uint32;
+
+	// Fields that are common to multiple event types. Any use of these
+	// should be combined with a check that the event type actually defines
+	// the field.
+	11	SSV		bool;
+	31:12	SubstreamID	uint32;
+	80	GPCF		bool;
+	97	PnU		bool;
+	98	InD		bool;
+	99	RnW		bool;
+	102	NSIPA		bool;
+	103	S2		bool;
+	105:104	CLASS		uint8;
+	191:128 InputAddr	uint64;
+
+	others	unknown=0;
+};
+
+define smmu_v3_event_c_bad_streamid bitfield<256>(const) {
+	7:0	event		enumeration smmu_v3_event_id(const)=0x02;
+	11	SSV		bool;
+	31:12	SubstreamID	uint32;
+	63:32	StreamID	uint32;
+	others	unknown=0;
+};
+
+define smmu_v3_event_f_ste_fetch bitfield<256>(const) {
+	7:0	event		enumeration smmu_v3_event_id(const)=0x03;
+	11	SSV		bool;
+	31:12	SubstreamID	uint32;
+	63:32	StreamID	uint32;
+	79:64	Reason		uint16;
+	80	GPCF		bool;
+	243:195 FetchAddr	uint64;
+	others	unknown=0;
+};
+
+define smmu_v3_event_c_bad_ste bitfield<256>(const) {
+	7:0	event		enumeration smmu_v3_event_id(const)=0x04;
+	11	SSV		bool;
+	31:12	SubstreamID	uint32;
+	63:32	StreamID	uint32;
+	others	unknown=0;
+};
+
+define smmu_v3_event_f_cd_fetch bitfield<256>(const) {
+	7:0	event		enumeration smmu_v3_event_id(const)=0x09;
+	11	SSV		bool;
+	31:12	SubstreamID	uint32;
+	63:32	StreamID	uint32;
+	79:64	Reason		uint16;
+	80	GPCF		bool;
+	243:195 FetchAddr	uint64;
+	others	unknown=0;
+};
+
+define smmu_v3_event_c_bad_cd bitfield<256>(const) {
+	7:0	event		enumeration smmu_v3_event_id(const)=0x0A;
+	11	SSV		bool;
+	31:12	SubstreamID	uint32;
+	63:32	StreamID	uint32;
+	others	unknown=0;
+};
+
+define smmu_v3_event_f_walk_eabt bitfield<256>(const) {
+	7:0	event		enumeration smmu_v3_event_id(const)=0x0B;
+	11	SSV		bool;
+	31:12	SubstreamID	uint32;
+	63:32	StreamID	uint32;
+	79:64	Reason		uint16;
+	80	GPCF		bool;
+	103	S2		bool;
+	105:104	CLASS		uint8;
+	191:128 InputAddr	uint64;
+	243:195 FetchAddr	uint64;
+	others	unknown=0;
+};
+
+define smmu_v3_event_f_translation bitfield<256>(const) {
+	7:0	event		enumeration smmu_v3_event_id(const)=0x10;
+	11	SSV		bool;
+	31:12	SubstreamID	uint32;
+	63:32	StreamID	uint32;
+	79:64	StallTag	uint16;
+	95	Stall		bool;
+	102	NSIPA		bool;
+	103	S2		bool;
+	105:104	CLASS		uint8;
+	191:128 InputAddr	uint64;
+	243:195 FetchAddr	uint64;
+	others	unknown=0;
+};
+
+define smmu_v3_event_f_permission bitfield<256>(const) {
+	7:0	event		enumeration smmu_v3_event_id(const)=0x13;
+	11	SSV		bool;
+	31:12	SubstreamID	uint32;
+	63:32	StreamID	uint32;
+	79:64	StallTag	uint16;
+	95	Stall		bool;
+	97	PnU		bool;
+	98	InD		bool;
+	99	RnW		bool;
+	102	NSIPA		bool;
+	103	S2		bool;
+	105:104	CLASS		uint8;
+	108	TTRnW		bool;
+	191:128 InputAddr	uint64;
+	243:195 FetchAddr	uint64;
+	others	unknown=0;
+};
+
+define smmu_v3_event union(aligned(32)) {
+	c_bad_streamid	bitfield smmu_v3_event_c_bad_streamid;
+	f_ste_fetch	bitfield smmu_v3_event_f_ste_fetch;
+	c_bad_ste	bitfield smmu_v3_event_c_bad_ste;
+	f_cd_fetch	bitfield smmu_v3_event_f_cd_fetch;
+	c_bad_cd	bitfield smmu_v3_event_c_bad_cd;
+	f_walk_eabt	bitfield smmu_v3_event_f_walk_eabt;
+	f_translation	bitfield smmu_v3_event_f_translation;
+	f_permission	bitfield smmu_v3_event_f_permission;
+
+	// Used to read the command ID when parsing commands
+	base		bitfield smmu_v3_event_base;
+};

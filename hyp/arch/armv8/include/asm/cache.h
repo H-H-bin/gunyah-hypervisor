@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -24,7 +24,7 @@
 		uintptr_t  end_ = (uintptr_t)(x) + (size);                     \
 		register_t ordering;                                           \
                                                                                \
-		assert(!util_add_overflows((uintptr_t)(x), (size)-1U));        \
+		assert(!util_add_overflows((uintptr_t)(x), (size) - 1U));      \
                                                                                \
 		CACHE_BARRIER##_LOAD((x), ordering);                           \
                                                                                \

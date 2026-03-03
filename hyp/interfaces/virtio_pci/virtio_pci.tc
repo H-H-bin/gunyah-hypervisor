@@ -1,0 +1,13 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+extend virtio_transport_type enumeration {
+	PCI = 1;
+};
+
+#if defined(INTERFACE_VIRTIO_BACKEND)
+extend cap_rights_virtio_backend bitfield {
+	4	bind_vpci	bool;
+};
+#endif

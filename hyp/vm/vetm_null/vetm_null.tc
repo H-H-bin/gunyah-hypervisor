@@ -1,4 +1,4 @@
-// © 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -6,7 +6,6 @@
 
 extend global_options bitfield {
 	auto		vetm_null_allow_sysregs		bool;
-	auto		vetm_null_permit_hlos		bool;
 };
 
 #endif // ARCH_ARM_FEAT_TRF

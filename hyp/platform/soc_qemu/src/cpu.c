@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -89,8 +89,7 @@ platform_cpu_on(cpu_index_t cpu)
 	psci_mpidr_set_Aff2(&psci_mpidr, MPIDR_EL1_get_Aff2(&mpidr));
 	psci_mpidr_set_Aff3(&psci_mpidr, MPIDR_EL1_get_Aff3(&mpidr));
 	return psci_smc_cpu_on(psci_mpidr,
-			       partition_virt_to_phys(partition_get_private(),
-						      entry_virt),
+			       partition_image_virt_to_phys(entry_virt),
 			       (uintptr_t)thread);
 }
 
@@ -131,13 +130,13 @@ platform_cpu_off(void)
 static register_t
 psci_smc_cpu_suspend_arg(register_t power_state) REQUIRE_PREEMPT_DISABLED
 {
-	thread_t *idle = idle_thread();
+	thread_t *current = thread_get_self();
 
-	paddr_t entry_phys = partition_virt_to_phys(
-		partition_get_private(), (uintptr_t)&soc_qemu_entry_warm);
+	paddr_t entry_phys =
+		partition_image_virt_to_phys((uintptr_t)&soc_qemu_entry_warm);
 
-	error_t ret =
-		psci_smc_cpu_suspend(power_state, entry_phys, (register_t)idle);
+	error_t ret = psci_smc_cpu_suspend(power_state, entry_phys,
+					   (register_t)current);
 
 	return (register_t)ret;
 }
@@ -146,8 +145,6 @@ bool_result_t
 platform_cpu_suspend(psci_suspend_powerstate_t power_state)
 {
 	register_t ret;
-
-	assert(idle_is_current());
 
 	ret = thread_freeze(psci_smc_cpu_suspend_arg,
 			    psci_suspend_powerstate_raw(power_state), ~0UL);
@@ -173,8 +170,8 @@ psci_smc_cpu_default_suspend_arg(register_t unused)
 
 	thread_t *idle = idle_thread();
 
-	paddr_t entry_phys = partition_virt_to_phys(
-		partition_get_private(), (uintptr_t)&soc_qemu_entry_warm);
+	paddr_t entry_phys =
+		partition_image_virt_to_phys((uintptr_t)&soc_qemu_entry_warm);
 
 	error_t ret =
 		psci_smc_cpu_default_suspend(entry_phys, (register_t)idle);

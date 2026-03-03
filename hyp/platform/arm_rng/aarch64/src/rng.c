@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -8,10 +8,10 @@
 
 #include <hypregisters.h>
 
+#include <arm_rng.h>
 #include <atomic.h>
 #include <attributes.h>
 #include <cpulocal.h>
-#include <platform_prng.h>
 #include <preempt.h>
 
 #include <asm/barrier.h>
@@ -25,8 +25,44 @@
 // then the worst case reseeding interval is 32*(N cores).
 CPULOCAL_DECLARE_STATIC(count_t, rng_reseed_count);
 
+static ALWAYS_INLINE uint64_result_t
+arm_rng_read_RNDR(void)
+{
+	bool	 ok;
+	uint64_t res;
+	// Read RNDR and check the status code for success
+	__asm__ volatile(".arch_extension rng	;"
+			 "mrs	%[res], RNDR	;"
+			 "cset	%w[ok], ne	;"
+			 ".arch_extension norng	;"
+			 : [res] "=r"(res), [ok] "=r"(ok)::"cc");
+
+	uint64_result_t ret;
+	if (ok) {
+		ret = uint64_result_ok(res);
+	} else {
+		ret = uint64_result_error(ERROR_FAILURE);
+	}
+	return ret;
+}
+
+static ALWAYS_INLINE bool
+arm_rng_read_RNDRRS(uint64_t *data)
+{
+	bool	 ok;
+	uint64_t res;
+	// Read RNDRRS and check the status code for success
+	__asm__ volatile(".arch_extension rng	;"
+			 "mrs	%[res], RNDRRS	;"
+			 "cset	%w[ok], ne	;"
+			 ".arch_extension norng	;"
+			 : [res] "=r"(res), [ok] "=r"(ok)::"cc");
+	*data = res;
+	return ok;
+}
+
 error_t NOINLINE
-platform_get_entropy(platform_prng_data256_t *data)
+arm_rng_get_entropy(platform_prng_data256_t *data)
 {
 	error_t	 ret	      = ERROR_FAILURE;
 	count_t	 i	      = 0U;
@@ -36,13 +72,9 @@ platform_get_entropy(platform_prng_data256_t *data)
 	assert(data != NULL);
 
 	do {
-		bool	 ok;
-		uint64_t res;
-		__asm__ volatile("mrs	%[res], RNDR	;"
-				 "cset	%w[ok], ne	;"
-				 : [res] "=r"(res), [ok] "=r"(ok)::"cc");
-		if (ok) {
-			prng_data[i] = res;
+		uint64_result_t res = arm_rng_read_RNDR();
+		if (res.e == OK) {
+			prng_data[i] = res.r;
 			i++;
 		} else {
 			retries--;
@@ -58,57 +90,42 @@ platform_get_entropy(platform_prng_data256_t *data)
 		ret = OK;
 
 		// Issue a reseed read, ignoring the result.
-		uint64_t tmp = register_RNDRRS_read_ordered(&asm_ordering);
-		(void)tmp;
+		uint64_t tmp;
+		(void)arm_rng_read_RNDRRS(&tmp);
 	}
 
 	return ret;
 }
 
 error_t NOINLINE
-platform_get_random32(uint32_t *data)
+arm_rng_get_random32(uint32_t *data)
 {
-	error_t	 ret	 = ERROR_BUSY;
-	count_t	 retries = 16;
-	uint64_t res;
-	bool	 ok = false;
+	error_t ret	= ERROR_BUSY;
+	count_t retries = 16;
 
 	assert(data != NULL);
 
 	cpulocal_begin();
 
+	uint64_result_t res;
 	do {
-		__asm__ volatile("mrs	%[res], RNDR	;"
-				 "cset	%w[ok], ne	;"
-				 : [res] "=r"(res), [ok] "+r"(ok)::"cc");
+		res = arm_rng_read_RNDR();
 		retries--;
-	} while ((!ok) && (retries != 0U));
+	} while ((res.e != OK) && (retries != 0U));
 
-	if (ok) {
-		*data = (uint32_t)res;
+	if (res.e == OK) {
+		*data = (uint32_t)res.r;
 		ret   = OK;
 
 		count_t count = CPULOCAL(rng_reseed_count)++;
 
 		if ((count % 32) == 0U) {
 			// Issue a reseed read, ignoring the result.
-			uint64_t tmp =
-				register_RNDRRS_read_ordered(&asm_ordering);
-			(void)tmp;
+			uint64_t tmp;
+			(void)arm_rng_read_RNDRRS(&tmp);
 		}
 	}
 	cpulocal_end();
 
 	return ret;
-}
-
-error_t
-platform_get_rng_uuid(uint32_t data[4])
-{
-	// Gunyah generic RNDR - ARM TRNG interface UUID
-	data[0] = 0x45546e21U;
-	data[1] = 0x92a1433dU;
-	data[2] = 0xa2ea5fe2U;
-	data[3] = 0x16397d4eU;
-	return OK;
 }

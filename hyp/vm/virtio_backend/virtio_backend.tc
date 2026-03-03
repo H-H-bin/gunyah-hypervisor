@@ -1,13 +1,15 @@
-// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
+
+// Feature bits
+define VIRTIO_BLK_F_CONFIG_WCE constant type count_t = 11;
 
 extend virtio_backend object {
 	virtio		structure virtio(contained);
 	virq_source	structure virq_source(contained);
 	flags		bitfield virtio_backend_option_flags;
 
-	lock		structure spinlock;
 	vqs_bitmap	type register_t(atomic);
 	reason		bitfield virtio_backend_notify_reason(atomic);
 };

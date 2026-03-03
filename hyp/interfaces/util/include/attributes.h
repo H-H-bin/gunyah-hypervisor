@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -99,7 +99,7 @@
 // it for this purpose so is strongly deprecated.
 #define LOCK_IMPL __attribute__((no_thread_safety_analysis))
 
-// Put a read-only data item into .text.debug, which is a dummy section
+// Put a read-only data item into .rodata.debug, which is a dummy section
 // used in the linker script to KEEP any symbols that may need to be
 // externally visible and not optimized by LTO - usually for debuggers.
-#define USED_DEBUG_SYMBOL __attribute__((used, section(".text.debug")))
+#define USED_DEBUG_SYMBOL __attribute__((used, section(".rodata.debug")))

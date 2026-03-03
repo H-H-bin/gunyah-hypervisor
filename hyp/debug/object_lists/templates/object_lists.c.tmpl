@@ -1,5 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
-// All Rights Reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -35,15 +34,13 @@ object_lists_handle_boot_cold_init(void)
 	spinlock_release(&partition_list_lock);
 
 #for obj in $object_list
-#set o = str(obj)
-
-#if o in ('partition','hwirq',)
+#if "no_object_list" in obj.config
 #continue
 #end if
+#set o = str(obj)
 	spinlock_init(&hyp_partition->${o}_list_lock);
 	list_init(&hyp_partition->${o}_list);
 #end for
-
 }
 
 error_t
@@ -56,11 +53,10 @@ object_lists_handle_object_create_partition(partition_create_t partition_create)
 	spinlock_release(&partition_list_lock);
 
 #for obj in $object_list
-#set o = str(obj)
-
-#if o in ('partition','hwirq',)
+#if "no_object_list" in obj.config
 #continue
 #end if
+#set o = str(obj)
 	spinlock_init(&partition->${o}_list_lock);
 	list_init(&partition->${o}_list);
 #end for
@@ -76,11 +72,10 @@ object_lists_handle_object_cleanup_partition(partition_t *partition)
 	spinlock_release(&partition_list_lock);
 
 #for obj in $object_list
-#set o = str(obj)
-
-#if o in ('partition','hwirq',)
+#if "no_object_list" in obj.config
 #continue
 #end if
+#set o = str(obj)
 	spinlock_acquire(&partition->${o}_list_lock);
 	assert(list_is_empty(&partition->${o}_list));
 	spinlock_release(&partition->${o}_list_lock);
@@ -88,11 +83,10 @@ object_lists_handle_object_cleanup_partition(partition_t *partition)
 }
 
 #for obj in $object_list
-#set o = str(obj)
-
-#if o in ('partition','hwirq',)
+#if "no_object_list" in obj.config
 #continue
 #end if
+#set o = str(obj)
 
 error_t
 object_lists_handle_object_create_${o}(${o}_create_t ${o}_create)

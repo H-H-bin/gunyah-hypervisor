@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -16,18 +16,8 @@ subscribe object_create_vic
 subscribe object_deactivate_hwirq
 	handler vic_handle_object_deactivate_hwirq_forward_private
 
-subscribe vic_bind_virq
-	handler vic_base_handle_hwirq_vic_bind_virq(irq_obj_cap, vic, index, virq)
-	priority first
-
 subscribe vic_bind_hwirq[HWIRQ_ACTION_VIC_BASE_FORWARD_PRIVATE]
 	handler vic_bind_hwirq_forward_private(vic, hwirq, virq)
-
-subscribe vic_unbind_virq
-	handler vic_base_handle_hwirq_vic_unbind_virq(irq_obj_cap, index)
-	priority first
-	exclude_preempt_disabled
-
 
 subscribe vic_unbind_hwirq[HWIRQ_ACTION_VIC_BASE_FORWARD_PRIVATE]
 	handler vic_unbind_hwirq_forward_private(hwirq)
@@ -54,3 +44,12 @@ subscribe vcpu_started(warm_reset)
 
 subscribe vcpu_stopped()
 #endif
+
+subscribe vic_bind_virq
+	handler vic_base_handle_hwirq_vic_bind_virq(irq_obj_cap, vic, index, virq)
+	priority first
+
+subscribe vic_unbind_virq
+	handler vic_base_handle_hwirq_vic_unbind_virq(irq_obj_cap, index)
+	priority first
+	exclude_preempt_disabled

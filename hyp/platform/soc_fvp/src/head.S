@@ -12,6 +12,8 @@ function __entry_el2, section=nosection
 	abs64	x10, 0x30401800
 	msr	SCTLR_EL2, x10
 
+#if !defined(ARCH_ARM_FEAT_RNG) || !ARCH_ARM_FEAT_RNG
+#error unsupported in fvp TF-A
 	// Get a 192-bit random seed into x0..x2 from the TRNG if possible
 	abs64	x0, 0xC4000053 // SMCCC ID of TRNG_RND
 	mov	x1, #192 // Max entropy from one 64-bit call
@@ -28,6 +30,23 @@ function __entry_el2, section=nosection
 	mrs	x0, PMCCNTR_EL0
 	mrs	x1, CNTPCT_EL0
 2:
+#else
+	// Get a 256-bit random seed into x0..x3
+	mrs	x0, RNDRRS
+	b.ne	LOCAL(get_x1)
+local get_x0:
+	mrs	x0, RNDR
+	b.eq	LOCAL(get_x0)
+local get_x1:
+	mrs	x1, RNDR
+	b.eq	LOCAL(get_x1)
+local get_x2:
+	mrs	x2, RNDR
+	b.eq	LOCAL(get_x2)
+local get_x3:
+	mrs	x3, RNDR
+	b.eq	LOCAL(get_x3)
+#endif
 
 	b	aarch64_init
 function_end __entry_el2

@@ -1,0 +1,129 @@
+// ============================================================================
+// Constants
+// ============================================================================
+
+define ARRAY_SIZE constant = 10;
+define CSZ constant = 2;
+
+// ============================================================================
+// Bitfield Definitions
+// ============================================================================
+
+// Test bitfield with 83 bits total, demonstrating field packing
+define TestBitField bitfield<83> {
+	31:0	test	uint32;		// Bits 0-31: 32-bit unsigned integer
+	42:32	test1	uint16;		// Bits 32-42: 16-bit unsigned integer
+	50:43	test5	uint8;		// Bits 43-50: 8-bit unsigned integer
+};
+
+// ============================================================================
+// Structure Definitions
+// ============================================================================
+
+// Packed structure demonstrating mixed field types
+define DemoPackedInObject structure(packed) {
+	int_var		uint8;			// 8-bit integer variable
+	bit_field_var	bitfield TestBitField;	// Embedded bitfield
+	tt		uint32;			// 32-bit integer
+};
+
+// ============================================================================
+// Object Definitions - Nested Objects
+// ============================================================================
+
+// Nested UI object for testing object composition
+define NestUI object {
+	t	uint32;		// 32-bit unsigned integer
+	uy	uint32;		// 32-bit unsigned integer
+	// illegal_offset @ 0x800 uint32;	// Commented: illegal offset example
+};
+
+// ============================================================================
+// Object Definitions - Complex Objects
+// ============================================================================
+
+// Main UI object demonstrating various object features
+define UI object {
+	o			sint32;				// 32-bit signed integer
+	p			sint32;				// 32-bit signed integer
+	j			array(ARRAY_SIZE) uint32;	// Array of 32-bit integers
+	JJ			array(ARRAY_SIZE) object NestUI;// Array of nested objects
+	bit_field_in_obj	bitfield TestBitField;		// Embedded bitfield
+	N			object NestUI;			// Nested object with prefix
+	OO			object() NestUI;		// Nested object (alternative syntax)
+	N_noprefix		object(noprefix) NestUI;	// Nested object without prefix
+	ds			structure DemoPackedInObject;	// Embedded structure
+};
+
+// ============================================================================
+// Object Extensions
+// ============================================================================
+
+// Extend UI object
+extend UI object module Machine {
+	e	char;		// Character field
+	f	char;		// Character field
+};
+
+// ============================================================================
+// Object Definitions - Forward References
+// ============================================================================
+
+// Back object with forward reference to Tripple
+define Back object {
+	k	sint8;		// 8-bit signed integer
+	p	sint8;		// 8-bit signed integer
+	TRI	object Tripple;	// Forward reference to Tripple object
+};
+
+// ============================================================================
+// Object Definitions - Execution Context
+// ============================================================================
+
+// Execution context object demonstrating pointers, arrays, and explicit offsets
+define ExecContext object {
+	a			sint32;				// 32-bit signed integer
+	b			sint32;				// 32-bit signed integer
+	O			object UI;			// Nested UI object
+	tt			pointer object Back;		// Pointer to Back object
+	yy			array(8) object Back;		// Fixed-size array of Back objects
+	jj			array(ARRAY_SIZE) object Back;	// Variable-size array of Back objects
+	permitted_offset	@ 0x800 uint32;			// Field at explicit offset 0x800
+};
+
+// ============================================================================
+// Object Definitions - Standalone Objects
+// ============================================================================
+
+// Simple standalone object
+define Standalone object {
+	t	uint8;		// 8-bit unsigned integer
+	u	uint8;		// 8-bit unsigned integer
+};
+
+// Tripple object (referenced by Back object)
+define Tripple object {
+	tj	sint8;		// 8-bit signed integer
+	tp	uint8;		// 8-bit unsigned integer
+};
+
+// ============================================================================
+// Optional Features (Disabled)
+// ============================================================================
+
+/* Optional feature: Embedded object definitions
+define EmbeddedExecContext object {
+	a sint8;
+	b sint8;
+
+	define EmbeddedUI object {
+		o sint8;
+		p sint8;
+	};
+
+	define EmbeddedBack object {
+		k sint8;
+		p sint8;
+	};
+};
+*/

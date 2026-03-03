@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -65,9 +65,9 @@ ete_handle_boot_cpu_cold_init(void)
 		goto out;
 	}
 
-	TRCIDR2_t trcidr2 = register_TRCIDR2_read_barrier();
-	TRCIDR4_t trcidr4 = register_TRCIDR4_read_barrier();
-	TRCIDR5_t trcidr5 = register_TRCIDR5_read_barrier();
+	TRCIDR2_t trcidr2 = register_TRCIDR2_read_volatile();
+	TRCIDR4_t trcidr4 = register_TRCIDR4_read_volatile();
+	TRCIDR5_t trcidr5 = register_TRCIDR5_read_volatile();
 
 	(void)trcidr2;
 	assert(TRCIDR2_get_CIDSIZE(&trcidr2) == TRCIDR2_CIDSIZE);
@@ -118,7 +118,7 @@ ete_wait_stable(bool wait_pmstable, bool wait_idle)
 	bool idle     = false;
 
 	// wait 100us
-	ticks_t start = platform_timer_get_current_ticks();
+	ticks_t start = platform_timer_get_current_ticks_sync();
 	ticks_t timeout =
 		start + platform_timer_convert_ns_to_ticks(100U * 1000U);
 	while (1) {
@@ -129,7 +129,7 @@ ete_wait_stable(bool wait_pmstable, bool wait_idle)
 		pmstable = TRCSTATR_get_pmstable(&trcstatr);
 		idle	 = TRCSTATR_get_idle(&trcstatr);
 
-		// compilated for exit condition:
+		// valid conditions for exit:
 		// * when pmstable and idle are true
 		// * when idle are true and not check pmstable
 		// * when pmstable are true and not check idle
@@ -138,7 +138,7 @@ ete_wait_stable(bool wait_pmstable, bool wait_idle)
 			break;
 		}
 
-		if (platform_timer_get_current_ticks() > timeout) {
+		if (platform_timer_get_current_ticks_sync() > timeout) {
 			TRACE_AND_LOG(ERROR, INFO,
 				      "ETE: programmers model is not stable");
 			break;

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -32,16 +32,12 @@ define addrspace_information_area structure {
 
 extend addrspace object {
 	mapping_list_lock	structure spinlock;
-	pgtable_lock		structure spinlock;
 	vm_pgtable		structure pgtable_vm;
 	vmid			type vmid_t;
-	read_only		bool;
-	platform_pgtable	bool;
 	hyp_va_range		structure virt_range;
 	stack_bitmap		BITMAP(ADDRSPACE_MAX_THREADS, atomic);
 	info_area		structure addrspace_information_area;
 #if defined(INTERFACE_VCPU_RUN)
-	fault_range_lock	structure spinlock;
 	fault_ranges		structure range_tree;
 	fault_range_count	type count_t;
 #endif

@@ -1,0 +1,18 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+module arm_vm_mpam_direct
+
+subscribe boot_cold_init()
+
+#if defined(ARCH_ARM_FEAT_MPAM) && ARCH_ARM_FEAT_MPAM
+subscribe vcpu_activate_thread
+	// Run after the vfp handler.
+	priority -1
+
+subscribe vcpu_save_state()
+subscribe vcpu_load_state()
+
+subscribe boot_cpu_warm_init()
+#endif

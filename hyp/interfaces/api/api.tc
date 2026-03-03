@@ -1,8 +1,8 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-// FIXME:
+// FIXME: QC Gunyah issue #63
 #define HYP_VARIANT_GUNYAH 0x48
 #define HYP_VARIANT_QUALCOMM 0x51
 
@@ -34,9 +34,11 @@ define hyp_api_flags0 public bitfield<64>(const) {
 	10		prng		bool = 0;
 	11		vcpu_run	bool = 0;
 	12		trace_profile	bool = 0;
+	13		vpci		bool = 0;
+	14		power		bool = 0;
 	16		reserved_16	bool = 0;
 	31:28		scheduler	enumeration scheduler_variant = SCHEDULER_VARIANT;
-	63:32,27:17,15:13 res0_0	uint64 = 0;
+	63:32,27:17,15	res0_0		uint64 = 0;
 };
 
 define hyp_api_flags1 public bitfield<64>(const) {

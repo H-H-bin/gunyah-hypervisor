@@ -1,32 +1,19 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
-// All Rights Reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 #for obj in $object_list
-#set o = str(obj)
-
-#if o in ('partition','hwirq',)
+#if "no_object_list" in obj.config
 #continue
 #end if
+#set o = str(obj)
 
 extend partition object {
 	${o}_list structure list;
+	${o}_list_lock structure spinlock;
 };
 
 extend $o object {
 	${o}_list_node structure list_node(contained);
-};
-#end for
-
-#for obj in $object_list
-#set o = str(obj)
-
-#if o in ('partition','hwirq',)
-#continue
-#end if
-
-extend partition object {
-	${o}_list_lock structure spinlock;
 };
 #end for

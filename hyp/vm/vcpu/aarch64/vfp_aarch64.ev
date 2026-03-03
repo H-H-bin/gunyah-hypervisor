@@ -1,0 +1,57 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+module vcpu
+
+#if defined(ARCH_ARM_FEAT_SME) || defined(ARCH_ARM_FEAT_SVE)
+subscribe boot_cold_init
+	handler vfp_handle_boot_cold_init()
+	// Needs to run after the arm_fgt handler.
+	priority -2
+subscribe boot_cpu_cold_init
+	handler vfp_handle_boot_cpu_cold_init()
+	require_preempt_disabled
+subscribe boot_cpu_warm_init
+	handler vfp_handle_boot_cpu_warm_init()
+subscribe rootvm_init
+	handler vfp_handle_rootvm_init(qcbor_enc_ctxt)
+subscribe vcpu_activate_thread
+	handler vfp_handle_vcpu_activate_thread
+	// Needs to run before the mpam handler.
+subscribe object_deactivate_thread
+	handler vfp_handle_object_deactivate_thread
+subscribe vcpu_save_state
+	handler vfp_handle_vcpu_save_state()
+	require_preempt_disabled
+subscribe vcpu_load_state
+	handler vfp_handle_vcpu_load_state()
+	require_preempt_disabled
+subscribe vcpu_disable_state
+	handler vfp_handle_vcpu_disable_state()
+	require_preempt_disabled
+#endif
+
+#if defined(ARCH_ARM_FEAT_SME)
+subscribe scheduler_affinity_changed
+	handler vfp_handle_scheduler_affinity_changed(thread, prev_cpu)
+	require_scheduler_lock(thread)
+subscribe ipi_received[IPI_REASON_VFP_SAVE]
+	handler vfp_handle_ipi_vfp_save()
+	require_preempt_disabled
+subscribe power_cpu_suspend
+	handler vfp_handle_power_cpu_suspend(may_poweroff)
+	require_preempt_disabled
+subscribe vcpu_stopped
+	handler vfp_handle_vcpu_stopped
+	require_preempt_disabled
+subscribe vcpu_warm_reset
+	handler vfp_handle_vcpu_warm_reset
+	exclude_preempt_disabled
+subscribe vcpu_trap_sme_access
+	handler vfp_handle_vcpu_trap_sme_access
+subscribe vcpu_trap_sysreg_read
+	handler vfp_sme_handle_vcpu_trap_sysreg_read
+subscribe vcpu_trap_sysreg_write
+	handler vfp_sme_handle_vcpu_trap_sysreg_write
+#endif

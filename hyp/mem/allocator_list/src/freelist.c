@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -264,6 +264,11 @@ freelist_heap_add_memory(allocator_list_t *allocator, uintptr_t addr,
 
 	assert(addr != 0U);
 
+	// The freelist implementation assumes in many places that base + size
+	// does not overflow, so enforce that here. Note that this means the
+	// range cannot include the address ~0U, but the C language requires
+	// that `ptr + sizeof(*ptr)` must never overflow (C18 § 6.5.6, 7-8) so
+	// the allocator cannot allocate that address anyway.
 	if (util_add_overflows(addr, size)) {
 		ret = ERROR_ADDR_OVERFLOW;
 		goto out;
@@ -316,6 +321,11 @@ allocator_list_handle_allocator_add_ram_range(partition_t *owner,
 #if defined(PLATFORM_ALLOCATOR_S2PT_HEAP)
 	} else if (memtype == ALLOCATOR_MEMTYPE_VM_PAGE_TABLE) {
 		err = freelist_heap_add_memory(&owner->allocator.s2pt,
+					       virt_base, size);
+#endif
+#if defined(PLATFORM_ALLOCATOR_TZFFI_HEAP)
+	} else if (memtype == ALLOCATOR_MEMTYPE_TZ_FFI) {
+		err = freelist_heap_add_memory(&owner->allocator.tzffi,
 					       virt_base, size);
 #endif
 	} else {
@@ -565,6 +575,19 @@ allocator_allocate_object(allocator_t *allocator, size_t size,
 	}
 #endif
 
+#if defined(PLATFORM_ALLOCATOR_TZFFI_HEAP)
+	if (memtype == ALLOCATOR_MEMTYPE_TZ_FFI) {
+		ret = freelist_allocate_object(&allocator->tzffi, size,
+					       min_alignment);
+		if (ret.e != ERROR_NOMEM) {
+			goto out;
+		}
+
+		// If we fail to allocate from the tzffi heap, use the regular
+		// hypervisor heap as a fallback.
+	}
+#endif
+
 	if ((memtype != ALLOCATOR_MEMTYPE_HYPERVISOR) &&
 	    allocator_hint_get_strict(&hint)) {
 		ret = void_ptr_result_error(ERROR_NOMEM);
@@ -577,7 +600,6 @@ out:
 	return ret;
 }
 
-#if defined(UNIT_TESTS)
 // We will probably not be using list_remove() and heap_remove memory()
 // functions since we will only have the possibility of adding memory to the
 // heap. We will maybe remove when deleting a partition.
@@ -594,11 +616,12 @@ list_remove(allocator_node_t **head, const allocator_node_t *remove_ptr,
 
 // Returns -1 if addresses are still being used and therefore cannot be freed.
 static error_t
-freelist_heap_remove_memory(allocator_list_t *allocator, void *obj, size_t size)
+freelist_heap_remove_memory(allocator_list_t *allocator, uintptr_t addr,
+			    size_t size)
 {
 	error_t ret;
 
-	assert(obj != NULL);
+	assert(addr != 0U);
 	assert(allocator->heap != NULL);
 
 	allocator_node_t *previous = NULL;
@@ -619,13 +642,13 @@ freelist_heap_remove_memory(allocator_list_t *allocator, void *obj, size_t size)
 		goto out;
 	}
 
-	while (((uint64_t)obj > (uint64_t)current) && (current != NULL)) {
-		assert((uint64_t)previous < (uint64_t)obj);
+	while ((addr > (uint64_t)current) && (current != NULL)) {
+		assert((uint64_t)previous < addr);
 		previous = current;
 		current	 = current->next;
 	}
 
-	object_location	  = (uint64_t)obj;
+	object_location	  = (uint64_t)addr;
 	current_location  = (uint64_t)current;
 	previous_location = (uint64_t)previous;
 
@@ -688,13 +711,31 @@ out:
 	return ret;
 }
 
-// TODO: Exported only for test code currently
 error_t
-allocator_heap_remove_memory(allocator_t *allocator, void *obj, size_t size)
+allocator_list_handle_allocator_remove_ram_range(partition_t	    *owner,
+						 uintptr_t	     virt_base,
+						 size_t		     size,
+						 allocator_memattr_t attr)
 {
-	return freelist_heap_remove_memory(&allocator->hyp, obj, size);
-}
+	error_t		    err;
+	allocator_memtype_t memtype = allocator_memattr_get_type(&attr);
+
+	assert(owner != NULL);
+
+	if (memtype == ALLOCATOR_MEMTYPE_HYPERVISOR) {
+		err = freelist_heap_remove_memory(&owner->allocator.hyp,
+						  virt_base, size);
+#if defined(PLATFORM_ALLOCATOR_S2PT_HEAP)
+	} else if (memtype == ALLOCATOR_MEMTYPE_VM_PAGE_TABLE) {
+		err = freelist_heap_remove_memory(&owner->allocator.s2pt,
+						  virt_base, size);
 #endif
+	} else {
+		err = ERROR_ARGUMENT_INVALID;
+	}
+
+	return err;
+}
 
 static void
 deallocate_block(allocator_node_t **head, void *object, size_t size)
@@ -837,10 +878,118 @@ allocator_deallocate_object(allocator_t *allocator, void *object, size_t size,
 		freelist_deallocate_object(&allocator->s2pt, object, size);
 	} else
 #endif
+#if defined(PLATFORM_ALLOCATOR_TZFFI_HEAP)
+		if (memtype == ALLOCATOR_MEMTYPE_TZ_FFI) {
+		freelist_deallocate_object(&allocator->tzffi, object, size);
+	} else
+#endif
 	{
 		assert(memtype == ALLOCATOR_MEMTYPE_HYPERVISOR);
 		freelist_deallocate_object(&allocator->hyp, object, size);
 	}
+}
+
+static error_t
+freelist_heap_memory_is_free(allocator_list_t *allocator, uintptr_t addr,
+			     size_t size)
+{
+	error_t ret;
+
+	if (util_add_overflows(addr, size)) {
+		ret = ERROR_ADDR_OVERFLOW;
+		goto out;
+	}
+
+	spinlock_acquire(&allocator->lock);
+
+	allocator_node_t *curr = allocator->heap;
+
+	while ((curr != NULL) && (addr < (uintptr_t)curr)) {
+		curr = curr->next;
+	}
+
+	if ((curr != NULL) && (addr >= (uintptr_t)curr) &&
+	    ((addr + size) <= ((uintptr_t)curr + curr->size))) {
+		// Range is contained in node, it can be freed.
+		ret = OK;
+	} else {
+		ret = ERROR_ALLOCATOR_MEM_INUSE;
+	}
+
+	spinlock_release(&allocator->lock);
+
+out:
+	return ret;
+}
+
+error_t
+allocator_list_handle_allocator_range_is_free(partition_t *owner,
+					      uintptr_t virt_base, size_t size,
+					      allocator_memattr_t attr)
+{
+	error_t		    err;
+	allocator_memtype_t memtype = allocator_memattr_get_type(&attr);
+
+	assert(owner != NULL);
+
+	if (memtype == ALLOCATOR_MEMTYPE_HYPERVISOR) {
+		err = freelist_heap_memory_is_free(&owner->allocator.hyp,
+						   virt_base, size);
+#if defined(PLATFORM_ALLOCATOR_S2PT_HEAP)
+	} else if (memtype == ALLOCATOR_MEMTYPE_VM_PAGE_TABLE) {
+		err = freelist_heap_memory_is_free(&owner->allocator.s2pt,
+						   virt_base, size);
+#endif
+	} else {
+		err = ERROR_ARGUMENT_INVALID;
+	}
+
+	return err;
+}
+
+static error_t
+freelist_heap_stats(allocator_list_t *allocator, allocator_stats_t *stats)
+{
+	size_t largest_free = 0U;
+
+	assert(stats != NULL);
+
+	spinlock_acquire(&allocator->lock);
+
+	allocator_node_t *curr = allocator->heap;
+	for (; curr != NULL; curr = curr->next) {
+		largest_free = util_max(curr->size, largest_free);
+	}
+
+	stats->info	    = allocator_stats_info_default();
+	stats->total	    = allocator->total_size;
+	stats->allocated    = allocator->alloc_size;
+	stats->reserved	    = 0U;
+	stats->largest_free = largest_free;
+
+	spinlock_release(&allocator->lock);
+
+	return OK;
+}
+
+error_t
+allocator_get_stats(allocator_t *allocator, allocator_memattr_t attr,
+		    allocator_stats_t *stats)
+{
+	error_t		    err;
+	allocator_memtype_t memtype = allocator_memattr_get_type(&attr);
+
+	if (memtype == ALLOCATOR_MEMTYPE_HYPERVISOR) {
+		err = freelist_heap_stats(&allocator->hyp, stats);
+#if defined(PLATFORM_ALLOCATOR_S2PT_HEAP)
+	} else if (memtype == ALLOCATOR_MEMTYPE_VM_PAGE_TABLE) {
+		err = freelist_heap_stats(&allocator->s2pt, stats);
+#endif
+	} else {
+		err = ERROR_ARGUMENT_INVALID;
+	}
+
+	return err;
 }
 
 static void
@@ -860,6 +1009,9 @@ allocator_init(allocator_t *allocator)
 	freelist_init(&allocator->hyp);
 #if defined(PLATFORM_ALLOCATOR_S2PT_HEAP)
 	freelist_init(&allocator->s2pt);
+#endif
+#if defined(PLATFORM_ALLOCATOR_TZFFI_HEAP)
+	freelist_init(&allocator->tzffi);
 #endif
 
 	return OK;

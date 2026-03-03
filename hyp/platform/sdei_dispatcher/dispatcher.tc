@@ -1,0 +1,120 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define sdei_vendor_error_event_list structure {
+	clients			structure list;
+	pvm_client		pointer object vic;
+	lock			structure spinlock;
+};
+
+extend vic object module sdei {
+	vendor_error_event	structure sdei_event;
+	error_event_triggered	bool(atomic);
+	error_flags		bitfield sdei_error_flags(atomic);
+	init_done		bool(atomic);
+	rr_start_point		type count_t(atomic);
+	vm_grace_active		bool(atomic);
+	vm_grace_timer		structure timer(contained);
+	vm_grace_wdt		pointer(atomic) object watchdog;
+	busy			bool;
+	pvm			bool;
+	list_node		structure list_node(contained);
+};
+
+define sdei_event structure {
+	pending			bool(atomic);
+	state			enumeration sdei_event_state;
+	target_idx		type index_t;
+	entry_addr		type gvaddr_t;
+	ep_argument		uint64;
+	routing_mode		enumeration sdei_ev_routing_mode;
+	ev_num			bitfield sdei_event_number;
+	vic			pointer object vic;
+	lock			structure spinlock;
+};
+
+define sdei_vcpu_ctx structure {
+	x0_17			array(18) type register_t(aligned(16));
+	pc			uint64;
+	pstate			bitfield SPSR_EL2_A64;
+};
+
+define sdei_vcpu_pending_bits bitfield<3> {
+	0	deliver		bool;
+	1	complete	bool;
+	2	resume		bool;
+};
+
+define sdei_vcpu_state structure {
+	active			bool;
+	masked			bool(atomic);
+	curr_event		pointer(atomic) structure sdei_event;
+	resume_addr		uint64;
+	lock			structure spinlock;
+	ctx			structure sdei_vcpu_ctx;
+	standard_event0		structure sdei_event;
+};
+
+extend thread object {
+	sdei			pointer structure sdei_vcpu_state;
+	sdei_pending		bitfield sdei_vcpu_pending_bits(atomic);
+	sdei_list_node		structure list_node(contained);
+};
+
+extend vcpu_option_flags bitfield {
+	11	sdei_allowed	bool = 0;
+};
+
+extend ipi_reason enumeration {
+	sdei;
+};
+
+extend scheduler_block enumeration {
+	SDEI_DEFER;
+};
+
+extend timer_action enumeration {
+	SDEI_SYSTEM_GRACE_PERIOD_1;
+	SDEI_SYSTEM_GRACE_PERIOD_2;
+	SDEI_VM_GRACE_PERIOD;
+};
+
+extend watchdog object {
+	sdei_vm			pointer(atomic) object vic;
+};
+
+define sdei_grace_state structure {
+	timer1			structure timer;
+	timer2			structure timer;
+	error_flags		bitfield sdei_error_flags(atomic);
+	active			bool(atomic);
+	abort_reason		enumeration abort_reason;
+	abort_msg		pointer(atomic) char(const);
+	busy_lock		structure spinlock;
+	busy_state		bitfield sdei_busy_state;
+};
+
+define sdei_busy_state bitfield<32> {
+	30:0	non_pvm_count	type count_t;
+	31	pvm		bool;
+};
+
+define sdei_busy_select enumeration {
+	ANY;
+	PVM;
+	NON_PVM;
+};
+
+define SDEI_DEFAULT_SYSTEM_GRACE_PERIOD_1_NS constant type nanoseconds_t =
+	5 * 1000 * 1000 * 1000;
+
+define SDEI_DEFAULT_SYSTEM_GRACE_PERIOD_2_NS constant type nanoseconds_t =
+	10 * 1000 * 1000 * 1000;
+
+define SDEI_DEFAULT_VM_GRACE_PERIOD_NS constant type nanoseconds_t =
+	15 * 1000 * 1000 * 1000;
+
+define SDEI_DISPATCHER_VERSION_MAJOR constant uint16 = 0x1;
+define SDEI_DISPATCHER_VERSION_MINOR constant uint16 = 0x1;
+define SDEI_DISPATCHER_VERSION_VENDOR constant uint32 = 0x1;

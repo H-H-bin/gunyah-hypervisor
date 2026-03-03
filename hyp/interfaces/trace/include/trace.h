@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -124,6 +124,13 @@ trace_init(partition_t *partition, size_t size) REQUIRE_PREEMPT_DISABLED;
 // It stops using the trace boot buffer and starts using a pre-allocated
 // trace buffer of bigger size
 void
-trace_single_region_init(partition_t *partition, paddr_t base, size_t size)
+trace_single_region_init(partition_t *partition, void *base, size_t size)
 	REQUIRE_PREEMPT_DISABLED;
 #endif
+
+size_t
+trace_get_minimum_size(void);
+
+// Get the area of trace buffer.
+phys_range_t
+trace_get_area(void);

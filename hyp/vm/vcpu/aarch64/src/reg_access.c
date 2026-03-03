@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -47,7 +47,7 @@ vcpu_register_write(thread_t *vcpu, vcpu_register_set_t register_set,
 {
 	error_t err;
 
-	if (compiler_expected(vcpu->kind != THREAD_KIND_VCPU)) {
+	if (compiler_expected(!vcpu_is_vcpu(vcpu))) {
 		err = ERROR_ARGUMENT_INVALID;
 		goto out;
 	}

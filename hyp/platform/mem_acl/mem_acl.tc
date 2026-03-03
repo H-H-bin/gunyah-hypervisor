@@ -1,0 +1,37 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define MAX_MEM_ACL_LEN constant type count_t = 5U;
+
+define mem_acl_flags bitfield<8> {
+	// A hint that the VM considers the memory as private, even when
+	// the memory is shared with other VMs. For SHM bridges the VM is
+	// allowed to create a bridge with only itself as a participant; it
+	// will be implicitly upgraded to the registered ACL when forwarded
+	// to TZ.
+	0	private			bool;
+	// For FFA shares, only the memory which is mapped identically can
+	// be shared in a fragmentary way. Otherwise, the VM is only
+	// allowed to share memory in a single transfer.
+	1	identity_mapping	bool;
+};
+
+define mem_acl structure {
+	vmid	type vmid_t;
+	perm	uint8;
+	flags	bitfield mem_acl_flags;
+};
+
+define mem_acl_info bitfield<16> {
+	15:8	vmid			type vmid_t;
+	7:5	perm			uint8;
+	1	identity_mapping	bool;
+	0	private			bool;
+};
+
+extend memextent object module mem_acl {
+	info		array(MAX_MEM_ACL_LEN) bitfield mem_acl_info;
+	registered	bool;
+	len		type count_t;
+};

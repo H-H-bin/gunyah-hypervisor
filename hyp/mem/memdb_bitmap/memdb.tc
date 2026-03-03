@@ -1,4 +1,4 @@
-// © 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -10,7 +10,7 @@ define MEMDB_NUM_ENTRIES constant type index_t = 1 << MEMDB_BITS_PER_LEVEL;
 
 // In unit test configurations, we give the memdb some extra levels so the
 // test cases don't interfere with the actual memdb.
-#if defined(UNITTESTS)
+#if defined(UNIT_TESTS) && UNIT_TESTS
 define MEMDB_MAX_BITS constant type index_t = 64 - MEMDB_BITS_PER_LEVEL;
 #else
 define MEMDB_MAX_BITS constant type index_t = PLATFORM_PHYS_ADDRESS_BITS;
@@ -51,7 +51,7 @@ define memdb_entry bitfield<64> {
 	auto	entry_type	enumeration memdb_type;
 	// Use a union of pointer types here so the type system can check
 	// that the pointer alignment is sufficient.
-	// FIXME:
+	// FIXME: QC Gunyah issue #294
 	63:(MEMDB_OBJECT_ALIGN_P2)
 		entry_ptr	uintptr lsl(MEMDB_OBJECT_ALIGN_P2);
 };

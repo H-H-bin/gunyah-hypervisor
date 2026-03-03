@@ -1,0 +1,176 @@
+// ============================================================================
+// Constants for Bitfield Testing
+// ============================================================================
+// TODO: Enable constant support in bitfield definitions
+//define field_offset constant 8;
+//define field_width constant 8;
+//define max_value constant 10;
+
+// Example usage (not yet supported):
+//define control_register bitfield<64> {
+//	5:0		field_c uint16 = field_offset;
+//	field_offset	field_d bool;
+//	max_value:field_width	field_e uint16;
+//};
+
+// ============================================================================
+// Comprehensive Bitfield - All Features
+// ============================================================================
+
+// Bitfield must have complete coverage (all bits assigned)
+define system_control_register bitfield<64> {
+	// Basic field assignments
+	7:0		device_id uint16;		// device_id[7..0] <= register[7..0]
+	15:8		priority sint16 = 5;		// priority with default value of 5
+	19:16		status_code sint16;		// status_code[15..4] <= register[23], status_code[3..0] <= register[19..16]
+	25:20		flags uint8;			// flags[2..0] <= register[26..24]
+	31:26		mode uint8;			// mode[3] <= register[27], mode[2..0] <= register[31..29]
+
+	// Constant and unknown bits
+	35:32		unknown=0b1010;			// const bits 0b1010, may be run-time checked
+	39:36		unknown=0;			// don't care bits, initialize to 0
+
+	// Left-shift modifier
+	43:40		address_offset uint32 lsl(12);	// address_offset[19..12] <= register[47..40], address_offset[11..0] <= 0
+
+	// Special modifiers
+	48		enable bool(writeonly);		// write-only field
+	49		lock_bit uint8(const);		// const (readonly) field
+	50		sign_bit sint8;			// 0 or -1
+
+	// Remaining bits
+	63:51		unknown;			// don't care bits, initialized to unknown
+	// others	// not allowed unless there are 'auto' bit assignments
+
+	// Not defined yet - field type non-contiguous (e.g. embedded bitfield)
+	// 44<4>,<00>,41,40	non_contiguous_field uint16;
+};
+
+// ============================================================================
+// Bitfields with Const and Writeonly Modifiers
+// ============================================================================
+
+define memory_config_register bitfield<64> {
+	7:0		base_address uint16;
+	//15:8		write_mask uint16(writeonly);	// writeonly field (commented for testing)
+	23:16		read_only_id uint16(const);	// const (readonly) field
+	63:24		extended_address uint64;
+};
+
+define peripheral_control_register bitfield<64> {
+	7:0		peripheral_id uint16;
+	//15:8		command uint16(writeonly);	// writeonly field (commented for testing)
+	23:16		version uint16(const);		// const (readonly) field
+	63:24		config_data uint64;
+};
+
+// ============================================================================
+// Bitfield with Default Values
+// ============================================================================
+
+define initialization_register bitfield<64> {
+	7:0		magic_byte_a uint16 = 0xde;
+	15:8		magic_byte_b uint16(writeonly) = 0xad;
+	23:16		magic_byte_c uint16(const) = 0xbe;
+	63:24		unknown = 0x5555555555;
+};
+
+// ============================================================================
+// Bitfield Extensions
+// ============================================================================
+
+// Extend bitfield by deleting and adding fields
+extend initialization_register bitfield {
+	delete		magic_byte_a;
+	7		reset_flag uint16 = 0x1;
+	47:40		extended_config uint16 = 0x3;
+};
+
+// ============================================================================
+// Structure with Bitfield Members
+// ============================================================================
+
+define device_descriptor structure {
+	color		enumeration color_code;
+	control		bitfield peripheral_control_register;
+};
+
+// ============================================================================
+// Public Bitfield with Extension
+// ============================================================================
+
+define interrupt_control_register public bitfield<64> {
+	7:0		interrupt_id enumeration color_code;
+	15:8		priority_level sint16;
+	23:16		handler_index uint16(const);
+	63:24		unknown=0;
+};
+
+extend interrupt_control_register bitfield {
+	35:32		interrupt_flags uint16;
+};
+
+// ============================================================================
+// Bitfield with Auto Bit Assignment
+// ============================================================================
+
+define auto_layout_register bitfield<64> {
+	7:0		fixed_field uint16;
+	auto<5>		auto_field_5bit uint8;		// automatically assigned 5 bits
+	auto		auto_field_enum enumeration color_code;	// automatically assigned based on type size
+	others		unknown=0;			// remaining bits
+};
+
+extend auto_layout_register bitfield {
+	delete		fixed_field;
+	15:8		replacement_field uint16;
+	auto		additional_auto_field uint8;
+};
+
+// ============================================================================
+// Bitfield with Module-Specific Extension
+// ============================================================================
+
+define module_config_register bitfield<64> {
+	3:0		module_id uint16;
+	auto<5>		feature_flags uint8;
+	auto		capability_bits uint32;
+	others		unknown=0;
+};
+
+extend module_config_register bitfield module ConfigModule {
+	delete		module_id;
+	7:0		extended_module_id uint16;
+	15:8		module_version uint16;
+	auto		additional_capability uint8;
+};
+
+// ============================================================================
+// Test Support Bitfields (for register testing)
+// ============================================================================
+
+// Default register bitfields
+define TEST_DEFAULT_plain bitfield<64> {
+	63:0 value uint64;
+};
+
+define TEST_DEFAULT_feat bitfield<64> {
+	63:0 value uint64;
+};
+
+// Complex combination test bitfields with variants
+define TEST_COMB_feat_var_VAR1 bitfield<64> {
+	63:0 value uint64;
+};
+
+define TEST_COMB_feat_var_VAR2 bitfield<64> {
+	63:0 value uint64;
+};
+
+define TEST_COMB_multi_over_VAR1 bitfield<64> {
+	63:0 value uint64;
+};
+
+define TEST_COMB_multi_over_VAR2 bitfield<64> {
+	63:0 value uint64;
+};

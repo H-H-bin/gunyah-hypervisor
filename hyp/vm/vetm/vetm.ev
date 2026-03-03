@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -12,4 +12,4 @@ subscribe vdevice_access_fixed_addr
 
 subscribe thread_context_switch_pre()
 
-subscribe thread_load_state()
+subscribe vcpu_load_state()

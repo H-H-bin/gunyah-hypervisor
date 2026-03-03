@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -157,12 +157,14 @@ dealloc_objs(allocator_t *allocator, int order, void *object, size_t size,
 }
 
 static void
-remove_from_heap(allocator_t *allocator, void *block, size_t size)
+remove_from_heap(partition_t *partition, void *block, size_t size)
 {
 	error_t ret = OK;
 
 	if (block != NULL) {
-		ret = allocator_heap_remove_memory(allocator, block, size);
+		ret = allocator_list_handle_allocator_remove_ram_range(
+			partition, (uintptr_t)block, size,
+			allocator_memattr_default());
 	}
 
 	if (ret != OK) {
@@ -173,7 +175,7 @@ remove_from_heap(allocator_t *allocator, void *block, size_t size)
 // Test 1:
 // - Give 1 chunk of memory to the heap of pool_size passed
 // - Allocate objects of passed sizes
-// - Free all the objects in order specied in 'order' variable.
+// - Free all the objects in order specified in 'order' variable.
 // - Remove pool from heap
 static void
 test1(int order, size_t alignment, size_t pool_size, size_t size, size_t size2,
@@ -194,13 +196,13 @@ test1(int order, size_t alignment, size_t pool_size, size_t size, size_t size2,
 		     object3, size3);
 
 	// ---------------- Removing memory to heap --------------------
-	remove_from_heap(&partition->allocator, block, pool_size);
+	remove_from_heap(partition, block, pool_size);
 }
 
 // Test 2:
 // - Give 3 chunks of memory to the heap of pool_size passed
 // - Allocate objects of passed sizes
-// - Free all the objects in order specied in 'order' variable.
+// - Free all the objects in order specified in 'order' variable.
 // - Remove all pools from heap
 static void
 test2(int order, size_t alignment, size_t pool_size, size_t pool_size2,
@@ -223,9 +225,9 @@ test2(int order, size_t alignment, size_t pool_size, size_t pool_size2,
 		     object3, size3);
 
 	// ---------------- Removing memory to heap --------------------
-	remove_from_heap(&partition->allocator, block, pool_size);
-	remove_from_heap(&partition->allocator, block2, pool_size2);
-	remove_from_heap(&partition->allocator, block3, pool_size3);
+	remove_from_heap(partition, block, pool_size);
+	remove_from_heap(partition, block2, pool_size2);
+	remove_from_heap(partition, block3, pool_size3);
 }
 
 static void

@@ -1,0 +1,74 @@
+
+interface basic_event_features_interface
+
+include <includefile.h>
+
+// Simple events with no parameters for testing basic subscription
+event basic_event_features_interface_simple_event
+
+// Events for testing priority levels
+event basic_event_features_interface_priority_max_event
+event basic_event_features_interface_priority_min_event
+event basic_event_features_interface_priority_default_event
+
+// Event for testing noreturn handler attribute
+event basic_event_features_interface_noreturn_event
+
+// Events for testing different lock operations
+event basic_event_features_interface_require_lock_event
+event basic_event_features_interface_acquire_lock_event
+event basic_event_features_interface_exclude_lock_event
+event basic_event_features_interface_release_lock_event
+event basic_event_features_interface_require_read_event
+
+// Event for testing lock ordering
+event basic_event_features_interface_lock_ordering_event
+
+// Event with parameters for testing parameter passing
+event basic_event_features_interface_parameterized_event
+		param reason: abort_reason_t
+
+// Selector events for testing event selection mechanism
+selector_event basic_event_features_interface_selector_event
+		selector action: hwirq_action_t
+		param param0: uint32_t
+		param param1: uint32_t
+		return: error_t = ERROR_ARGUMENT_INVALID
+
+// Selector event with lock operations
+selector_event basic_event_features_interface_selector_with_lock
+		selector action: hwirq_action_t
+		param param0: uint32_t
+		param param1: uint32_t
+		return: error_t = ERROR_ARGUMENT_INVALID
+
+// Selector event with void return type
+selector_event basic_event_features_interface_selector_void_return
+		selector param0: uint32_t
+		return: void
+
+// Handled event for testing handled event mechanism
+handled_event basic_event_features_interface_handled_event
+		param param0: cap_id_t
+		param param1: index_t
+		return: error_t = ERROR_CSPACE_WRONG_OBJECT_TYPE
+
+// Multi event for testing multiple handler subscriptions
+multi_event basic_event_features_interface_multi_event
+		count count_param: int32_t
+		param param0: cap_id_t
+		param param1: index_t
+
+// Setup events for testing setup/unwinder mechanism
+setup_event basic_event_features_interface_setup_event
+		param param0: uintptr_t
+		param param1: uintptr_t
+		return: error_t = ERROR_FAILURE
+		success: OK
+
+// Setup event for testing multiple unwinders with different lock operations
+setup_event basic_event_features_interface_setup_with_unwinders
+		param param0: uintptr_t
+		param param1: uintptr_t
+		return: error_t = ERROR_FAILURE
+		success: OK

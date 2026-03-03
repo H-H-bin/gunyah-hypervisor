@@ -1,4 +1,4 @@
-// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -10,3 +10,39 @@ subscribe boot_cold_init
 // Using the start handler to get LOG outputs during init
 subscribe boot_hypervisor_start
 	require_preempt_disabled
+
+#if defined(MODULE_VM_ROOTVM)
+subscribe rootvm_init(root_partition, root_cspace, qcbor_enc_ctxt)
+#endif
+
+#if defined(SMMU_V3_ENABLE) && SMMU_V3_ENABLE
+
+subscribe irq_received[HWIRQ_ACTION_SMMU_V3_TCU_CMDSYNC]
+	handler smmuv3_handle_irq_received_tcu_cmdsync()
+	require_preempt_disabled
+
+subscribe irq_received[HWIRQ_ACTION_SMMU_V3_TCU_EVENTQ]
+	handler smmuv3_handle_irq_received_tcu_eventq()
+	require_preempt_disabled
+
+subscribe irq_received[HWIRQ_ACTION_SMMU_V3_TCU_GLOBAL]
+	handler smmuv3_handle_irq_received_tcu_global() noreturn
+	require_preempt_disabled
+
+subscribe irq_received[HWIRQ_ACTION_SMMU_V3_TCU_PMU]
+	handler smmuv3_handle_irq_received_tcu_pmu()
+	require_preempt_disabled
+
+subscribe rcu_update[RCU_UPDATE_CLASS_SMMUV3_RELEASE_STREAM_RANGE](entry)
+
+interface smmuv3
+
+// Triggered when a Stage1 event is received from HW. Handlers can forward
+// the event to a virtual IOMMU object.
+selector_event smmuv3_stage1_event
+	selector viommu_type: viommu_type_t
+	param range: const smmuv3_stream_range_t *
+	param stream_id: smmu_v3_stream_id_t
+	param event: const smmu_v3_event_t *
+
+#endif // SMMU_V3_ENABLE

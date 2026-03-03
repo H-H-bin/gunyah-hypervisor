@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -41,4 +41,27 @@ define vpm_group_get_state hypercall {
 	res0		input uregister;
 	error		output enumeration error;
 	vpm_state	output uregister;
+};
+
+define vpm_group_wakeup hypercall {
+	call_num	0x6f;
+	vpm_group	input type cap_id_t;
+	res0		input uregister;
+	error		output enumeration error;
+};
+
+define vpm_group_bind_power hypercall {
+	call_num	0x74;
+	vpm_group	input type cap_id_t;
+	power		input type cap_id_t;
+	res0		input uregister;
+	error		output enumeration error;
+};
+
+define vpm_group_set_threshold hypercall {
+	call_num	0x83;
+	vpm_group	input type cap_id_t;
+	power_state	input uregister;
+	res0		input uregister;
+	error		output enumeration error;
 };

@@ -1,19 +1,19 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
-// All Rights Reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 module object_lists
 
-#for obj in $object_list
-#set o = str(obj)
+subscribe object_create_partition
+subscribe object_cleanup_partition(partition)
 
-#if o in ('hwirq',)
+#for obj in $object_list
+#if "no_object_list" in obj.config
 #continue
 #end if
+#set o = str(obj)
 
 subscribe object_create_${o}
-
 subscribe object_cleanup_${o}(${o})
 #end for
 

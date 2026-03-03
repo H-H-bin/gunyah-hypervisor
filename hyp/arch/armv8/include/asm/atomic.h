@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -40,8 +40,8 @@ bool
 atomic_compare_exchange_uint64_ll_sc_weak(_Atomic uint64_t *obj,
 					  uint64_t *expected, uint64_t desired);
 
-#define atomic_compare_exchange_ll_sc_weak(obj, expected, desired)             \
-	_Generic((obj), \
-	_Atomic uint32_t *: atomic_compare_exchange_uint32_ll_sc_weak, \
-	_Atomic uint64_t *: atomic_compare_exchange_uint64_ll_sc_weak) \
-	((obj), (expected), (desired))
+#define atomic_compare_exchange_ll_sc_weak(obj, expected, desired)              \
+	_Generic((obj),                                                         \
+		_Atomic uint32_t *: atomic_compare_exchange_uint32_ll_sc_weak,  \
+		_Atomic uint64_t *: atomic_compare_exchange_uint64_ll_sc_weak)( \
+		(obj), (expected), (desired))

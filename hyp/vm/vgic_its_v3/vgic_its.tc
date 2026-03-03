@@ -1,0 +1,9 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+extend vgic_its object {
+	// Indicator for the SYNC ITS command handler to determine whether a
+	// recent INV/INVALL command changed anything.
+	pending_sync_needed	bool(atomic);
+};

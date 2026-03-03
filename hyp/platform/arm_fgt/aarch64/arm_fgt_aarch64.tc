@@ -1,10 +1,76 @@
-// © 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 // Unused fields are currently commented out to avoid accidental use. They could
 // be guarded with FEAT_XXX if required. This is deferred until more FGT bits
 // are in active use.
+
+define HFGRTR_EL2 bitfield<64> {
+	//0		AFSR0_EL1	bool;
+	//1		AFSR1_EL1	bool;
+	//2		AIDR_EL1	bool;
+	//3		AMAIR_EL1	bool;
+	//4		APDAKey		bool;
+	//5		APDBKey		bool;
+	//6		APGAKey		bool;
+	//7		APIAKey		bool;
+	//8		APIBKey		bool;
+	//9		CCSIDR_EL1	bool;
+	//10		CLIDR_EL1	bool;
+	//11		CONTEXTIDR_EL1	bool;
+	//12		CPACR_EL1	bool;
+	//13		CSSELR_EL1	bool;
+	//14		CTR_EL0		bool;
+	//15		DCZID_EL0	bool;
+	//16		ESR_EL1		bool;
+	//17		FAR_EL1		bool;
+	//18		ISR_EL1		bool;
+	//19		LORC_EL1	bool;
+	//20		LOREA_EL1	bool;
+	//21		LORID_EL1	bool;
+	//22		LORN_EL1	bool;
+	//23		LORSA_EL1	bool;
+	//24		MAIR_EL1	bool;
+	//25		MIDR_EL1	bool;
+	//26		MPIDR_EL1	bool;
+	//27		PAR_EL1		bool;
+	//28		REVIDR_EL1	bool;
+	//29		SCTLR_EL1	bool;
+	//30		SCTXNUM_EL1	bool;
+	//31		SCTXNUM_EL0	bool;
+	//32		TCR_EL1		bool;
+	//33		TPIDR_EL1	bool;
+	//34		TPIDRRO_EL0	bool;
+	//35		TPIDR_EL0	bool;
+	//36		TTBR0_EL1	bool;
+	//37		TTBR1_EL1	bool;
+	//38		VBAR_EL1	bool;
+	//39		ICC_IGRPENn_EL1	bool;
+	//40		ERRIDR_EL1	bool;
+	//41		ERRSELR_EL1	bool;
+	//42		ERXFR_EL1	bool;
+	//43		ERXCTLR_EL1	bool;
+	//44		ERXSTATUS_EL1	bool;
+	//45		ERXMISCn_EL1	bool;
+	//46		ERXPFGF_EL1	bool;
+	//47		ERXPFGCTL_EL1	bool;
+	//48		ERXPFGCDN_EL1	bool;
+	//49		ERXADDR_EL1	bool;
+	//50		nACCDATA_EL1	bool;
+	//52		nGCS_EL0	bool;
+	//53		nGCS_EL1	bool;
+	//56		nRCWMASK_EL1	bool;
+	//57		nPIRE0_EL1	bool;
+	//58		nPIR_EL1	bool;
+	//59		nPOR_EL0	bool;
+	//60		nPOR_EL1	bool;
+	//61		nS2POR_EL1	bool;
+	//62		nMAIR2_EL1	bool;
+	//63		nAMAIR2_EL1	bool;
+	others		unknown=0;
+};
+
 define HFGWTR_EL2 bitfield<64> {
 	0		AFSR0_EL1	bool;
 	1		AFSR1_EL1	bool;
@@ -46,8 +112,6 @@ define HFGWTR_EL2 bitfield<64> {
 	//50		nACCDATA_EL1	bool;
 	//52		nGCS_EL0	bool;
 	//53		nGCS_EL1	bool;
-	//54		nSMPRI_EL1	bool;
-	//55		nTPIDR2_EL0	bool;
 	//56		nRCWMASK_EL1	bool;
 	//57		nPIR0_EL1	bool;
 	//58		nPIR_EL1	bool;
@@ -59,8 +123,21 @@ define HFGWTR_EL2 bitfield<64> {
 	others		unknown=0;
 };
 
+#if defined(ARCH_ARM_FEAT_SME)
+extend HFGRTR_EL2 bitfield {
+	54		nSMPRI_EL1	bool;
+	55		nTPIDR2_EL0	bool;
+};
+
+extend HFGWTR_EL2 bitfield {
+	54		nSMPRI_EL1	bool;
+	55		nTPIDR2_EL0	bool;
+};
+#endif
+
 #if defined(INTERFACE_VCPU) && defined(ARCH_ARM_FEAT_FGT) && ARCH_ARM_FEAT_FGT
 extend vcpu_el2_registers structure {
+	hfgrtr_el2	bitfield HFGRTR_EL2;
 	hfgwtr_el2	bitfield HFGWTR_EL2;
 };
 #endif

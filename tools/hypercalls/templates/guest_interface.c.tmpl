@@ -1,6 +1,6 @@
 ## Guest Interface Template
 ##
-## © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+## Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 ##
 ## SPDX-License-Identifier: BSD-3-Clause
 // Gunyah Hypervisor hypercall C bindings.
@@ -28,7 +28,7 @@
         const
         #end if
 #slurp
-        ## FIXME:
+        ## FIXME: QC Gunyah issue #234
         #assert $hypcall.abi.register_size == 8
         #if $input.is_signed
         register sregister_t#slurp

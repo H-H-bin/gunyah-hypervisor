@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -26,7 +26,7 @@ define VGIC_SEARCH_NORMAL_RANGES constant type count_t = GIC_RES_BASE / VGIC_SEA
 define VGIC_SPI_EXT_NUM constant type count_t = PLATFORM_VGIC_SPI_EXT_LIMIT;
 #else
 define VGIC_SPI_EXT_NUM constant type count_t = GIC_SPI_EXT_NUM;
-#endif
+#endif // defined(PLATFORM_VGIC_SPI_EXT_LIMIT)
 define VGIC_SEARCH_SPI_EXT_BASE	constant type count_t = VGIC_SEARCH_NORMAL_RANGES;
 define VGIC_SEARCH_SPI_EXT_END	constant type count_t =
 	VGIC_SEARCH_SPI_EXT_BASE + (GIC_SPI_EXT_NUM / VGIC_SEARCH_RANGE_SIZE);
@@ -34,12 +34,12 @@ define VGIC_SEARCH_SPI_EXT_END	constant type count_t =
 define VGIC_SEARCH_PPI_EXT_BASE constant type count_t = VGIC_SEARCH_SPI_EXT_END;
 define VGIC_SEARCH_PPI_EXT_END	constant type count_t =
 	VGIC_SEARCH_PPI_EXT_BASE + (GIC_PPI_EXT_NUM / VGIC_SEARCH_RANGE_SIZE);
-define VGIC_SEARCH_RANGES constant type count_t = VGIC_SEARCH_PPI_EXT_END;
+define VGIC_SEARCH_RANGES_NOLPI constant type count_t = VGIC_SEARCH_PPI_EXT_END;
 #else
-define VGIC_SEARCH_RANGES constant type count_t = VGIC_SEARCH_SPI_EXT_END;
+define VGIC_SEARCH_RANGES_NOLPI constant type count_t = VGIC_SEARCH_SPI_EXT_END;
 #endif // VGIC_HAS_EXT_PPIS
 #else
-define VGIC_SEARCH_RANGES constant type count_t = VGIC_SEARCH_NORMAL_RANGES;
+define VGIC_SEARCH_RANGES_NOLPI constant type count_t = VGIC_SEARCH_NORMAL_RANGES;
 #endif // VGIC_HAS_EXT_SPIS
 
 // Upper bound for virtual IRQ IDs. Note that this can be further constrained
@@ -50,14 +50,24 @@ define VGIC_SEARCH_RANGES constant type count_t = VGIC_SEARCH_NORMAL_RANGES;
 define VGIC_LPI_BITS constant type count_t = 16;
 #endif
 define VGIC_IDBITS constant type count_t =
-	VGIC_HAS_LPI ? VGIC_LPI_BITS : (VGIC_HAS_EXT_SPIS ? 13 : 10);
+		VGIC_HAS_LPI ? VGIC_LPI_BITS : (VGIC_HAS_EXT_SPIS ? 13 : 10);
 
 #if VGIC_HAS_LPI
 define VGIC_LPI_NUM constant type count_t = (1 << VGIC_IDBITS) - GIC_LPI_BASE;
-#if !GICV3_HAS_VLPI
+#if !(defined(GICV3_USE_VLPI) && GICV3_USE_VLPI)
 define VGIC_LPI_RANGES constant type count_t = BITMAP_NUM_WORDS(VGIC_LPI_NUM);
 #endif
 #endif
+
+#if VGIC_HAS_LPI && !(defined(GICV3_USE_VLPI) && GICV3_USE_VLPI)
+define VGIC_SEARCH_LPI_BASE constant type count_t = VGIC_SEARCH_RANGES_NOLPI;
+define VGIC_SEARCH_LPI_RANGE_SIZE constant type count_t = 64;
+define VGIC_SEARCH_LPI_END constant type count_t =
+	VGIC_SEARCH_LPI_BASE + (VGIC_LPI_NUM / VGIC_SEARCH_LPI_RANGE_SIZE);
+define VGIC_SEARCH_RANGES constant type count_t = VGIC_SEARCH_LPI_END;
+#else
+define VGIC_SEARCH_RANGES constant type count_t = VGIC_SEARCH_RANGES_NOLPI;
+#endif // VGIC_HAS_LPI && !(defined(GICV3_USE_VLPI) && GICV3_USE_VLPI)
 
 // Delivery state for VIRQs.
 //
@@ -98,7 +108,7 @@ define vgic_delivery_state bitfield<32>(set_ops) {
 	11		hw_active	bool;
 
 	// Add GICR index so we don't need to broadcast sync IPIs
-	// FIXME:
+	// FIXME: QC Gunyah issue #67
 
 	// An interrupt has been rerouted, disabled or reasserted while it is
 	// listed on a VCPU that is current on a remote CPU. The remote CPU
@@ -130,7 +140,7 @@ define vgic_delivery_state bitfield<32>(set_ops) {
 	3		enabled		bool;
 
 	// Also migrate priority and route to this bitfield.
-	// FIXME:
+	// FIXME: QC Gunyah issue #66
 
 	// The interrupt is currently active. This is only valid for an
 	// unlisted interrupt; for a listed interrupt the active state is in
@@ -264,13 +274,51 @@ extend hwirq object module vgic {
 	// A flag indicating that the HW IRQ can be safely enabled. If it is
 	// false, then an unbind is in progress, and the HW IRQ should be kept
 	// disabled. This is protected by the gicd_lock of the bound VIC.
-	enable_hw	bool;
+	enable_hw	bool(group(flags));
 };
 
 extend hwirq_action enumeration {
 	vgic_forward_spi;
 	vgic_maintenance;
 };
+
+#if VGIC_HAS_LPI && !(defined(GICV3_USE_VLPI) && GICV3_USE_VLPI)
+define VGIC_LPI_ENTRY_RANGE_SIZE constant size = 256;
+// 8 LPIs per pending table entry (1 byte)
+define VGIC_LPI_PEND_LPIS_PER_BYTE constant size = 8;
+
+define vgic_lpi_entry structure {
+	vlpi		type virq_t;
+	refcount	structure refcount;
+};
+
+define vgic_lpi_range structure {
+	range		structure irq_range(contained);
+	lpis		array(VGIC_LPI_ENTRY_RANGE_SIZE) structure vgic_lpi_entry;
+	vcpu		pointer(atomic) object thread;
+	used_masks	BITMAP(VGIC_LPI_ENTRY_RANGE_SIZE);
+	rcu_entry	structure rcu_entry(contained);
+};
+
+extend irq_range_type enumeration {
+	vgic_lpi;
+};
+
+extend error enumeration {
+	LPI_NOT_ASSIGNED = 131;
+	NO_PENDING_VLPI = 132;
+};
+
+define VGIC_VLPI_ENTRY_RANGE_SIZE constant size = 256;
+
+define vgic_vlpi_range structure {
+	node		structure range_tree_node(contained);
+	dstates		array(VGIC_VLPI_ENTRY_RANGE_SIZE) bitfield vgic_delivery_state(atomic);
+	pending_masks BITMAP(VGIC_VLPI_ENTRY_RANGE_SIZE, atomic);
+	rcu_entry	structure rcu_entry(contained);
+	partition	pointer object partition;
+};
+#endif // VGIC_HAS_LPI && !(defined(GICV3_USE_VLPI) && GICV3_USE_VLPI)
 
 // Virtual GICD state is in the stand-alone vic object.
 extend vic object {
@@ -283,6 +331,9 @@ extend vic object {
 	// type is set to VDEVICE_TYPE_NONE, it has not been mapped. Mapping
 	// is protected by the gicd lock.
 	gicd_device		structure vdevice(contained);
+#if defined(VIC_VIRTUAL_MSI) && VIC_VIRTUAL_MSI
+	gicd_base		type vmaddr_t;
+#endif
 
 	// The current values of the virtual GICD_CTLR and GICD_STATUSR.
 	// Updates are serialised by gicd_lock, but GICD_CTLR is atomic so we
@@ -355,13 +406,15 @@ extend vic object {
 	// be held across the initial copy-in of the config table.
 	vlpi_config_valid	bool;
 
-#if GICV3_HAS_VLPI_V4_1
+#if GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 	// True if we can use the ITS to deliver virtual SGIs. This is only
 	// possible on GICv4.1, and only if this VIC has VLPI tables. Also,
 	// because an ITS-delivered SGI is really an LPI and therefore has no
 	// active state, this could potentially break the guest; so the guest
 	// must enable it by setting the virtual GICD_CTLR.nASSGIreq to 1.
 	vsgis_enabled		bool;
+#else
+	lpi_range_lock		structure spinlock;
 #endif
 #endif
 
@@ -393,12 +446,16 @@ extend vic object {
 	//
 	// It is organized in the following manner, each section is contiguous
 	// with the next in the cache:
-	// IRQ Type		| INTIDs	| Bits (16 INTIDs / bit)
+	// IRQ Type		| INTIDs	| Bits (16 INTIDs / bit,
+	//			|		| 64 LPIs / bit)
 	// ---------------------------------------------------------------
 	// SGIs, SPIs, PPIs	| 0-1019	| 0:63
 	// Special Intids	| 1020-1023	| 63
 	// Ext SPIs		| 4096-5119	| 64:127
 	// Ext PPIs		| 1056-1119	| 128:131
+	// LPIs			| 8192-65535*)	| 132:1028*)
+	//
+	// *) depends on VGIC_LPI_BITS, assuming 16 bits here
 	search_ranges		BITMAP(VGIC_SEARCH_RANGES, atomic);
 
 	// Mapping between GICR indices and 4-level affinity values for
@@ -611,12 +668,7 @@ extend thread object module vgic {
 	search_ranges	array(VGIC_PRIORITIES)
 		BITMAP(VGIC_SEARCH_RANGES, atomic);
 
-#if VGIC_HAS_LPI && !GICV3_HAS_VLPI
-	// Extended search ranges for software-implemented LPIs.
-	search_ranges_lpi	array(VGIC_PRIORITIES)
-		BITMAP(VGIC_LPI_RANGES, atomic);
-#error Software VLPIs are not implemented yet
-#elif VGIC_HAS_LPI && GICV3_HAS_VLPI
+#if VGIC_HAS_LPI && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 	// Cache of the VLPI pending state.
 	//
 	// This is a pointer to a bitmap with 1 << gicd_idbits bits if LPIs
@@ -646,8 +698,30 @@ extend thread object module vgic {
 	// Sequence number of the VSYNC following the most recent VSGI clear
 	// enable operation. This is used to set GICR_CTLR.RWP on trapped reads.
 	vsgi_disable_seq	type count_t;
-#endif
-#endif
+#endif // GICV3_HAS_VLPI_V4_1
+#elif VGIC_HAS_LPI // VGIC_HAS_LPI && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
+	// Tree for mapping vLPIs to delivery states. The delivery states in
+	// the context vLPIs which are used keeping track of the following
+	// properties:
+	//
+	// * vLPI configuration (enabled, priority) in place of the vITS
+	//	configuration table.
+	// * vLPI pending state in place of the vITS pending table.
+	// * vLPI routing information
+	// * List register state tracking
+	//
+	// Because the number of available vLPIs can be quite large, the vLPIs
+	// are divided into ranges for each of which memory is allocated
+	// dynamically whenever a vLPI of a range is mapped by a guest. To
+	// keep memory fragmentation low, vLPI ranges are not freed when vLPIs
+	// are unmapped by the guest (e.g. via the DISCARD ITS command) and
+	// the memory is only freed when the vCPU is deactivated.
+	vlpi_tree			structure range_tree;
+
+	// Lock for serializing updates to the vLPI tree.
+	vlpi_lock			structure spinlock;
+	lpi_affinity			type cpu_index_t(atomic);
+#endif // VGIC_HAS_LPI
 
 	// Cache of shifted priorities that may have nonzero bits in their
 	// search ranges.
@@ -769,3 +843,19 @@ define vgic_gicr_attach_flags public bitfield<64> {
 extend addrspace_attach_vdevice_flags union {
 	vgic_gicr	bitfield vgic_gicr_attach_flags;
 };
+
+#if VGIC_HAS_LPI && !(defined(GICV3_USE_VLPI) && GICV3_USE_VLPI)
+extend range_tree_node_type enumeration {
+	vlpi_range;
+};
+extend rcu_update_class enumeration {
+	vlpi_release_range;
+	lpi_release_range;
+};
+
+define vlpi_updated_flags bitfield<32>(set_ops) {
+	0		enabled		bool;
+	1		disabled	bool;
+	2		prio_changed	bool;
+};
+#endif

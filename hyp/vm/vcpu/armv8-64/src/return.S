@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -93,7 +93,7 @@ function_chain vcpu_hypercall_return_sanitize_x2, vcpu_hypercall_return_sanitize
 
 	mov	x17, xzr
 
-	// FIXME:
+	// FIXME: QC Gunyah issue #95
 	// Temporarily preserve x8 for backwards compatibility. It should be
 	// sanitised once this is removed.
 	//mov	x8, xzr

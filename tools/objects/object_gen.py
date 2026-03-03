@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -9,6 +9,7 @@ from Cheetah.Template import Template
 import argparse
 import subprocess
 import sys
+import shlex
 
 
 class Object:
@@ -55,7 +56,8 @@ def main():
     output += str(Template(file=options.template, searchList=ns))
 
     if options.formatter:
-        ret = subprocess.run([options.formatter], input=output.encode("utf-8"),
+        ret = subprocess.run(shlex.split(options.formatter),
+                             input=output.encode("utf-8"),
                              stdout=subprocess.PIPE)
         output = ret.stdout.decode("utf-8")
         if ret.returncode != 0:

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -17,6 +17,7 @@
 #include <partition.h>
 #include <partition_alloc.h>
 #include <partition_init.h>
+#include <platform_cpu.h>
 #include <preempt.h>
 #include <scheduler.h>
 #include <thread.h>
@@ -62,7 +63,7 @@ tests_handle_object_create_thread(thread_create_t create)
 	thread_t *thread = create.thread;
 	assert(thread != NULL);
 
-	if (thread->kind == THREAD_KIND_TEST) {
+	if (thread_is_kind(thread, THREAD_KIND_TEST)) {
 		scheduler_block_init(thread, SCHEDULER_BLOCK_TEST);
 	}
 
@@ -134,14 +135,16 @@ tests_thread_init(void)
 
 #if defined(UNIT_TESTS)
 	for (cpu_index_t i = 0; cpulocal_index_valid(i); i++) {
-		thread_t *thread = tests_thread_create(i);
-		scheduler_lock(thread);
-		scheduler_unblock(thread, SCHEDULER_BLOCK_TEST);
-		scheduler_unlock(thread);
+		if (platform_cpu_exists(i)) {
+			thread_t *thread = tests_thread_create(i);
+			scheduler_lock(thread);
+			scheduler_unblock(thread, SCHEDULER_BLOCK_TEST);
+			scheduler_unlock(thread);
 
-		// The thread has a reference to itself now (until it exits); we
-		// don't need to hold onto it.
-		object_put_thread(thread);
+			// The thread has a reference to itself now (until it
+			// exits); we don't need to hold onto it.
+			object_put_thread(thread);
+		}
 	}
 #endif
 }

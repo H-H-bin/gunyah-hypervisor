@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -80,6 +80,14 @@ partition_get_private(void);
 // partition_alloc() call.
 paddr_t
 partition_virt_to_phys(partition_t *partition, uintptr_t addr);
+
+// Get the physical address of code or data in the hypervisor image.
+//
+// This is used by a limited set of internal hypervisor functions that need to
+// get a physical address within the hypervisor image, e.g. the physical address
+// of a function.
+paddr_t
+partition_image_virt_to_phys(uintptr_t addr);
 
 // Check whether the physical address range is valid, i.e. associated to any
 // partition.
@@ -178,6 +186,19 @@ partition_map_and_add_heap_ext(partition_t *partition, paddr_t phys,
 error_t
 partition_map_and_add_heap(partition_t *partition, paddr_t base, size_t size);
 
+// Unmap and remove memory from the partition's allocator.
+//
+// The memory must no longer be in use by the allocator.
+error_t
+partition_unmap_and_remove_heap(partition_t *partition, paddr_t phys,
+				size_t size);
+
+// Check if a mapped range in the partition's allocator is free.
+//
+// Returns OK if the memory is free and can be removed.
+error_t
+partition_heap_is_free(partition_t *partition, paddr_t phys, size_t size);
+
 #if defined(PLATFORM_TRACE_STANDALONE_REGION) &&                               \
 	PLATFORM_TRACE_STANDALONE_REGION
 // Map range and add memory to the partition's trace area
@@ -185,5 +206,5 @@ partition_map_and_add_heap(partition_t *partition, paddr_t base, size_t size);
 // The memory must have been allocated from the partition that is it is freed
 // back to.
 uintptr_result_t
-partition_map_and_add_trace(partition_t *partition, paddr_t base, size_t size);
+partition_map_and_add_trace(partition_t *partition, paddr_t phys, size_t size);
 #endif

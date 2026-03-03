@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -53,8 +53,9 @@ static uint32_t etm_cprgctlr[PLATFORM_MAX_CORES];
 #define ETM_REGISTER(name)                                                     \
 	{                                                                      \
 		.reg_offset  = offsetof(etm_t, name),                          \
-		.access_size = util_sizeof_member(etm_t, name), .count = 1,    \
-		.stride = 0                                                    \
+		.access_size = util_sizeof_member(etm_t, name),                \
+		.count	     = 1,                                              \
+		.stride	     = 0,                                              \
 	}
 
 #define ETM_REGISTER_ARRAY(name)                                               \
@@ -63,7 +64,7 @@ static uint32_t etm_cprgctlr[PLATFORM_MAX_CORES];
 		.access_size = util_sizeof_member(etm_t, name[0]),             \
 		.count	     = util_sizeof_member(etm_t, name) /               \
 			 util_sizeof_member(etm_t, name[0]),                   \
-		.stride = util_sizeof_member(etm_t, name[0])                   \
+		.stride = util_sizeof_member(etm_t, name[0]),                  \
 	}
 
 #define ETM_REGISTER_SPARSE_ARRAY(name)                                        \
@@ -72,13 +73,13 @@ static uint32_t etm_cprgctlr[PLATFORM_MAX_CORES];
 		.access_size = util_sizeof_member(etm_t, name[0].value),       \
 		.count	     = util_sizeof_member(etm_t, name) /               \
 			 util_sizeof_member(etm_t, name[0]),                   \
-		.stride = util_sizeof_member(etm_t, name[0])                   \
+		.stride = util_sizeof_member(etm_t, name[0]),                  \
 	}
 
 // NOTE: registers are saved in the context memory region based on their
 // index in context_register_list. Make sure the alignment is correct
 static const context_register_info_t context_register_list[] = {
-	// main control & configuration regsters
+	// main control & configuration registers
 	ETM_REGISTER(trcprocselr),
 	ETM_REGISTER(trcconfigr),
 	ETM_REGISTER(trcauxctlr),
@@ -317,7 +318,7 @@ etm_save_context_percpu(cpu_index_t cpu)
 
 	// pull trcstatr.pmstable until it's stable
 	// wait up to 100us
-	ticks_t start = platform_timer_get_current_ticks();
+	ticks_t start = platform_timer_get_current_ticks_sync();
 	ticks_t timeout =
 		start + platform_timer_convert_ns_to_ticks(100U * 1000U);
 	do {
@@ -327,7 +328,7 @@ etm_save_context_percpu(cpu_index_t cpu)
 			break;
 		}
 
-		if (platform_timer_get_current_ticks() > timeout) {
+		if (platform_timer_get_current_ticks_sync() > timeout) {
 			TRACE_AND_LOG(ERROR, INFO,
 				      "ETM: programmers model is not stable");
 			break;

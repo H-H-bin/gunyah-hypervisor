@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -8,12 +8,13 @@
 #include <hypcontainers.h>
 
 #include <atomic.h>
+#include <doorbell.h>
 #include <scheduler.h>
 #include <spinlock.h>
 #include <vic.h>
 #include <virq.h>
 
-#include "doorbell.h"
+#include "doorbell_internal.h"
 #include "event_handlers.h"
 
 doorbell_flags_result_t
@@ -73,8 +74,6 @@ out:
 error_t
 doorbell_reset(doorbell_t *doorbell)
 {
-	error_t ret = OK;
-
 	assert(doorbell != NULL);
 
 	spinlock_acquire(&doorbell->lock);
@@ -87,15 +86,13 @@ doorbell_reset(doorbell_t *doorbell)
 
 	spinlock_release(&doorbell->lock);
 
-	return ret;
+	return OK;
 }
 
 error_t
 doorbell_mask(doorbell_t *doorbell, doorbell_flags_t new_enable_mask,
 	      doorbell_flags_t new_ack_mask)
 {
-	error_t ret = OK;
-
 	assert(doorbell != NULL);
 
 	spinlock_acquire(&doorbell->lock);
@@ -126,7 +123,7 @@ doorbell_mask(doorbell_t *doorbell, doorbell_flags_t new_enable_mask,
 
 	spinlock_release(&doorbell->lock);
 
-	return ret;
+	return OK;
 }
 
 bool
@@ -149,7 +146,7 @@ doorbell_handle_virq_check_pending(virq_source_t *source, bool reasserted)
 		// determined that the reasserted argument should be false.
 		// If we race with a function that sets flag bits or clears mask
 		// bits, such that we incorrectly return false, then that other
-		// function's virq_assert() will overrride the false result.
+		// function's virq_assert() will override the false result.
 		ret = ((atomic_load_relaxed(&doorbell->flags) &
 			atomic_load_relaxed(&doorbell->enable_mask)) != 0U);
 	}
@@ -160,15 +157,11 @@ doorbell_handle_virq_check_pending(virq_source_t *source, bool reasserted)
 error_t
 doorbell_bind(doorbell_t *doorbell, vic_t *vic, virq_t virq)
 {
-	error_t ret = OK;
-
 	assert(doorbell != NULL);
 	assert(vic != NULL);
 
-	ret = vic_bind_shared(&doorbell->source, vic, virq,
-			      VIRQ_TRIGGER_DOORBELL);
-
-	return ret;
+	return vic_bind_shared(&doorbell->source, vic, virq,
+			       VIRQ_TRIGGER_DOORBELL);
 }
 
 void

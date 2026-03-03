@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -57,9 +57,8 @@ log_init(void)
 
 void
 log_standard_handle_trace_log(trace_id_t id, trace_action_t action,
-			      const char *arg0, register_t arg1,
-			      register_t arg2, register_t arg3, register_t arg4,
-			      register_t arg5)
+			      const char *fmt, register_t arg0, register_t arg1,
+			      register_t arg2, register_t arg3, register_t arg4)
 {
 	index_t	      index;
 	count_t	      entry_size;
@@ -105,8 +104,8 @@ log_standard_handle_trace_log(trace_id_t id, trace_action_t action,
 
 	// Add the log message after the time-stamp
 	ret = snprint(entry_buf + timestamp_size,
-		      LOG_ENTRY_BUFFER_SIZE - timestamp_size, arg0, arg1, arg2,
-		      arg3, arg4, arg5);
+		      LOG_ENTRY_BUFFER_SIZE - timestamp_size, fmt, arg0, arg1,
+		      arg2, arg3, arg4);
 	if (ret.e == ERROR_STRING_TRUNCATED) {
 		entry_size = LOG_ENTRY_BUFFER_SIZE;
 	} else if ((ret.e == ERROR_STRING_MISSING_ARGUMENT) || (ret.r == 0U)) {

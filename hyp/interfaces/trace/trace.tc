@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -6,6 +6,11 @@
 //
 // The number of enumerators in trace_class enumeration should be less than 32
 // for _core_ classes to support 32-bit architectures.
+
+define trace_configure_parameter public enumeration(explicit) {
+	CLASS_FLAGS = 0;	// Set / clear trace class flags
+	NOTIFY_ENABLE = 1;	// Enable / disable trace notify mask
+};
 
 define trace_class public enumeration(explicit) {
 	ERROR = 0;	// Critical errors

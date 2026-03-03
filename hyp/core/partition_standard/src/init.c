@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -14,6 +14,7 @@
 #include <atomic.h>
 #include <attributes.h>
 #include <bootmem.h>
+#include <list.h>
 #include <memdb.h>
 #include <object.h>
 #include <panic.h>
@@ -40,6 +41,7 @@ extern const char image_phys_start;
 extern const char image_phys_last;
 
 static const uintptr_t virt_start = (uintptr_t)&image_virt_start;
+static const uintptr_t virt_last  = (uintptr_t)&image_virt_last;
 static const paddr_t   phys_start = (paddr_t)&image_phys_start;
 static const paddr_t   phys_last  = (paddr_t)&image_phys_last;
 
@@ -51,30 +53,51 @@ static_assert(((size_t)PLATFORM_HEAP_PRIVATE_SIZE & 0xfffU) == 0U,
 	      "PLATFORM_HEAP_PRIVATE_SIZE must be 4KB aligned");
 #endif
 
+void
+partition_standard_handle_boot_runtime_first_init(void)
+{
+	// Setup hyp partition's refcount, needed for idle thread init.
+	refcount_init(&partition_hyp.header.refcount);
+
+	partition_hyp.header.type = OBJECT_TYPE_PARTITION;
+}
+
 void NOINLINE
 partition_standard_handle_boot_cold_init(void)
 {
 	// Set up the hyp partition's header.
-	refcount_init(&partition_hyp.header.refcount);
-	partition_hyp.header.type = OBJECT_TYPE_PARTITION;
+	list_init(&partition_hyp.mapped_ranges);
 	atomic_store_release(&partition_hyp.header.state, OBJECT_STATE_ACTIVE);
+
+	// Add hypervisor memory as a mapped range.
+	partition_mapped_range_t *mr = NULL;
+	void_ptr_result_t	  alloc_ret =
+		bootmem_allocate(sizeof(*mr), alignof(*mr));
+	if (alloc_ret.e != OK) {
+		panic("Failed bootmem allocate for mapped range");
+	}
+
+	(void)memset_s(alloc_ret.r, sizeof(*mr), 0, sizeof(*mr));
+	mr = (partition_mapped_range_t *)alloc_ret.r;
 
 	paddr_t hyp_heap_end =
 		(phys_last + 1U) - ((size_t)PLATFORM_RW_DATA_SIZE -
 				    (size_t)PLATFORM_HEAP_PRIVATE_SIZE);
-	// Add hypervisor memory as a mapped range.
-	partition_hyp.mapped_ranges[0].virt = virt_start;
-	partition_hyp.mapped_ranges[0].phys = phys_start;
-	partition_hyp.mapped_ranges[0].size =
-		(size_t)(hyp_heap_end - phys_start);
+	mr->virt = virt_start;
+	mr->phys = phys_start;
+	mr->size = (size_t)(hyp_heap_end - phys_start);
 
 	// Set the default allocator memory attributes for the mapped range.
 	// This isn't really the best location to track these attributes given
 	// only part of this memory is used for allocations, and it assumes the
 	// attributes are the same for the entire range. Consider an alternate
 	// location for this in future.
-	// FIXME:
-	partition_hyp.mapped_ranges[0].attr = allocator_memattr_default();
+	// FIXME: QC Gunyah issue #245
+	mr->attr = allocator_memattr_default();
+
+	list_insert_at_tail_release(&partition_hyp.mapped_ranges,
+				    &mr->list_node);
+	partition_hyp.mapped_count = 1U;
 
 	// Allocate management structures for the hypervisor allocator.
 	if (allocator_init(&partition_hyp.allocator) != OK) {
@@ -91,8 +114,7 @@ partition_standard_handle_boot_cold_init(void)
 		panic("no boot mem");
 	}
 
-	paddr_t phys = partition_virt_to_phys(&partition_hyp, (uintptr_t)ret.r);
-	assert(phys != PADDR_INVALID);
+	paddr_t phys = partition_image_virt_to_phys((uintptr_t)ret.r);
 
 	error_t err = trigger_allocator_add_ram_range_event(
 		&partition_hyp, phys, (uintptr_t)ret.r, hyp_alloc_size,
@@ -230,6 +252,14 @@ out:
 	if (err != OK) {
 		panic("Adding platform RAM ranges failed");
 	}
+}
+
+paddr_t
+partition_image_virt_to_phys(uintptr_t addr)
+{
+	assert((addr >= virt_start) && (addr < virt_last));
+
+	return addr - virt_start + phys_start;
 }
 
 partition_t *

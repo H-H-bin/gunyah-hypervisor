@@ -1,10 +1,9 @@
-// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <assert.h>
 #include <hyptypes.h>
-#include <limits.h>
 #include <string.h>
 
 #include <hypcontainers.h>
@@ -26,7 +25,7 @@
 #include "event_handlers.h"
 #include "internal.h"
 
-#define SIZE_T_BITS (sizeof(size_t) * (size_t)CHAR_BIT)
+#define SIZE_T_BITS util_width(size_t)
 
 static_assert(sizeof(range_map_value_t) <= sizeof(uint64_t),
 	      "GPT value must not be larger than 64-bits!");
@@ -91,72 +90,6 @@ entries_equal(range_map_entry_t a, range_map_entry_t b)
 {
 	return (a.type == b.type) &&
 	       trigger_range_map_values_equal_event(a.type, a.value, b.value);
-}
-
-static range_map_pte_t
-load_atomic_pte(_Atomic range_map_pte_t *p)
-{
-	return atomic_load_consume(p);
-}
-
-static void
-store_atomic_pte(_Atomic range_map_pte_t *p, range_map_pte_t pte, bool init)
-{
-	if (init) {
-		atomic_init(p, pte);
-	} else {
-		atomic_store_release(p, pte);
-	}
-}
-
-static range_map_pte_t
-load_root_pte(range_map_root_t *root, range_map_config_t config)
-{
-	range_map_pte_t pte;
-
-	if (range_map_config_get_rcu_read(&config)) {
-		pte = load_atomic_pte(&root->atomic);
-	} else {
-		pte = root->non_atomic;
-	}
-
-	return pte;
-}
-
-static range_map_pte_t
-load_level_pte(range_map_config_t config, range_map_level_t level, index_t i)
-{
-	range_map_pte_t pte;
-
-	if (range_map_config_get_rcu_read(&config)) {
-		pte = load_atomic_pte(&level.atomic->entries[i]);
-	} else {
-		pte = level.non_atomic->entries[i];
-	}
-
-	return pte;
-}
-
-static void
-store_root_pte(range_map_root_t *root, range_map_config_t config,
-	       range_map_pte_t pte, bool init)
-{
-	if (range_map_config_get_rcu_read(&config)) {
-		store_atomic_pte(&root->atomic, pte, init);
-	} else {
-		root->non_atomic = pte;
-	}
-}
-
-static void
-store_level_pte(range_map_config_t config, range_map_level_t level, index_t i,
-		range_map_pte_t pte, bool init)
-{
-	if (range_map_config_get_rcu_read(&config)) {
-		store_atomic_pte(&level.atomic->entries[i], pte, init);
-	} else {
-		level.non_atomic->entries[i] = pte;
-	}
 }
 
 static bool
@@ -300,11 +233,11 @@ get_max_possible_shifts(range_map_stack_t *stack, size_t curr, size_t rem)
 	return shifts;
 }
 
-static range_map_level_t
+static range_map_level_t *
 get_level_from_pte(range_map_pte_t pte)
 {
-	range_map_level_t level = pte.value.level;
-	assert(level.raw != 0U);
+	range_map_level_t *level = pte.value.level;
+	assert(level != NULL);
 
 	return level;
 }
@@ -313,7 +246,7 @@ static void
 go_down_level(range_map_config_t config, range_map_stack_t *stack, size_t curr,
 	      range_map_pte_t pte)
 {
-	range_map_level_t level = get_level_from_pte(pte);
+	range_map_level_t *level = get_level_from_pte(pte);
 
 	assert(guard_matching(pte, curr));
 
@@ -358,11 +291,11 @@ out:
 }
 
 static void
-write_pte_to_level(range_map_root_t *root, range_map_config_t config,
-		   range_map_stack_t *stack, range_map_pte_t pte)
+write_pte_to_level(range_map_pte_t *root, range_map_stack_t *stack,
+		   range_map_pte_t pte)
 {
 	if (stack->depth == 0U) {
-		store_root_pte(root, config, pte, false);
+		*root = pte;
 	} else {
 		range_map_stack_frame_t *frame = get_curr_stack_frame(stack);
 		assert(frame != NULL);
@@ -370,7 +303,7 @@ write_pte_to_level(range_map_root_t *root, range_map_config_t config,
 		index_t i = range_map_frame_info_get_index(&frame->info);
 		assert(i < RANGE_MAP_LEVEL_ENTRIES);
 
-		store_level_pte(config, frame->level, i, pte, false);
+		frame->level->entries[i] = pte;
 		range_map_frame_info_set_dirty(&frame->info, true);
 	}
 }
@@ -389,22 +322,9 @@ range_map_gpt_handle_rcu_free_level(rcu_entry_t *entry)
 }
 
 static void
-free_level(range_map_config_t config, partition_t *partition,
-	   range_map_level_t level)
-{
-	if (range_map_config_get_rcu_read(&config)) {
-		rcu_enqueue(&level.atomic->rcu_entry,
-			    RCU_UPDATE_CLASS_RANGE_MAP_FREE_LEVEL);
-	} else {
-		partition_free(partition, level.non_atomic,
-			       sizeof(range_map_level_non_atomic_t));
-	}
-}
-
-static void
-try_clean(range_map_root_t *root, range_map_config_t config,
-	  partition_t *partition, range_map_stack_t *stack,
-	  range_map_level_t level, count_t entry_shifts)
+try_clean(range_map_pte_t *root, partition_t *partition,
+	  range_map_stack_t *stack, range_map_level_t *level,
+	  count_t entry_shifts)
 {
 	count_t		filled_count	= 0U;
 	range_map_pte_t first_pte	= range_map_pte_empty();
@@ -414,7 +334,7 @@ try_clean(range_map_root_t *root, range_map_config_t config,
 	assert(partition != NULL);
 
 	for (index_t i = 0U; i < RANGE_MAP_LEVEL_ENTRIES; i++) {
-		range_map_pte_t curr_pte = load_level_pte(config, level, i);
+		range_map_pte_t curr_pte = level->entries[i];
 
 		if (range_map_pte_info_get_type(&curr_pte.info) ==
 		    RANGE_MAP_TYPE_EMPTY) {
@@ -450,8 +370,8 @@ try_clean(range_map_root_t *root, range_map_config_t config,
 	if (filled_count <= 1U) {
 		// Either the level is empty, or the last filled
 		// PTE is the only one in the level.
-		write_pte_to_level(root, config, stack, last_filled_pte);
-		free_level(config, partition, level);
+		write_pte_to_level(root, stack, last_filled_pte);
+		partition_free(partition, level, sizeof(range_map_level_t));
 	} else if (can_merge) {
 		// All entries consistent, we can merge into one PTE.
 		assert(filled_count == RANGE_MAP_LEVEL_ENTRIES);
@@ -459,16 +379,16 @@ try_clean(range_map_root_t *root, range_map_config_t config,
 		size_t	new_guard  = get_pte_addr(first_pte) >> new_shifts;
 		range_map_pte_info_set_guard(&first_pte.info, new_guard);
 		range_map_pte_info_set_shifts(&first_pte.info, new_shifts);
-		write_pte_to_level(root, config, stack, first_pte);
-		free_level(config, partition, level);
+		write_pte_to_level(root, stack, first_pte);
+		partition_free(partition, level, sizeof(range_map_level_t));
 	} else {
 		// No cases where we can free the level, do nothing.
 	}
 }
 
 static void
-go_up_level(range_map_root_t *root, range_map_config_t config,
-	    partition_t *partition, range_map_stack_t *stack, bool write)
+go_up_level(range_map_pte_t *root, partition_t *partition,
+	    range_map_stack_t *stack, bool write)
 {
 	assert(stack->depth > 0U);
 
@@ -483,16 +403,15 @@ go_up_level(range_map_root_t *root, range_map_config_t config,
 		// entries in each level, but do we want this additional
 		// memory consumption?
 		count_t shifts = range_map_frame_info_get_shifts(&frame->info);
-		try_clean(root, config, partition, stack, frame->level, shifts);
+		try_clean(root, partition, stack, frame->level, shifts);
 	} else {
 		assert(!range_map_frame_info_get_dirty(&frame->info));
 	}
 }
 
 static range_map_pte_t
-get_curr_pte(range_map_root_t *root, range_map_config_t config,
-	     partition_t *partition, range_map_stack_t *stack, size_t curr,
-	     bool write)
+get_curr_pte(range_map_pte_t *root, partition_t *partition,
+	     range_map_stack_t *stack, size_t curr, bool write)
 {
 	range_map_pte_t pte;
 
@@ -507,25 +426,24 @@ get_curr_pte(range_map_root_t *root, range_map_config_t config,
 		index_t idx = (index_t)((curr - addr) >> shifts);
 		if (idx < RANGE_MAP_LEVEL_ENTRIES) {
 			range_map_frame_info_set_index(&frame->info, idx);
-			pte = load_level_pte(config, frame->level, idx);
+			pte = frame->level->entries[idx];
 			goto out;
 		}
 
-		go_up_level(root, config, partition, stack, write);
+		go_up_level(root, partition, stack, write);
 	}
 
 	assert(stack->depth == 0U);
 
-	pte = load_root_pte(root, config);
+	pte = *root;
 
 out:
 	return pte;
 }
 
 static void
-update_curr_pte(range_map_root_t *root, range_map_config_t config,
-		range_map_stack_t *stack, size_t addr, count_t shifts,
-		range_map_type_t type, range_map_value_t value)
+update_curr_pte(range_map_pte_t *root, range_map_stack_t *stack, size_t addr,
+		count_t shifts, range_map_type_t type, range_map_value_t value)
 {
 	range_map_pte_t new_pte = range_map_pte_empty();
 
@@ -536,12 +454,12 @@ update_curr_pte(range_map_root_t *root, range_map_config_t config,
 		new_pte.value = value;
 	}
 
-	write_pte_to_level(root, config, stack, new_pte);
+	write_pte_to_level(root, stack, new_pte);
 }
 
 static void
-split_pte_and_fill_level(range_map_config_t config, range_map_level_t level,
-			 range_map_pte_t old_pte, count_t shifts)
+split_pte_and_fill_level(range_map_level_t *level, range_map_pte_t old_pte,
+			 count_t shifts)
 {
 	size_t		  pte_addr = get_pte_addr(old_pte);
 	size_t		  pte_size = util_bit(shifts);
@@ -555,7 +473,7 @@ split_pte_and_fill_level(range_map_config_t config, range_map_level_t level,
 		range_map_pte_info_set_guard(&new_pte.info, pte_addr >> shifts);
 		new_pte.value = value;
 
-		store_level_pte(config, level, i, new_pte, true);
+		level->entries[i] = new_pte;
 
 		pte_addr += pte_size;
 
@@ -565,22 +483,14 @@ split_pte_and_fill_level(range_map_config_t config, range_map_level_t level,
 }
 
 static error_t
-allocate_level(range_map_root_t *root, range_map_config_t config,
-	       partition_t *partition, range_map_stack_t *stack,
-	       range_map_pte_t old_pte, count_t new_shifts, bool fill)
+allocate_level(range_map_pte_t *root, partition_t *partition,
+	       range_map_stack_t *stack, range_map_pte_t old_pte,
+	       count_t new_shifts, bool fill)
 {
-	error_t		  err = OK;
-	range_map_level_t level;
-	size_t		  alloc_size;
-	size_t		  alloc_align;
+	error_t err = OK;
 
-	if (range_map_config_get_rcu_read(&config)) {
-		alloc_size  = sizeof(range_map_level_atomic_t);
-		alloc_align = alignof(range_map_level_atomic_t);
-	} else {
-		alloc_size  = sizeof(range_map_level_non_atomic_t);
-		alloc_align = alignof(range_map_level_non_atomic_t);
-	}
+	size_t alloc_size  = sizeof(range_map_level_t);
+	size_t alloc_align = alignof(range_map_level_t);
 
 	void_ptr_result_t alloc_ret =
 		partition_alloc(partition, alloc_size, alloc_align);
@@ -588,15 +498,8 @@ allocate_level(range_map_root_t *root, range_map_config_t config,
 		err = alloc_ret.e;
 		goto out;
 	}
-
-	if (range_map_config_get_rcu_read(&config)) {
-		level.atomic = (range_map_level_atomic_t *)alloc_ret.r;
-		*level.atomic =
-			(range_map_level_atomic_t){ .partition = partition };
-	} else {
-		level.non_atomic  = (range_map_level_non_atomic_t *)alloc_ret.r;
-		*level.non_atomic = (range_map_level_non_atomic_t){ 0 };
-	}
+	range_map_level_t *level = (range_map_level_t *)alloc_ret.r;
+	*level			 = (range_map_level_t){ 0 };
 
 	size_t	addr		= get_pte_addr(old_pte);
 	count_t old_shifts	= range_map_pte_info_get_shifts(&old_pte.info);
@@ -604,47 +507,47 @@ allocate_level(range_map_root_t *root, range_map_config_t config,
 
 	if (fill) {
 		assert(old_shifts == new_shifts);
-		split_pte_and_fill_level(config, level, old_pte,
+		split_pte_and_fill_level(level, old_pte,
 					 new_shifts - RANGE_MAP_LEVEL_BITS);
 	} else {
 		assert(old_shifts < new_shifts);
-		index_t i = get_level_index(new_shifts, addr);
-		store_level_pte(config, level, i, old_pte, true);
+		index_t i	  = get_level_index(new_shifts, addr);
+		level->entries[i] = old_pte;
 	}
 
-	update_curr_pte(root, config, stack, addr, new_shifts,
-			RANGE_MAP_TYPE_LEVEL, value);
+	update_curr_pte(root, stack, addr, new_shifts, RANGE_MAP_TYPE_LEVEL,
+			value);
 
 out:
 	return err;
 }
 
 static void
-free_all_levels(range_map_config_t config, partition_t *partition,
-		range_map_pte_t pte)
+free_all_levels(partition_t *partition, range_map_pte_t pte)
 {
-	range_map_level_t levels[RANGE_MAP_MAX_LEVELS] = { get_level_from_pte(
+	range_map_level_t *levels[RANGE_MAP_MAX_LEVELS] = { get_level_from_pte(
 		pte) };
-	index_t		  level_idx[RANGE_MAP_MAX_LEVELS] = { 0 };
+	index_t		   level_idx[RANGE_MAP_MAX_LEVELS] = { 0 };
 
 	count_t depth = 1U;
 	while (depth > 0U) {
 		index_t i = depth - 1U;
 		assert(i < RANGE_MAP_MAX_LEVELS);
 
-		range_map_level_t level = levels[i];
-		assert(level.raw != 0U);
+		range_map_level_t *level = levels[i];
+		assert(level != NULL);
 
 		index_t j = level_idx[i];
 		if (j == RANGE_MAP_LEVEL_ENTRIES) {
-			free_level(config, partition, level);
-			levels[i].raw = 0U;
-			level_idx[i]  = 0U;
+			partition_free(partition, level,
+				       sizeof(range_map_level_t));
+			levels[i]    = NULL;
+			level_idx[i] = 0U;
 			depth--;
 			continue;
 		}
 
-		range_map_pte_t curr_pte = load_level_pte(config, level, j);
+		range_map_pte_t curr_pte = level->entries[j];
 		if (range_map_pte_info_get_type(&curr_pte.info) ==
 		    RANGE_MAP_TYPE_LEVEL) {
 			assert(i < (RANGE_MAP_MAX_LEVELS - 1U));
@@ -657,13 +560,12 @@ free_all_levels(range_map_config_t config, partition_t *partition,
 }
 
 static size_t
-update_curr_pte_and_get_size(range_map_root_t *root, range_map_config_t config,
-			     range_map_stack_t *stack, size_t curr, size_t rem,
-			     range_map_entry_t new)
+update_curr_pte_and_get_size(range_map_pte_t *root, range_map_stack_t *stack,
+			     size_t curr, size_t rem, range_map_entry_t new)
 {
 	count_t shifts = get_max_possible_shifts(stack, curr, rem);
 
-	update_curr_pte(root, config, stack, curr, shifts, new.type, new.value);
+	update_curr_pte(root, stack, curr, shifts, new.type, new.value);
 
 	return util_bit(shifts);
 }
@@ -677,14 +579,13 @@ get_next_pte_base(range_map_stack_t *stack, size_t curr)
 }
 
 static size_result_t
-handle_write(range_map_root_t *root, range_map_config_t config,
+handle_write(range_map_pte_t *root, range_map_config_t config,
 	     partition_t *partition, range_map_stack_t *stack, size_t curr,
 	     size_t rem, range_map_entry_t old, range_map_entry_t new,
 	     bool match)
 {
-	size_result_t	ret = size_result_ok(0U);
-	range_map_pte_t pte =
-		get_curr_pte(root, config, partition, stack, curr, true);
+	size_result_t	 ret = size_result_ok(0U);
+	range_map_pte_t	 pte = get_curr_pte(root, partition, stack, curr, true);
 	range_map_type_t type = range_map_pte_info_get_type(&pte.info);
 
 	if (type == RANGE_MAP_TYPE_EMPTY) {
@@ -699,19 +600,19 @@ handle_write(range_map_root_t *root, range_map_config_t config,
 			ret.r = get_next_pte_base(stack, curr) - curr;
 		} else {
 			// We can safely update the PTE.
-			ret.r = update_curr_pte_and_get_size(
-				root, config, stack, curr, rem, new);
+			ret.r = update_curr_pte_and_get_size(root, stack, curr,
+							     rem, new);
 		}
 	} else if (!guard_matching(pte, curr)) {
 		// The current address isn't mapped in the GPT.
 		if (!match && can_replace_pte(curr, rem, pte)) {
 			// It is safe to overwrite this PTE.
-			ret.r = update_curr_pte_and_get_size(
-				root, config, stack, curr, rem, new);
+			ret.r = update_curr_pte_and_get_size(root, stack, curr,
+							     rem, new);
 			// If the old PTE was a level, we need to ensure it
 			// and all levels below it are freed.
 			if (type == RANGE_MAP_TYPE_LEVEL) {
-				free_all_levels(config, partition, pte);
+				free_all_levels(partition, pte);
 			}
 		} else if (match && pte_will_conflict(curr, rem, old, pte)) {
 			// We either expected the GPT to be filled at the
@@ -720,8 +621,8 @@ handle_write(range_map_root_t *root, range_map_config_t config,
 		} else {
 			// Allocate a new common level and retry.
 			count_t shifts = get_common_shifts(pte, curr);
-			ret.e = allocate_level(root, config, partition, stack,
-					       pte, shifts, false);
+			ret.e = allocate_level(root, partition, stack, pte,
+					       shifts, false);
 		}
 	} else if (type == RANGE_MAP_TYPE_LEVEL) {
 		// Guard matches for this level, traverse down it.
@@ -738,8 +639,8 @@ handle_write(range_map_root_t *root, range_map_config_t config,
 		if (old_shifts > new_shifts) {
 			assert(old_shifts >= RANGE_MAP_LEVEL_BITS);
 			// Split entry into a new level and retry.
-			ret.e = allocate_level(root, config, partition, stack,
-					       pte, old_shifts, true);
+			ret.e = allocate_level(root, partition, stack, pte,
+					       old_shifts, true);
 		} else if ((old_shifts < new_shifts) && match) {
 			// The old PTE doesn't cover the entire region that we
 			// want to update, which means there is a mismatch.
@@ -747,8 +648,8 @@ handle_write(range_map_root_t *root, range_map_config_t config,
 		} else {
 			// Either the shifts are matching or we don't care about
 			// the old entry, we can safely update the PTE.
-			ret.r = update_curr_pte_and_get_size(
-				root, config, stack, curr, rem, new);
+			ret.r = update_curr_pte_and_get_size(root, stack, curr,
+							     rem, new);
 		}
 	}
 
@@ -779,13 +680,12 @@ log_range(size_t base, size_t size, range_map_entry_t entry)
 }
 
 static size_result_t
-handle_read(range_map_root_t *root, range_map_config_t config,
+handle_read(range_map_pte_t *root, range_map_config_t config,
 	    range_map_stack_t *stack, size_t curr, size_t rem,
 	    range_map_read_op_t op, range_map_read_data_t *data)
 {
-	size_result_t	ret = size_result_ok(0U);
-	range_map_pte_t pte =
-		get_curr_pte(root, config, NULL, stack, curr, false);
+	size_result_t	  ret	= size_result_ok(0U);
+	range_map_pte_t	  pte	= get_curr_pte(root, NULL, stack, curr, false);
 	range_map_type_t  type	= range_map_pte_info_get_type(&pte.info);
 	range_map_value_t value = { .raw = 0U };
 
@@ -874,7 +774,7 @@ range_map_do_write(range_map_t *range_map, size_t base, size_t size,
 		   range_map_entry_t old, range_map_entry_t new, bool match)
 {
 	size_result_t	   ret	     = size_result_ok(0U);
-	range_map_root_t  *root	     = &range_map->root;
+	range_map_pte_t	  *root	     = &range_map->root;
 	range_map_config_t config    = range_map->config;
 	partition_t	  *partition = range_map->partition;
 
@@ -901,7 +801,7 @@ range_map_do_write(range_map_t *range_map, size_t base, size_t size,
 
 	// Unwind the GPT stack to finish any required cleanup.
 	while (stack.depth > 0U) {
-		go_up_level(root, config, partition, &stack, true);
+		go_up_level(root, partition, &stack, true);
 	}
 
 	return ret;
@@ -955,7 +855,7 @@ range_map_read(range_map_t *range_map, size_t base, size_t size,
 	       range_map_read_op_t op, range_map_read_data_t *data)
 {
 	size_result_t	   ret	  = size_result_ok(0U);
-	range_map_root_t  *root	  = &range_map->root;
+	range_map_pte_t	  *root	  = &range_map->root;
 	range_map_config_t config = range_map->config;
 
 	if ((size == 0U) || util_add_overflows(base, size - 1U)) {
@@ -1003,7 +903,7 @@ range_map_init(range_map_t *range_map, partition_t *partition,
 		goto out;
 	}
 
-	store_root_pte(&range_map->root, config, range_map_pte_empty(), true);
+	range_map->root = range_map_pte_empty();
 
 	range_map->partition	 = object_get_partition_additional(partition);
 	range_map->config	 = config;
@@ -1094,10 +994,8 @@ range_map_clear_all(range_map_t *range_map)
 bool
 range_map_is_empty(range_map_t *range_map)
 {
-	range_map_pte_t pte =
-		load_root_pte(&range_map->root, range_map->config);
-
-	return range_map_pte_info_get_type(&pte.info) == RANGE_MAP_TYPE_EMPTY;
+	return range_map_pte_info_get_type(&range_map->root.info) ==
+	       RANGE_MAP_TYPE_EMPTY;
 }
 
 range_map_lookup_result_t
@@ -1105,10 +1003,25 @@ range_map_lookup(range_map_t *range_map, size_t base, size_t max_size)
 {
 	range_map_read_data_t read = { .base = base };
 
-	error_t err = range_map_read(range_map, base, max_size,
+	size_t bounded_max_size = max_size;
+	if (util_add_overflows(base, bounded_max_size)) {
+		bounded_max_size = SIZE_MAX - base + 1U;
+	}
+	if (bounded_max_size > get_max_size(range_map->config)) {
+		bounded_max_size = get_max_size(range_map->config) - base;
+	}
+	assert(bounded_max_size <= max_size);
+
+	if (bounded_max_size == 0U) {
+		// Return invalid / 0 size
+		goto out;
+	}
+
+	error_t err = range_map_read(range_map, base, bounded_max_size,
 				     RANGE_MAP_READ_OP_LOOKUP, &read);
 	assert((err == OK) || (err == ERROR_FAILURE));
 
+out:
 	return (range_map_lookup_result_t){
 		.entry = read.entry,
 		.size  = read.size,
@@ -1189,7 +1102,7 @@ range_map_dump_ranges(range_map_t *range_map)
 void
 range_map_dump_levels(range_map_t *range_map)
 {
-	range_map_root_t  *root	  = &range_map->root;
+	range_map_pte_t	  *root	  = &range_map->root;
 	range_map_config_t config = range_map->config;
 
 	LOG(DEBUG, INFO, "Dumping levels of GPT {:#x}", (register_t)range_map);
@@ -1200,7 +1113,7 @@ range_map_dump_levels(range_map_t *range_map)
 	size_t curr = 0U;
 	while (curr < get_max_size(config)) {
 		range_map_pte_t pte =
-			get_curr_pte(root, config, NULL, &stack, curr, false);
+			get_curr_pte(root, NULL, &stack, curr, false);
 		count_t entry_shifts = get_max_entry_shifts(&stack);
 
 		if (!util_is_p2aligned(curr, entry_shifts)) {

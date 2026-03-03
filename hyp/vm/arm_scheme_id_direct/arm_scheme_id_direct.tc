@@ -1,0 +1,21 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+#if defined(ENABLE_SCHEMEID_MGMT) && ENABLE_SCHEMEID_MGMT
+
+define impl_def_registers structure {
+	atcr_el1	uint64;
+	cpuactlr_el1	uint64;
+};
+
+define scheme_id structure {
+	impl_def_regs	structure impl_def_registers;
+	actlr_el2	bitfield ACTLR_EL2;
+};
+
+extend thread object {
+	sch_id		structure	scheme_id;
+};
+
+#endif

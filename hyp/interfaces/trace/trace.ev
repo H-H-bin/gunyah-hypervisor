@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -7,9 +7,9 @@ interface trace
 event trace_log
 	param id:	trace_id_t
 	param action:	trace_action_t
-	param arg0:	const char *
+	param fmt:	const char *
+	param arg0:	register_t
 	param arg1:	register_t
 	param arg2:	register_t
 	param arg3:	register_t
 	param arg4:	register_t
-	param arg5:	register_t

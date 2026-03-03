@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -104,25 +104,78 @@ addrspace_va_to_ipa_read(gvaddr_t addr);
 error_t
 addrspace_check_range(addrspace_t *addrspace, vmaddr_t base, size_t size);
 
-// Map into an addrspace.
+extern opaque_lock_t pgtable_vm_map_lock;
+
+// Acquire the lock for mapping or unmapping in a specified address space, and
+// specify the map flags that will be applied to those map and unmap operations.
+void
+addrspace_start(addrspace_t *addrspace, addrspace_map_flags_t map_flags)
+	ACQUIRE_ADDRSPACE_LOCK(addrspace);
+
+// Map into an addrspace. The map flags must be the same as those passed to
+// addrspace_start().
 error_t
+addrspace_map_locked(addrspace_t *addrspace, vmaddr_t vbase, size_t size,
+		     paddr_t phys, pgtable_vm_memtype_t memtype,
+		     pgtable_access_t	   kernel_access,
+		     pgtable_access_t	   user_access,
+		     addrspace_map_flags_t map_flags)
+	REQUIRE_ADDRSPACE_LOCK(addrspace);
+
+// Unmap from an addrspace. The map flags must be the same as those passed to
+// addrspace_start().
+error_t
+addrspace_unmap_locked(addrspace_t *addrspace, vmaddr_t vbase, size_t size,
+		       paddr_t phys, addrspace_map_flags_t map_flags)
+	REQUIRE_ADDRSPACE_LOCK(addrspace);
+
+// Commit an address space update and release the lock. The map flags must be
+// the same as those passed to addrspace_start().
+void
+addrspace_commit(addrspace_t *addrspace, addrspace_map_flags_t map_flags)
+	RELEASE_ADDRSPACE_LOCK(addrspace);
+
+// Simple map and unmap operations with integrated locking.
+static inline error_t
 addrspace_map(addrspace_t *addrspace, vmaddr_t vbase, size_t size, paddr_t phys,
 	      pgtable_vm_memtype_t memtype, pgtable_access_t kernel_access,
-	      pgtable_access_t user_access, addrspace_map_flags_t map_flags);
+	      pgtable_access_t user_access, addrspace_map_flags_t map_flags)
+{
+	addrspace_start(addrspace, map_flags);
+	error_t ret = addrspace_map_locked(addrspace, vbase, size, phys,
+					   memtype, kernel_access, user_access,
+					   map_flags);
+	addrspace_commit(addrspace, map_flags);
+	return ret;
+}
 
-// Unmap from an addrspace.
-error_t
+// Simple map and unmap operations with integrated locking.
+static inline error_t
 addrspace_unmap(addrspace_t *addrspace, vmaddr_t vbase, size_t size,
-		paddr_t phys, addrspace_map_flags_t map_flags);
+		paddr_t phys, addrspace_map_flags_t map_flags)
+{
+	addrspace_start(addrspace, map_flags);
+	error_t ret =
+		addrspace_unmap_locked(addrspace, vbase, size, phys, map_flags);
+	addrspace_commit(addrspace, map_flags);
+	return ret;
+}
+
+// Synchronise any unmaps which were previously done by an addrspace_unmap()
+// call while the no_sync flag was set in the map flags.
+error_t
+addrspace_unmap_sync(addrspace_t *addrspace) EXCLUDE_ADDRSPACE_LOCK(addrspace);
 
 // Unlock and/or sanitise protected pages in an addrspace.
 size_result_t
 addrspace_modify_pages(addrspace_t *addrspace, vmaddr_t vbase, size_t size,
-		       addrspace_modify_pages_flags_t flags);
+		       addrspace_modify_pages_flags_t flags)
+	EXCLUDE_ADDRSPACE_LOCK(addrspace);
 
 // Lookup a mapping in the addrspace.
 addrspace_lookup_result_t
-addrspace_lookup(addrspace_t *addrspace, vmaddr_t vbase, size_t size);
+addrspace_lookup(addrspace_t *addrspace, vmaddr_t vbase, size_t size)
+	EXCLUDE_ADDRSPACE_LOCK(addrspace);
 
 // Allocate some memory in the info page.
 //
@@ -149,6 +202,18 @@ addrspace_lookup(addrspace_t *addrspace, vmaddr_t vbase, size_t size);
 addrspace_alloc_info_area_result_t
 addrspace_alloc_info_area(addrspace_t *addrspace, size_t size, size_t alignment,
 			  bool alloc_desc);
+
+// Lookup an entry by index
+addrspace_info_area_entry_result_t
+addrspace_info_area_get_by_index(addrspace_t *addrspace, index_t index);
+
+// Lookup an entry by its type, returns the first match
+addrspace_info_area_entry_result_t
+addrspace_info_area_get_by_type(addrspace_t			*addrspace,
+				addrspace_info_area_entry_type_t type);
+
+uintptr_t
+addrspace_info_area_get_data_addr(addrspace_t *addrspace, size_t offset);
 
 // Enable an info area descriptor.
 //

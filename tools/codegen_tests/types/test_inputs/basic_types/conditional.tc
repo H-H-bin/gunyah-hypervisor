@@ -1,0 +1,19 @@
+// ============================================================================
+// Conditional Compilation Test
+// ============================================================================
+
+// Conditional structure definition based on CHOOSE_DEFINE
+// Tests preprocessor directive handling in type definitions
+#if defined(CHOOSE_DEFINE)
+// Structure with multiple field types (used when CHOOSE3 is defined)
+define Choosen structure {
+	x	uint32;			// 32-bit unsigned integer
+	xp	pointer uint64;		// Pointer to 64-bit unsigned integer
+	abc	array(8) sint8;		// Array of 8 signed 8-bit integers
+};
+#else
+// Default structure with single field (used when CHOOSE3 is not defined)
+define Default structure {
+	x	uint32;			// 32-bit unsigned integer
+};
+#endif

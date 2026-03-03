@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -54,4 +54,12 @@ platform_pgtable_undergoing_bbm(void);
 // PSCI_MEM_PROTECT_CHECK_RANGE.
 error_t
 platform_ram_sanitise_on_reset(paddr_t phys, size_t size, bool sanitise);
+#endif
+
+#if defined(MODULE_PLATFORM_MEM_ACL)
+// To allow the VMs to be able to share/lend the memory to secure world, we must
+// register the mem_acl to the memextent which is the owner of the memory.
+void
+platform_smc_mem_acl_register(vmid_t vmid, uint64_t args[7])
+	EXCLUDE_PREEMPT_DISABLED;
 #endif

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -19,41 +19,41 @@
 // On ARM, prefer clz and clrsb as they expand to single instructions (CLZ and
 // CLS). ffs and ctz need an extra RBIT first.
 
-// clang-format off
-#define compiler_ffs(x) (index_t)_Generic(				       \
-	(x),								       \
-	long long: __builtin_ffsll(x),					       \
-	unsigned long long: __builtin_ffsll((long long)(x)),		       \
-	long: __builtin_ffsl(x),					       \
-	unsigned long: __builtin_ffsl((long)(x)),			       \
-	int: __builtin_ffs(x),						       \
-	unsigned int: __builtin_ffs((int)(x)))
+#define compiler_ffs(x)                                                        \
+	(index_t) _Generic((x),                                                \
+		long long: __builtin_ffsll(x),                                 \
+		unsigned long long: __builtin_ffsll((long long)(x)),           \
+		long: __builtin_ffsl(x),                                       \
+		unsigned long: __builtin_ffsl((long)(x)),                      \
+		int: __builtin_ffs(x),                                         \
+		unsigned int: __builtin_ffs((int)(x)))
 
-#define compiler_clz(x) (assert((x) != 0U), (index_t)_Generic(		       \
-	(x),								       \
-	unsigned long long: __builtin_clzll,				       \
-	unsigned long: __builtin_clzl,				       \
-	unsigned int: __builtin_clz)(x))
+#define compiler_clz(x)                                                        \
+	(assert((x) != 0U), (count_t) _Generic((x),                            \
+		 unsigned long long: __builtin_clzll,                          \
+		 unsigned long: __builtin_clzl,                                \
+		 unsigned int: __builtin_clz)(x))
 
-#define compiler_ctz(x) (assert((x) != 0U), (index_t)_Generic(		       \
-	(x),								       \
-	unsigned long long: __builtin_ctzll,				       \
-	unsigned long: __builtin_ctzl,				       \
-	unsigned int: __builtin_ctz)(x))
+#define compiler_ctz(x)                                                        \
+	(assert((x) != 0U), (count_t) _Generic((x),                            \
+		 unsigned long long: __builtin_ctzll,                          \
+		 unsigned long: __builtin_ctzl,                                \
+		 unsigned int: __builtin_ctz)(x))
 
-#define compiler_clrsb(x) (index_t)_Generic(				       \
-	(x), long long: __builtin_clrsbll,				       \
-	long: __builtin_clrsbl,					       \
-	int: __builtin_clrsb)(x)
+#define compiler_clrsb(x)                                                      \
+	(count_t) _Generic((x),                                                \
+		long long: __builtin_clrsbll,                                  \
+		long: __builtin_clrsbl,                                        \
+		int: __builtin_clrsb)(x)
 
-#define compiler_popcount(x) (assert((x) != 0U), (index_t)_Generic(	       \
-	(x),								       \
-	unsigned long long: __builtin_popcountll,			       \
-	unsigned long: __builtin_popcountl,				       \
-	unsigned int: __builtin_popcount)(x))
-// clang-format on
+#define compiler_popcount(x)                                                   \
+	(assert((x) != 0U), (count_t) _Generic((x),                            \
+		 unsigned long long: __builtin_popcountll,                     \
+		 unsigned long: __builtin_popcountl,                           \
+		 unsigned int: __builtin_popcount)(x))
 
-#define compiler_msb(x) ((sizeof(x) * 8U) - 1U - compiler_clz(x))
+#define compiler_msb(x)                                                        \
+	((count_t)((sizeof((x)) * (size_t)CHAR_BIT) - 1U) - compiler_clz(x))
 
 // Object sizes, for use in minimum buffer size assertions. These return
 // (size_t)-1 if the size cannot be determined statically, so the assertion

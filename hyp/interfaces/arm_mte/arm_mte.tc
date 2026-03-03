@@ -1,0 +1,11 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+extend platform_cpu_features bitfield {
+	auto		mte_disable	bool = 1;
+};
+
+extend global_options bitfield {
+	auto		mte		bool = 0;
+};

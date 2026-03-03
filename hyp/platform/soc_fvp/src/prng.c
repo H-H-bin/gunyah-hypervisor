@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <hyptypes.h>
 
+#include <arm_rng.h>
 #include <platform_prng.h>
 
 // Device unique serial number
@@ -19,31 +20,25 @@ platform_get_serial(uint32_t data[4])
 	return OK;
 }
 
-error_t NOINLINE
-platform_get_entropy(platform_prng_data256_t *data)
-{
-	// XXX
-	(void)data;
-	return OK;
-}
-
-error_t NOINLINE
+error_t
 platform_get_random32(uint32_t *data)
 {
-	// XXX
-	(void)data;
-	return OK;
+	return arm_rng_get_random32(data);
+}
+
+error_t
+platform_get_entropy(platform_prng_data256_t *data)
+{
+	return arm_rng_get_entropy(data);
 }
 
 error_t
 platform_get_rng_uuid(uint32_t data[4])
 {
-	// uuidgen -s -n @oid -N Gunyah/fvp/prng
-	// dfb5f34a-a451-5ddb-aed0-dadd9091970a
-	data[0] = 0x4af3b5dfU;
-	data[1] = 0xdb5d51a4U;
-	data[2] = 0xdddad0aeU;
-	data[3] = 0x0a979190U;
-
+	// Gunyah generic RNDR - ARM TRNG interface UUID
+	data[0] = ARM_RNG_UUID0;
+	data[1] = ARM_RNG_UUID1;
+	data[2] = ARM_RNG_UUID2;
+	data[3] = ARM_RNG_UUID3;
 	return OK;
 }

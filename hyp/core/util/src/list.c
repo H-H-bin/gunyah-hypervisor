@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -183,8 +183,8 @@ list_delete_node(list_t *list, list_node_t *node)
 	}
 
 	// Note: we do not zero the node's next pointer here, because there
-	// might be a list_foreach_container_consume() that still holds a
-	// pointer to the node.
+	// might be a LIST_FOREACH_CONTAINER_CONSUME() iterator that still
+	// holds a pointer to the node.
 	node->prev = NULL;
 
 out:

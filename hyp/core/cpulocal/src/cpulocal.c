@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -89,7 +89,7 @@ cpulocal_handle_thread_context_switch_post(thread_t *prev)
 	} else {
 		assert_safety(prev != NULL);
 		this_cpu = cpulocal_check_index(prev->cpulocal_current_cpu);
-		assert_debug((self->kind != THREAD_KIND_IDLE) ||
+		assert_debug(!thread_is_kind(self, THREAD_KIND_IDLE) ||
 			     (this_cpu == self->scheduler_affinity));
 	}
 #else

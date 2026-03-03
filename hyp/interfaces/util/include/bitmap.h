@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -98,7 +98,7 @@ bitmap__atomic_get_word(const _Atomic register_t *bitmap, index_t word)
 	{                                                                      \
 		index_t	   w = 0;                                              \
 		register_t r = 0;                                              \
-		while (((r) != 0U) || (((w)*BITMAP_WORD_BITS) < (n))) {        \
+		while (((r) != 0U) || (((w) * BITMAP_WORD_BITS) < (n))) {      \
 			if ((r) == 0U) {                                       \
 				r = g((b), (w));                               \
 				(w)++;                                         \
@@ -106,7 +106,7 @@ bitmap__atomic_get_word(const _Atomic register_t *bitmap, index_t word)
 			if ((r) != 0U) {                                       \
 				index_t i = compiler_ctz(r);                   \
 				(r) &= ~(register_t)1 << (i);                  \
-				(i) += (((w)-1U) * BITMAP_WORD_BITS);          \
+				(i) += (((w) - 1U) * BITMAP_WORD_BITS);        \
 				if ((i) >= (n)) {                              \
 					r = 0;                                 \
 				} else {

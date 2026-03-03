@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -23,14 +23,15 @@ vgic_get_route_from_state(vic_t *vic, vgic_delivery_state_t dstate,
 			  bool use_local_vcpu);
 
 thread_t *
-vgic_get_route_for_spi(vic_t *vic, virq_t virq, bool use_local_vcpu);
+vgic_get_route_for_spi(vic_t *vic, virq_t virq, bool use_local_vcpu)
+	REQUIRE_RCU_READ;
 
 thread_t *
-vgic_find_target(vic_t *vic, virq_source_t *source);
+vgic_find_target(vic_t *vic, const virq_source_t *source);
 
 vgic_delivery_state_t
-vgic_deliver(virq_t virq, vic_t *vic, thread_t *vcpu, virq_source_t *source,
-	     _Atomic vgic_delivery_state_t *dstate,
+vgic_deliver(virq_t virq, vic_t *vic, thread_t *vcpu,
+	     const virq_source_t *source, _Atomic vgic_delivery_state_t *dstate,
 	     vgic_delivery_state_t assert_dstate, bool is_private)
 	EXCLUDE_SCHEDULER_LOCK(vcpu);
 
@@ -50,12 +51,9 @@ vgic_deactivate(vic_t *vic, thread_t *vcpu, virq_t virq,
 		bool hw_active);
 
 void
-vgic_sync_all(vic_t *vic, bool wakeup);
-
-void
 vgic_update_enables(vic_t *vic, GICD_CTLR_DS_t gicd_ctlr);
 
-#if VGIC_HAS_LPI && GICV3_HAS_VLPI
+#if defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE
 void
 vgic_vpe_schedule_current(void);
 #endif
@@ -64,20 +62,20 @@ void
 vgic_retry_unrouted(vic_t *vic);
 
 cpu_index_t
-vgic_lr_owner_lock(thread_t *vcpu) ACQUIRE_LOCK(vcpu->vgic_lr_owner_lock)
-	ACQUIRE_PREEMPT_DISABLED;
+vgic_lr_owner_lock(thread_t *vcpu) ACQUIRE_LOCK(vcpu -> vgic_lr_owner_lock)
+ACQUIRE_PREEMPT_DISABLED;
 
 cpu_index_t
 vgic_lr_owner_lock_nopreempt(thread_t *vcpu)
-	ACQUIRE_LOCK(vcpu->vgic_lr_owner_lock) REQUIRE_PREEMPT_DISABLED;
+	ACQUIRE_LOCK(vcpu -> vgic_lr_owner_lock) REQUIRE_PREEMPT_DISABLED;
 
 void
-vgic_lr_owner_unlock(thread_t *vcpu) RELEASE_LOCK(vcpu->vgic_lr_owner_lock)
-	RELEASE_PREEMPT_DISABLED;
+vgic_lr_owner_unlock(thread_t *vcpu) RELEASE_LOCK(vcpu -> vgic_lr_owner_lock)
+RELEASE_PREEMPT_DISABLED;
 
 void
 vgic_lr_owner_unlock_nopreempt(thread_t *vcpu)
-	RELEASE_LOCK(vcpu->vgic_lr_owner_lock) REQUIRE_PREEMPT_DISABLED;
+	RELEASE_LOCK(vcpu -> vgic_lr_owner_lock) REQUIRE_PREEMPT_DISABLED;
 
 index_result_t
 vgic_get_index_for_mpidr(vic_t *vic, uint8_t aff0, uint8_t aff1, uint8_t aff2,
@@ -109,6 +107,14 @@ vgic_irq_is_spi(virq_t virq);
 bool
 vgic_irq_is_ppi(virq_t virq);
 
+bool
+vgic_irq_is_lpi(virq_t virq);
+
+#if defined(MODULE_PLATFORM_SDEI_DISPATCHER)
+bool
+vgic_irq_is_sdei(virq_t virq);
+#endif
+
 virq_source_t *_Atomic *
 vgic_find_source_ptr(vic_t *vic, thread_t *vcpu, virq_t virq);
 
@@ -116,7 +122,10 @@ virq_source_t *
 vgic_find_source(vic_t *vic, thread_t *vcpu, virq_t virq);
 
 vgic_delivery_state_t _Atomic *
-vgic_find_dstate(vic_t *vic, thread_t *vcpu, virq_t virq);
+vgic_find_dstate(vic_t *vic, thread_t *vcpu, virq_t virq) REQUIRE_RCU_READ;
+
+vgic_delivery_state_t
+vgic_read_dstate(vic_t *vic, thread_t *vcpu, virq_t virq);
 
 bool
 vgic_delivery_state_is_level_asserted(const vgic_delivery_state_t *x);
@@ -196,7 +205,17 @@ vgic_gicr_rd_set_propbase(vic_t *vic, GICR_PROPBASER_t propbase);
 void
 vgic_gicr_rd_set_pendbase(vic_t *vic, thread_t *gicr_vcpu,
 			  GICR_PENDBASER_t pendbase);
-#endif
+
+#if !(defined(GICV3_USE_VLPI) && GICV3_USE_VLPI)
+vgic_delivery_state_result_t
+vgic_update_dstate_from_prop(_Atomic vgic_delivery_state_t *dstate,
+			     gic_lpi_prop_t		    lpi_prop,
+			     vlpi_updated_flags_t	   *updated);
+
+vgic_delivery_state_result_t
+vgic_update_dstate_pending(_Atomic vgic_delivery_state_t *dstate, bool pending);
+#endif // !(defined(GICV3_USE_VLPI) && GICV3_USE_VLPI)
+#endif // VGIC_HAS_LPI
 
 void
 vgic_gicr_sgi_change_sgi_ppi_enable(vic_t *vic, thread_t *gicr_vcpu,

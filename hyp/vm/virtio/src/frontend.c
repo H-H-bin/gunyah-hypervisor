@@ -1,4 +1,4 @@
-// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -26,11 +26,12 @@
 #include <asm/nospec_checks.h>
 
 error_t
-virtio_startup(virtio_t *virtio, virtio_backend_type_t backend_type,
-	       virtio_transport_type_t transport_type,
-	       virtio_device_type_t device_type, count_t vqs,
-	       size_t config_size, memextent_t *config_cache_me,
-	       size_t config_offset)
+virtio_configure(virtio_t *virtio, partition_t *partition,
+		 virtio_backend_type_t	 backend_type,
+		 virtio_transport_type_t transport_type,
+		 virtio_device_type_t device_type, count_t vqs,
+		 size_t config_size, memextent_t *config_cache_me,
+		 size_t config_offset, bool per_queue_notify)
 {
 	assert(virtio != NULL);
 
@@ -72,8 +73,16 @@ virtio_startup(virtio_t *virtio, virtio_backend_type_t backend_type,
 		goto out;
 	}
 
-	// Initialise the struct with the above arguments and zeros otherwise.
+	if (partition == NULL) {
+		err = ERROR_ARGUMENT_INVALID;
+		goto out;
+	}
+
+	err = OK;
+
+	// Initialise the struct with the above arguments, and zeros otherwise.
 	*virtio = (virtio_t){
+		.partition	= object_get_partition_additional(partition),
 		.transport_type = transport_type,
 		.backend_type	= backend_type,
 
@@ -85,11 +94,32 @@ virtio_startup(virtio_t *virtio, virtio_backend_type_t backend_type,
 		.status = virtio_status_default(),
 
 		.vqs = vqs,
+
+		// If there is only one VQ, then notifications are trivially
+		// per-VQ, so we can expose that feature to the frontend even if
+		// the backend didn't enable it.
+		.per_queue_notify = per_queue_notify || (vqs == 1U),
 	};
 
+	if (config_cache_me != NULL) {
+		virtio->config_cache_me =
+			object_get_memextent_additional(config_cache_me);
+	}
+
 	spinlock_init(&virtio->status_lock);
+out:
+	return err;
+}
+
+error_t
+virtio_activate(virtio_t *virtio)
+{
+	assert(virtio != NULL);
+
+	error_t err;
 
 	// Map the config cache if it is present
+	memextent_t *config_cache_me = virtio->config_cache_me;
 	if (config_cache_me != NULL) {
 		if ((config_cache_me->type != MEMEXTENT_TYPE_BASIC) ||
 		    (config_cache_me->size != PGTABLE_HYP_PAGE_SIZE)) {
@@ -101,17 +131,14 @@ virtio_startup(virtio_t *virtio, virtio_backend_type_t backend_type,
 		}
 
 		if (config_cache_me->size <=
-		    (config_offset + config_size - 1U)) {
+		    (virtio->config_offset + virtio->config_size - 1U)) {
 			err = ERROR_ARGUMENT_SIZE;
 			TRACE(ERROR, INFO,
 			      "virtio_startup: bad cache me size {:#x} > {:#x}",
 			      config_cache_me->size,
-			      config_offset + config_size - 1U);
+			      virtio->config_offset + virtio->config_size - 1U);
 			goto out;
 		}
-
-		virtio->config_cache_me =
-			object_get_memextent_additional(config_cache_me);
 
 		virt_range_result_t range =
 			hyp_aspace_allocate(config_cache_me->size);
@@ -124,9 +151,8 @@ virtio_startup(virtio_t *virtio, virtio_backend_type_t backend_type,
 		}
 		virtio->config_range = range.r;
 
-		partition_t *partition = config_cache_me->header.partition;
-		err = memextent_attach(partition, config_cache_me, range.r.base,
-				       config_cache_me->size);
+		err = memextent_attach(virtio->partition, config_cache_me,
+				       range.r.base, config_cache_me->size);
 		if (err != OK) {
 			TRACE(ERROR, INFO,
 			      "virtio_startup: no memextent_attach: {:d}",
@@ -144,7 +170,7 @@ virtio_startup(virtio_t *virtio, virtio_backend_type_t backend_type,
 	}
 
 	// Run transport-specific frontend configuration
-	err = trigger_virtio_startup_event(transport_type, virtio);
+	err = trigger_virtio_startup_event(virtio->transport_type, virtio);
 	if (err != OK) {
 		TRACE(ERROR, INFO, "virtio_startup: event failed: {:d}",
 		      (register_t)err);
@@ -153,14 +179,13 @@ virtio_startup(virtio_t *virtio, virtio_backend_type_t backend_type,
 
 out_attached:
 	if ((err != OK) && (config_cache_me != NULL)) {
-		virtio->config_cache   = NULL;
-		partition_t *partition = config_cache_me->header.partition;
-		memextent_detach(partition, config_cache_me);
+		virtio->config_cache = NULL;
+		memextent_detach(virtio->partition, config_cache_me);
 	}
 out_range:
 	if ((err != OK) && (config_cache_me != NULL)) {
-		partition_t *partition = config_cache_me->header.partition;
-		hyp_aspace_deallocate(partition, virtio->config_range);
+		hyp_aspace_unmap_and_deallocate(virtio->partition,
+						virtio->config_range);
 	}
 out_me_ref:
 	if ((err != OK) && (config_cache_me != NULL)) {
@@ -179,7 +204,6 @@ virtio_shutdown(virtio_t *virtio)
 	// TODO: halt vqs, set device_needs_reset, etc
 	if (virtio->backend_type != VIRTIO_BACKEND_TYPE_INVALID) {
 		trigger_virtio_shutdown_event(virtio->transport_type, virtio);
-		virtio->backend_type = VIRTIO_BACKEND_TYPE_INVALID;
 	}
 	virtio->config_cache = NULL;
 }
@@ -193,17 +217,23 @@ virtio_cleanup(virtio_t *virtio)
 
 	assert(virtio->shutdown);
 
+	if (virtio->config_range.size != 0U) {
+		assert(virtio->config_cache_me != NULL);
+		assert(virtio->partition != NULL);
+
+		memextent_detach(virtio->partition, virtio->config_cache_me);
+		hyp_aspace_unmap_and_deallocate(virtio->partition,
+						virtio->config_range);
+	}
+
 	if (virtio->config_cache_me != NULL) {
-		memextent_t *memextent = virtio->config_cache_me;
-		assert(memextent != NULL);
-
-		partition_t *partition = memextent->header.partition;
-		memextent_detach(partition, memextent);
-
-		hyp_aspace_deallocate(partition, virtio->config_range);
-
 		object_put_memextent(virtio->config_cache_me);
 		virtio->config_cache_me = NULL;
+	}
+
+	if (virtio->partition != NULL) {
+		object_put_partition(virtio->partition);
+		virtio->partition = NULL;
 	}
 
 out:
@@ -257,8 +287,11 @@ virtio_write_status(virtio_t *virtio, virtio_status_t status)
 		} else if (!virtio->reset_request) {
 			// Mark reset as requested
 			virtio->reset_request = true;
+
 			virtio_status_set_device_needs_reset(&virtio->status,
 							     true);
+			trigger_virtio_status_updated_event(
+				virtio->transport_type, virtio, virtio->status);
 
 			for (index_t i = 0; i < virtio->vqs; i++) {
 				virtio->queue_info[i].ready = 0U;
@@ -325,6 +358,8 @@ virtio_write_status(virtio_t *virtio, virtio_status_t status)
 
 	if (err == OK) {
 		virtio->status = new_status;
+		trigger_virtio_status_updated_event(virtio->transport_type,
+						    virtio, new_status);
 	}
 
 out:
@@ -483,8 +518,100 @@ virtio_device_config_write(virtio_t *virtio, size_t offset, size_t access_size,
 	error_t ret = trigger_virtio_device_config_write_event(
 		virtio->backend_type, virtio, offset, access_size, value);
 
-	// FIXME:
+	// FIXME: QC Gunyah issue #252
 	rcu_read_finish();
 
 	return ret;
+}
+
+// Handle a device configuration space read by the frontend. Note that the
+// maximum atomic access size is 32 bits, as per the spec.
+//
+// This might block the caller if posted config writes are enabled or if the
+// backend is a proxy and does not cache the configuration space. Therefore, it
+// drops the RCU critical section.
+uint32_result_t
+virtio_device_config_read(virtio_t *virtio, size_t offset, size_t access_size)
+{
+	uint32_result_t ret = trigger_virtio_device_config_read_event(
+		virtio->backend_type, virtio, offset, access_size);
+
+	// FIXME: QC Gunyah issue #252
+	rcu_read_finish();
+
+	return ret;
+}
+
+uint32_result_t
+virtio_device_config_read_cached(virtio_t *virtio, size_t offset,
+				 size_t access_size)
+{
+	uint32_result_t ret;
+
+	if (virtio->config_range.size == 0U) {
+		ret = uint32_result_error(ERROR_UNIMPLEMENTED);
+		goto out;
+	}
+
+	uintptr_t config_base =
+		virtio->config_range.base + virtio->config_offset;
+	uintptr_t config_size =
+		virtio->config_range.base + virtio->config_offset;
+
+	if ((access_size == 0U) || (access_size > sizeof(uint32_t)) ||
+	    util_add_overflows(offset, access_size - 1U) ||
+	    ((offset + access_size - 1U) >= config_size)) {
+		ret = uint32_result_error(ERROR_ARGUMENT_SIZE);
+		goto out;
+	}
+	assert(util_is_baligned(config_base, sizeof(uint32_t)));
+
+	if (!util_is_baligned(offset, access_size)) {
+		ret = uint32_result_error(ERROR_ARGUMENT_ALIGNMENT);
+		goto out;
+	}
+	uintptr_t config_addr	   = config_base + offset;
+	uintptr_t config_addr_size = config_size - offset;
+
+	if (compiler_unexpected(config_addr_size < access_size)) {
+		ret = uint32_result_error(ERROR_ARGUMENT_SIZE);
+		goto out;
+	}
+
+	switch (access_size) {
+	case sizeof(uint8_t): {
+		uint8_t	 val;
+		uint8_t *buf = (uint8_t *)config_addr;
+		(void)memscpy(&val, sizeof(val), buf, config_addr_size);
+		ret = uint32_result_ok(val);
+		break;
+	}
+	case sizeof(uint16_t): {
+		uint16_t  val;
+		uint16_t *buf = (uint16_t *)config_addr;
+		(void)memscpy(&val, sizeof(val), buf, config_addr_size);
+		ret = uint32_result_ok(val);
+		break;
+	}
+	case sizeof(uint32_t): {
+		uint32_t  val;
+		uint32_t *buf = (uint32_t *)config_addr;
+		(void)memscpy(&val, sizeof(val), buf, config_addr_size);
+		ret = uint32_result_ok(val);
+		break;
+	}
+	default:
+		ret = uint32_result_error(ERROR_UNIMPLEMENTED);
+		break;
+	}
+
+out:
+	return ret;
+}
+
+// Determine whether the backend generates per-queue ready signals.
+bool
+virtio_supports_per_queue_notify(const virtio_t *virtio)
+{
+	return virtio->per_queue_notify;
 }

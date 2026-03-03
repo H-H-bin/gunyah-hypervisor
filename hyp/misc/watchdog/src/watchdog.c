@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -12,6 +12,7 @@
 #include <attributes.h>
 #include <compiler.h>
 #include <cpulocal.h>
+#include <globals.h>
 #include <ipi.h>
 #include <log.h>
 #include <object.h>
@@ -25,6 +26,7 @@
 #include <thread.h>
 #include <trace.h>
 #include <util.h>
+#include <vdevice.h>
 #include <vic.h>
 #include <virq.h>
 #include <watchdog.h>
@@ -81,25 +83,46 @@ watchdog_bite(watchdog_t *wdt, watchdog_abs_ticks_t now)
 		      "WDT bite: now_ticks {:d}, last_pat {:d}, from VM {:d}",
 		      now, wdt->last_pat, wdt->debug_id);
 
+	// If bite fatal is set, it will always trigger a crash.
+	if (watchdog_option_flags_get_fatal_bite(&wdt->options)) {
+		watchdog_fatal = wdt;
+		watchdog_queue_release_lock();
+		abort_kernel("Watchdog bite (fatal_bite)",
+			     ABORT_REASON_WATCHDOG_BITE);
+	}
+
+	// If it was a critical watchdog, set the fatal watchdog while we still
+	// have the lock.
+	if (watchdog_option_flags_get_critical_bite(&wdt->options)) {
+		watchdog_fatal = wdt;
+	}
+
+	// Release the lock and trigger the watchdog bite event.
+	watchdog_queue_release_lock();
+	if (!wdt->is_hyp && trigger_watchdog_non_hyp_bite_event(wdt)) {
+		watchdog_queue_acquire_lock();
+		goto out;
+	}
+
 	// Abort if the watchdog has been marked as critical, otherwise inject
 	// the bite VIRQ to the handler VM.
 	if (watchdog_option_flags_get_critical_bite(&wdt->options)) {
-		watchdog_fatal = wdt;
-		watchdog_queue_release_lock();
 		abort_kernel("Watchdog bite", ABORT_REASON_WATCHDOG_BITE);
 	} else {
-		watchdog_queue_release_lock();
 		(void)virq_assert(&wdt->bite_virq_src, false);
 		watchdog_queue_acquire_lock();
 	}
+
+out:
+	return;
 }
 
 // When hypervisor or a VM pats its watchdog.
 // Must be called with the watchdog queue and object's locks held, in that
 // order.
 static void
-watchdog_op_pat(watchdog_t *wdt, bool in_sync) REQUIRE_LOCK(watchdog_queue.lock)
-	REQUIRE_PREEMPT_DISABLED
+watchdog_op_pat(watchdog_t *wdt, bool skip_hw_sync)
+	REQUIRE_LOCK(watchdog_queue.lock) REQUIRE_PREEMPT_DISABLED
 {
 	watchdog_abs_ticks_t bark_abs, bite_abs;
 
@@ -130,7 +153,7 @@ watchdog_op_pat(watchdog_t *wdt, bool in_sync) REQUIRE_LOCK(watchdog_queue.lock)
 	// timeout. The timeout times in the queue are absolute values, so we
 	// need to program the hardware watchdog relative to when it was last
 	// patted, which in this case is "now".
-	if (was_head && !in_sync) {
+	if (was_head && !skip_hw_sync) {
 		watchdog_t *head = watchdog_queue_head();
 		// The queue should not be empty, as hypervisor watchdog is
 		// always in the queue.
@@ -159,7 +182,7 @@ watchdog_op_pat(watchdog_t *wdt, bool in_sync) REQUIRE_LOCK(watchdog_queue.lock)
 // order.
 static void
 watchdog_op_add_update(watchdog_t *wdt) REQUIRE_LOCK(watchdog_queue.lock)
-	REQUIRE_PREEMPT_DISABLED
+REQUIRE_PREEMPT_DISABLED
 {
 	watchdog_abs_ticks_t bark_abs, bite_abs;
 
@@ -249,7 +272,7 @@ watchdog_op_add_update(watchdog_t *wdt) REQUIRE_LOCK(watchdog_queue.lock)
 // order.
 static void
 watchdog_op_remove(watchdog_t *wdt) REQUIRE_LOCK(watchdog_queue.lock)
-	REQUIRE_PREEMPT_DISABLED
+REQUIRE_PREEMPT_DISABLED
 {
 	assert(wdt != NULL);
 	assert(!wdt->is_hyp);
@@ -346,6 +369,29 @@ watchdog_control_unlocked(watchdog_t *wdt, bool enable)
 }
 
 void
+watchdog_restore(void)
+{
+	watchdog_t *wdt = watchdog_queue_head();
+	// Hypervisor's watchdog should always be in the queue.
+	assert(wdt != NULL);
+
+	watchdog_abs_ticks_t now = platform_watchdog_get_last_pat();
+
+	platform_watchdog_init();
+
+	platform_watchdog_set_bite(
+		platform_watchdog_ms_to_ticks(WATCHDOG_DEFAULT_BITE_MS));
+
+	// Program the hardware watchdog to the head of the queue relative
+	// to the last time it was patted.
+	platform_watchdog_set_bark((watchdog_ticks_t)(wdt->next_timeout - now));
+	platform_watchdog_pat();
+
+	// Now enable the watchdog
+	platform_watchdog_set_enable(true);
+}
+
+void
 watchdog_control(watchdog_t *wdt, bool enable)
 {
 	assert(wdt != NULL);
@@ -425,29 +471,30 @@ watchdog_set_times_unlocked(watchdog_t *wdt, watchdog_milliseconds_t bark_ms,
 			    watchdog_milliseconds_t bite_ms)
 	REQUIRE_LOCK(watchdog_queue.lock) REQUIRE_PREEMPT_DISABLED
 {
-	bool ret = false;
+	bool update;
 
 	assert(wdt != NULL);
 
+	update = false;
 	if (bark_ms != WATCHDOG_TIMEOUT_NOCHANGE) {
 		if (bark_ms >= WATCHDOG_TIMEOUT_RESERVED) {
 			bark_ms = WATCHDOG_TIMEOUT_RESERVED;
 		}
 		wdt->bark_time = bark_ms;
-		ret	       = true;
+		update	       = true;
 	}
 	if (bite_ms != WATCHDOG_TIMEOUT_NOCHANGE) {
 		if (bite_ms >= WATCHDOG_TIMEOUT_RESERVED) {
 			bite_ms = WATCHDOG_TIMEOUT_RESERVED;
 		}
 		wdt->bite_time = bite_ms;
-		ret	       = true;
+		update	       = true;
 	}
 
 	TRACE_LOCAL(INFO, INFO, "WDT Set times: VM {:d}, bark {:d}, bite {:d}",
 		    wdt->debug_id, bark_ms, bite_ms);
 
-	if (ret) {
+	if (update) {
 		wdt->remaining_time = WATCHDOG_INVALID_ABS_TIMEOUT;
 		if (wdt->enabled) {
 			// Propagate the changes immediately
@@ -455,7 +502,7 @@ watchdog_set_times_unlocked(watchdog_t *wdt, watchdog_milliseconds_t bark_ms,
 		}
 	}
 
-	return ret;
+	return update;
 }
 
 bool
@@ -573,43 +620,49 @@ static_assert(WATCHDOG_DEFAULT_HYP_BARK_MS > (watchdog_milliseconds_t)1000,
 void
 watchdog_handle_boot_hypervisor_start(void)
 {
-	// Create the hypervisor watchdog.
-	watchdog_create_t     params = { 0 };
-	watchdog_ptr_result_t result =
-		partition_allocate_watchdog(partition_get_private(), params);
-	if (result.e != OK) {
-		panic("WDT: Failed to create hypervisor watchdog");
+	const global_options_t *options = globals_get_options();
+	if (!global_options_get_watchdog_disabled(options)) {
+		// Create the hypervisor watchdog.
+		watchdog_create_t     params = { 0 };
+		watchdog_ptr_result_t result = partition_allocate_watchdog(
+			partition_get_private(), params);
+		if (result.e != OK) {
+			panic("WDT: Failed to create hypervisor watchdog");
+		}
+		watchdog_t *wdt = result.r;
+
+		watchdog_option_flags_t watchdog_options =
+			watchdog_option_flags_default();
+		watchdog_option_flags_set_critical_bite(&watchdog_options,
+							true);
+
+		if (watchdog_configure(wdt, watchdog_options) != OK) {
+			panic("WDT: Failed to configure hypervisor watchdog");
+		}
+
+		if (object_activate_watchdog(wdt) != OK) {
+			panic("WDT: Failed to activate hypervisor watchdog");
+		}
+
+		// Set the hypervisor watchdog bark and bite times. The bark is
+		// less than the default bite time. This way VMs can have bark
+		// times longer than default bite time.
+		wdt->bark_time = WATCHDOG_DEFAULT_HYP_BARK_MS;
+		wdt->bite_time = WATCHDOG_DEFAULT_BITE_MS;
+		wdt->is_hyp    = true;
+		wdt->enabled   = true;
+
+		watchdog_queue_acquire_lock();
+		watchdog_op_add_update(wdt);
+		watchdog_queue_release_lock();
+
+		watchdog_hyp = wdt;
+
+		// Program the hardware bite register with the default value
+		platform_watchdog_set_bite(platform_watchdog_ms_to_ticks(
+			WATCHDOG_DEFAULT_BITE_MS));
+		platform_watchdog_reset();
 	}
-	watchdog_t *wdt = result.r;
-
-	watchdog_option_flags_t watchdog_options =
-		watchdog_option_flags_default();
-	watchdog_option_flags_set_critical_bite(&watchdog_options, true);
-
-	if (watchdog_configure(wdt, watchdog_options) != OK) {
-		panic("WDT: Failed to configure hypervisor watchdog");
-	}
-
-	if (object_activate_watchdog(wdt) != OK) {
-		panic("WDT: Failed to activate hypervisor watchdog");
-	}
-
-	// Set the hypervisor watchdog bark and bite times. The bark is less
-	// than the default bite time. This way VMs can have bark times longer
-	// than default bite time.
-	wdt->bark_time = WATCHDOG_DEFAULT_HYP_BARK_MS;
-	wdt->bite_time = WATCHDOG_DEFAULT_BITE_MS;
-	wdt->is_hyp    = true;
-	wdt->enabled   = true;
-
-	watchdog_queue_acquire_lock();
-	watchdog_op_add_update(wdt);
-	watchdog_queue_release_lock();
-
-	// Enable the watchdog timer.
-	platform_watchdog_set_enable(true);
-
-	watchdog_hyp = wdt;
 }
 
 error_t

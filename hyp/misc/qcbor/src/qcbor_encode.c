@@ -247,7 +247,7 @@ Nesting_IsInNest(QCBORTrackNesting *pNesting)
 void
 QCBOREncode_Init(QCBOREncodeContext *pCtx, UsefulBuf Storage)
 {
-	(void)memset(pCtx, 0, sizeof(QCBOREncodeContext));
+	(void)memset_s(pCtx, sizeof(*pCtx), 0, sizeof(QCBOREncodeContext));
 	UsefulOutBuf_Init(&(pCtx->OutBuf), Storage);
 	Nesting_Init(&(pCtx->nesting));
 }

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -239,5 +239,19 @@ gicv3_vpe_vsgi_query(thread_t *vcpu);
 #endif
 
 #endif // GICV3_ENABLE_VPE
+
+// Disable an LPI in the property table. Note that this function does NOT
+// invalidate the LPI on the ITS. This is the responsibility of the caller.
+void
+gicv3_lpi_disable(irq_t lpi);
+
+// Enable an LPI in the property table. Note that this function does NOT
+// invalidate the LPI on the ITS. This is the responsibility of the caller.
+void
+gicv3_lpi_enable(irq_t lpi);
+
+// Check the LPI enable state in the property table.
+bool
+gicv3_lpi_is_enabled(irq_t lpi);
 
 #endif // GICV3_HAS_LPI

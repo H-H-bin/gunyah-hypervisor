@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -6,6 +6,10 @@ module arm_arch_timer
 
 subscribe boot_cpu_cold_init
 	handler platform_timer_handle_boot_cpu_cold_init()
+	require_preempt_disabled
+
+subscribe boot_cpu_warm_init
+	handler platform_timer_handle_boot_cpu_warm_init()
 	require_preempt_disabled
 
 #if !defined(IRQ_NULL)
@@ -18,6 +22,6 @@ subscribe irq_received[HWIRQ_ACTION_HYP_TIMER]
 	require_preempt_disabled
 #endif
 
-#if defined(UNITTESTS) && UNITTESTS
+#if defined(UNIT_TESTS) && UNIT_TESTS
 subscribe tests_start
 #endif

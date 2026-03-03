@@ -1,5 +1,4 @@
-// © 2019 Qualcomm Innovation Center, Inc. All rights reserved.
-// All Rights Reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -14,7 +13,7 @@ define irq_t newtype uint32;
 // We always allocate one fixed collection per physical CPU. They're
 // apparently intended for group rerouting of IRQs but that is not terribly
 // useful in practice.
-// FIXME:
+// FIXME: QC Gunyah issue #64
 //define gic_its_ic_id_t newtype type cpu_index_t;
 define gic_its_ic_id_t newtype uint16;
 
@@ -50,8 +49,22 @@ define GIC_PPI_NUM constant type count_t = 16;
 define GIC_SPI_BASE constant type irq_t = GIC_PPI_BASE + GIC_PPI_NUM;
 define GIC_SPI_NUM constant type count_t = 988;
 define GIC_LPI_BASE constant type irq_t = 8192;
-// There is no GIC_LPI_NUM constant because we are free to define it ourselves,
-// up to the limit imposed by GICD_TYPER.IDbits (which may be very large)
+#if GICV3_HAS_LPI
+#if GICV3_HAS_VLPI_V4_1
+// Currently we only need one LPI per VCPU with a VGIC attachment, to be used
+// as a GICv4.1 default scheduling doorbell. We therefore allocate the minimum
+// nonzero number of LPIs.
+define GIC_LPI_NUM constant type count_t = 8192U;
+#else
+// GIC_LPI_NUM can be set in the platform configuration, otherwise the default
+// value for 16 for GICD_TYPER.IDbits = 16 is set. The actual number of LPIs
+// will be limited to the actual value of GICD_TYPER.IDbits, but this value
+// here determines the amount of memory allocated for LPI state.
+#if !defined(GIC_LPI_NUM)
+define GIC_LPI_NUM constant type count_t = (65536U - GIC_LPI_BASE);
+#endif // !defined(GIC_LPI_NUM)
+#endif // GICV3_HAS_VLPI_V4_1
+#endif //GICV3_HAS_LPI
 
 define GIC_SPECIAL_INTIDS_BASE constant type irq_t =
 	GIC_SPI_BASE + GIC_SPI_NUM;
@@ -143,7 +156,7 @@ define gicd structure(aligned(PGTABLE_HYP_PAGE_SIZE)) {
 // Instead of adding PIDR2 to the gicd structure above, define a separate
 // constant for its offset. This is to avoid making the struct unnecessarily
 // bloated.
-define OFS_GICD_PIDR2 constant = 0xFFE8;
+define OFS_GICD_PIDR2 constant size = 0xFFE8;
 
 define gicr_rd_base structure(aligned(PGTABLE_HYP_PAGE_SIZE)) {
 	ctlr @ 0x0000		bitfield GICR_CTLR(atomic);
@@ -230,8 +243,6 @@ define gic_lpi_prop bitfield<8> {
 };
 #endif
 
-define GICR_PAGE_MASK	constant = ((1 << 16) - 1);
-
 #if GICV3_HAS_VLPI
 // GIC Redistributor stride (four 64k pages per core)
 define GICR_STRIDE_SHIFT	constant uint8 = 16 + 2;
@@ -304,7 +315,8 @@ define GICD_CTLR union {
 };
 
 define GICD_IIDR bitfield<32> {
-	11:0		Implementer	uint16;
+	6:0		Implementer_Identity	uint8;
+	11:8		Implementer_ContCode	uint8;
 	15:12		Revision	uint8;
 	19:16		Variant		uint8;
 	23:20		unknown=0;
@@ -382,7 +394,8 @@ define GICR_CTLR bitfield<32> {
 };
 
 define GICR_IIDR bitfield<32> {
-	11:0		Implementer	uint16;
+	6:0		Implementer_Identity	uint8;
+	11:8		Implementer_ContCode	uint8;
 	15:12		Revision	uint8;
 	19:16		Variant		uint8;
 	23:20		unknown=0;
@@ -664,10 +677,10 @@ define gits structure(aligned(65536)) {
 
 #if GICV3_HAS_VLPI_V4_1
 // GIC ITS stride (three 64k pages per ITS, rounded up to four)
-define GITS_STRIDE_SHIFT	constant = 16 + 2;
+define GITS_STRIDE_SHIFT	constant type count_t = 16 + 2;
 #else
 // GIC ITS stride (two 64k pages per ITS)
-define GITS_STRIDE_SHIFT	constant = 16 + 1;
+define GITS_STRIDE_SHIFT	constant type count_t = 16 + 1;
 #endif
 
 // ITS memory-mapped registers
@@ -681,9 +694,7 @@ define GITS_BASER_Page_Size enumeration(explicit) {
 define GITS_BASER_Type enumeration(explicit) {
 	Unimplemented = 0b000;
 	Devices = 0b001;
-#if GICV3_HAS_VLPI_V4_1
 	vPEs = 0b010;
-#endif
 	Collections = 0b100;
 };
 
@@ -751,7 +762,8 @@ define GITS_CWRITER bitfield<64> {
 };
 
 define GITS_IIDR bitfield<32> {
-	11:0		Implementer	uint16;
+	6:0		Implementer_Identity	uint8;
+	11:8		Implementer_ContCode	uint8;
 	15:12		Revision	uint8;
 	19:16		Variant		uint8;
 	23:20		unknown=0;
@@ -827,7 +839,7 @@ define GITS_TYPER bitfield<64> {
 // ITS commands
 
 // Note: these are duplicated in the type definitions below.
-// FIXME:
+// FIXME: QC Gunyah issue #63
 define gic_its_cmd_id enumeration {
 	clear = 0x4;
 	discard = 0xf;
@@ -1169,6 +1181,9 @@ define gicv3_its_driver_state structure {
 	// CPU indices.
 	rdbases		array(PLATFORM_MAX_CORES) union gic_its_rdbase;
 
+	// GITS_CBASER value used to rewrite the cbaser on resume.
+	saved_cbaser	bitfield GITS_CBASER;
+
 	// GITS_BASER values used to rewrite the bases on resume.
 	saved_basers	array(8) bitfield GITS_BASER;
 
@@ -1191,6 +1206,8 @@ define gicv3_its_driver_state structure {
 	first_unused	type platform_msi_device_id_t;
 	// True if the first unused device ID has already been reserved
 	first_unused_reserved	bool;
+	// First unused event ID
+	first_unused_event	type platform_msi_event_id_t;
 
 	// GICR_VPROPBASER that will be copied to GICRs that share their vPE
 	// table with this ITS
@@ -1211,7 +1228,7 @@ define gicv3_its_indirect_table structure {
 	entries_l2	type count_t;
 };
 
-#if GICV3_HAS_VLPI
+#if defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 
 // Per-VCPU state
 extend thread object module gicv3_its {
@@ -1247,7 +1264,27 @@ extend irq_range_type enumeration {
 };
 #endif // GICV3_HAS_VLPI_V4_1
 
-#endif // GICV3_HAS_VLPI
+#endif // defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
+
+extend gicv3_its object {
+	// Index of the physical ITS associated with this object.
+	// This is set at object creation and is unique by construction (i.e.
+	// these objects are only created at boot time).
+	phys_index			type platform_msi_controller_id_t;
+};
+
+extend gicv3_its_create structure {
+	phys_index			type platform_msi_controller_id_t;
+};
+
+extend cap_rights_gicv3_its bitfield {
+	0	bind_device		bool;
+};
 
 #endif // GICV3_HAS_ITS
 
+#if defined(CPU_ERRATUM_1297) && CPU_ERRATUM_1297
+extend global_options bitfield {
+	auto		cpu_erratum_1297	bool = 0;
+};
+#endif

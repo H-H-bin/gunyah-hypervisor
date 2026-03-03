@@ -1,8 +1,6 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
-
-define BOOT_ENV_RANGES_NUM public constant = 32;
 
 define boot_env_phys_range public structure {
 	base type paddr_t;

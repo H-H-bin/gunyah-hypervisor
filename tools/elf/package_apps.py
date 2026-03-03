@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -154,7 +154,7 @@ class NewELF():
         # Update file offsets of moved segments and sections
         for seg in self.segments:
             seg_last = seg.header.p_offset + seg.header.p_filesz
-            if seg_last >= p_offset_insert:
+            if offset_last != seg_last and seg_last >= p_offset_insert:
                 seg.header.p_offset += offset_adj
 
         for sec in self.sections:
@@ -206,6 +206,29 @@ class NewELF():
                 if seg.header.p_memsz < seg.header.p_filesz:
                     seg.header.p_memsz = seg.header.p_filesz
                 last_end = seg.header.p_offset + seg.header.p_filesz
+
+    # Align LOAD segment's p_memsz
+    def segment_memsz_align(self, align):
+        print("segment memsz align...")
+
+        assert (align & (align - 1)) == 0
+
+        # Align p_memsz for all LOAD segments
+        for seg in self.segments:
+            if seg.header.p_type == 'PT_LOAD':
+                p_memsz = seg.header.p_memsz
+                seg.header.p_memsz += align - 1
+                seg.header.p_memsz &= ~(align - 1)
+                if p_memsz != seg.header.p_memsz:
+                    print(
+                        'Aligned segment {:#x} / {:#x} p_memsz from '
+                        '{:#x} to {:#x}'.format(
+                            seg.header.p_paddr,
+                            seg.header.p_vaddr,
+                            p_memsz,
+                            seg.header.p_memsz,
+                        )
+                    )
 
     # Merge physically adjacent segments
     def merge_physical(self):
@@ -280,7 +303,7 @@ class NewELF():
 
 
 def package_files(base, app, runtime, output, p_filesz_align=None,
-                  merge_phys=False):
+                  p_memsz_align=None, merge_phys=False):
 
     base_elf = ELFFile(base)
     new = NewELF(base_elf)
@@ -355,6 +378,8 @@ def package_files(base, app, runtime, output, p_filesz_align=None,
     new.insert_segment(segment, pkg_phys)
     if p_filesz_align:
         new.segment_filesz_align(p_filesz_align)
+    if p_memsz_align:
+        new.segment_memsz_align(p_memsz_align)
     if merge_phys:
         new.merge_physical()
     new.write(output)
@@ -371,6 +396,9 @@ def main():
     args.add_argument('--segment-size-align',
                       type=int,
                       help="Align p_filesz to page-size")
+    args.add_argument('--segment-memsz-align',
+                      type=int,
+                      help="Align p_memsz to page-size")
     args.add_argument('--merge-phys-segments',
                       action='store_true',
                       help="Merge physically adjacent segments")
@@ -393,6 +421,7 @@ def main():
     options = args.parse_args()
 
     p_filesz_align = options.segment_size_align
+    p_memsz_align = options.segment_memsz_align
 
     if p_filesz_align is not None:
         if (p_filesz_align == 0) or \
@@ -402,8 +431,17 @@ def main():
             raise ValueError(
                 "segment-size-align must be <= {:d}".format(PAGE_SIZE))
 
+    if p_memsz_align is not None:
+        if (p_memsz_align == 0) or \
+           ((p_memsz_align & (p_memsz_align - 1)) != 0):
+            raise ValueError("segment-memsz-align must be a power of 2!")
+        if p_memsz_align > PAGE_SIZE:
+            raise ValueError(
+                "segment-memsz-align must be <= {:d}".format(PAGE_SIZE))
+
     package_files(options.input[0], options.app, options.runtime,
-                  options.output, p_filesz_align, options.merge_phys_segments)
+                  options.output, p_filesz_align, p_memsz_align,
+                  options.merge_phys_segments)
 
 
 if __name__ == '__main__':

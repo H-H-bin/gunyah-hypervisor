@@ -1,30 +1,50 @@
-# Ignore build products
-/build.ninja
-/.ninja_deps
-/.ninja_log
-/.sconsign.dblite
-/build*/
-hyp/**/*.o
+# Ignore every file not explicitly included below
+*
+!*/
 
-# Ignore Python precompiled bitcode
-*.pyc
+# Build system configuration
+!*.conf
+!*.inc
+!SCons*
+!Makefile
 
-# Ignore local editor configurations
-/compile_commands.json
-/.syntastic_*
-/.dir-locals.el
-/cscope*
+# Repository and editor configuration
+!.gitignore
+!.clang-format
+!.editorconfig
+!.coveragerc
 
-# Ignore cppcheck dumps
-*.c.dump
+# Source code
+!*.c
+!*.cpp
+!*.h
+!*.S
+!*.lds
 
-# Ignore Vim temporary files
-.*.sw[a-p]
-.*.un~
+# Tooling and scripts
+!*.py
+!*.sh
 
-# Ignore host test temporary files
-*.o
+# DSL sources
+!*.lark
+!*.ev
+!*.tc
+!*.hvc
+!*.reg
+!*.tmpl
 
-# Ignore documentation output
-*.pdf
-*.html
+# CI configuration
+!*.yml
+
+# Documentation
+!AUTHORS
+!LICENSE
+!*.txt
+!*.md
+!*.png
+!*.vim
+
+# Static analyser configuration
+!*.psrc
+!*.properties
+!*.kb

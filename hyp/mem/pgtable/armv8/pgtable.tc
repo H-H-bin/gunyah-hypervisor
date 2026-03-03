@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -243,8 +243,10 @@ define vmsa_tlbi_ipa_range_input bitfield<64> {
 	63		NS			bool = 0;
 };
 
-define TLBI_RANGE_NUM_MAX	constant uint8 = (1 << 5) - 1;
-define TLBI_RANGE_SCALE_MAX	constant uint8 = (1 << 2) - 1;
+define TLBI_RANGE_NUM_BITS	constant uint8 = 5;
+define TLBI_RANGE_NUM_MAX	constant uint8 = (1 << TLBI_RANGE_NUM_BITS) - 1;
+define TLBI_RANGE_SCALE_BITS	constant uint8 = 2;
+define TLBI_RANGE_SCALE_MAX	constant uint8 = (1 << TLBI_RANGE_SCALE_BITS) - 1;
 #endif
 
 // Gunyah extensions to table entries (software bit usage)
@@ -279,6 +281,14 @@ extend vmsa_stg2_upper_attrs bitfield {
 	// attrs, so we don't need a second software bit to track that.
 	delete		SW_55;
 	7		unprotected	bool;
+	// Use another software bit to flag the page or block as unsanitised,
+	// meaning that it can be removed by an unmap operation without being
+	// zeroed. This is always set for unprotected pages. For protected
+	// pages, it may be set when the page is unlocked, but must always be
+	// clear if the page is locked. This ensures that it is sanitised if
+	// it is unmapped while still locked.
+	delete		SW_56;
+	8		unsanitised	bool;
 };
 
 define pgtable_stage_type enumeration(noprefix) {
@@ -337,7 +347,7 @@ define pgtable structure {
 	start_level_size size;
 
 	root_pgtable type paddr_t;
-	// FIXME:
+	// FIXME: QC Gunyah issue #64
 	// root pointer type vmsa_level_table_t;
 	root pointer bitfield vmsa_general_entry(atomic);
 
@@ -349,13 +359,17 @@ define pgtable structure {
 	// operations that work directly on stage 1; those always perform
 	// selective TLB invalidates.
 	s1_inval_needed	bool;
+	platform_pgtable bool;
 };
 
 extend pgtable_vm structure {
 	control		structure pgtable(contained);
 	vtcr_el2	bitfield VTCR_EL2;
 	vttbr_el2	bitfield VTTBR_EL2;
-	issue_dvm_cmd	bool;
+#if defined(ARCH_ARM_FEAT_TLBIOS)
+	dvm_enable	type count_t(atomic);
+#endif
+	lock		structure spinlock;
 };
 
 define pgtable_hyp object {
@@ -409,10 +423,12 @@ define pgtable_map_modifier_args structure {
 	try_map bool;
 	outer_shareable bool;
 	cont_group uint64;
-	// Only used to determine whether it's ok to remove an existng mapping
-	// in pgtable_modify_mapping(). The unprotected flag for new mappings is
-	// in upper_attrs.
+	// The following are used only for implicit unmaps of existing pages
+	// in pgtable_modify_mapping(). They are copied into the unmap
+	// modifier args in that function.
 	unprotected bool;
+	sanitise_count size;
+	sanitise_limit size;
 };
 
 define pgtable_lookup_modifier_args structure {
@@ -421,6 +437,14 @@ define pgtable_lookup_modifier_args structure {
 	// must be a block/page entry
 	entry union vmsa_entry;
 };
+
+// The time to sanitise 8MB of memory should be in the order of 100µs,
+// depending on the target. This is a reasonable first approximation for a
+// preemption point interval.
+define PGTABLE_UNMAP_SANITISE_LIMIT constant size = 8 << 20;
+
+// The time to mark 500 PTEs as unlocked has been measured at around 100µs.
+define PGTABLE_MODIFY_UNLOCK_LIMIT constant size = 500;
 
 define pgtable_unmap_modifier_args structure {
 	orig_virtual_address type vmaddr_t;
@@ -435,6 +459,8 @@ define pgtable_unmap_modifier_args structure {
 	outer_shareable bool;
 	error enumeration error;
 	unprotected bool;
+	sanitise_count size;
+	sanitise_limit size;
 };
 
 define pgtable_prealloc_modifier_args structure {
@@ -457,11 +483,16 @@ define pgtable_modify_protected_modifier_args structure {
 	outer_shareable bool;
 	unlock bool;
 	sanitise bool;
-	sanitise_limit size;
 	error enumeration error;
+	unlock_count size;
 };
 
 define pgtable_access_protected_modifier_args structure {
-	write bool;
 	error enumeration error;
 };
+
+#if defined(CPU_ERRATUM_44898) && CPU_ERRATUM_44898
+extend global_cpu_options bitfield {
+	auto		cpu_erratum_44898	bool = 0;
+};
+#endif

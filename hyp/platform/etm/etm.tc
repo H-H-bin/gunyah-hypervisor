@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -17,7 +17,7 @@ define etm_trcdv structure(aligned(16)) {
 };
 
 define etm structure(aligned(PGTABLE_HYP_PAGE_SIZE)) {
-	// main control & configuration regsters
+	// main control & configuration registers
 	trcprgctlr @ 0x4	uint32(atomic);
 	trcprocselr @ 0x8	uint32(atomic);
 	trcstatr @ 0xC		bitfield ETM_TRCSTATR(atomic);

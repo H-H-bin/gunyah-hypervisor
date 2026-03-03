@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -188,7 +188,7 @@ local memcpy_chunk128_loop:
 local memcpy_below256:
 	// If there is at least one chunk left, copy one chunk.
 	cmp	x2, 0x80
-	blt	LOCAL(memcpy_below128)
+	b.lt	LOCAL(memcpy_below128)
 
 	ldp	x3, x4, [x1]
 	ldp	x5, x6, [x1, 0x10]

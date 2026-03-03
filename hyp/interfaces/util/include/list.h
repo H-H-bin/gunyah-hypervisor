@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -61,46 +61,57 @@ list_delete_node(list_t *list, list_node_t *node);
 	     (node) != &(list)->head;                                          \
 	     (node) = atomic_load_relaxed(&(node)->next))
 
-#define list__foreach_container(container, list, cname, nname, n)              \
-	list_node_t *n = atomic_load_relaxed(&(list)->head.next);              \
-	container = ((n) != &(list)->head) ? cname##_container_of_##nname(n)   \
-					   : NULL;                             \
-	for (; (container) != NULL;                                            \
-	     n	       = atomic_load_relaxed(&(n)->next),                      \
-	     container = ((n) != &(list)->head)                                \
-				 ? cname##_container_of_##nname(n)             \
-				 : NULL)
+#define LIST_FOREACH_CONTAINER_BEGIN_LOAD_(ctype, list_ptr, cname, nname,      \
+					   varname, load)                      \
+	{                                                                      \
+		ctype	    *varname;                                          \
+		list_node_t *util_cpp_unique_ident(n) =                        \
+			load(&(list_ptr)->head.next);                          \
+		while (util_cpp_unique_ident(n) != &(list_ptr)->head) {        \
+			(varname) = cname##_container_of_##nname(              \
+				util_cpp_unique_ident(n));                     \
+			util_cpp_unique_ident(n) =                             \
+				load(&util_cpp_unique_ident(n)->next);
 
-// Simple container iterator. The list must be locked if other threads might
-// modify it, and the iterator must not delete nodes.
-#define list_foreach_container(container, list, cname, nname)                  \
-	list__foreach_container(container, list, cname, nname,                 \
-				util_cpp_unique_ident(node))
+#define LIST_FOREACH_CONTAINER_END_LOAD_                                       \
+	}                                                                      \
+	}
 
-#define list__foreach_container_safe(container, list, cname, nname, n, load)   \
-	list_node_t *n = load(&(list)->head.next);                             \
-	container = ((n) != &(list)->head) ? cname##_container_of_##nname(n)   \
-					   : NULL;                             \
-	n	  = load(&(n)->next);                                          \
-	for (; (container) != NULL;                                            \
-	     container = ((n) != &(list)->head)                                \
-				 ? cname##_container_of_##nname(n)             \
-				 : NULL,                                       \
-	     n	       = load(&(n)->next))
+// Simple deletion-safe container iterator. The list must be locked if other
+// threads might modify it, and the iterator must not delete nodes.
+// Usage:
+// LIST_FOREACH_CONTAINER_BEGIN(type, list_ptr, container_name,
+// node_member_name)
+//     // loop body here - 'node' variable contains current container
+// LIST_FOREACH_CONTAINER_END
+#define LIST_FOREACH_CONTAINER_BEGIN(ctype, list_ptr, cname, nname, varname)   \
+	LIST_FOREACH_CONTAINER_BEGIN_LOAD_(ctype, list_ptr, cname, nname,      \
+					   varname, atomic_load_relaxed)
 
-// Deletion-safe container iterator. The list must be locked if other threads
-// might modify it. The iterator may delete the current node.
-#define list_foreach_container_maydelete(container, list, cname, nname)        \
-	list__foreach_container_safe(container, list, cname, nname,            \
-				     util_cpp_unique_ident(next),              \
-				     atomic_load_relaxed)
+#define LIST_FOREACH_CONTAINER_END LIST_FOREACH_CONTAINER_END_LOAD_
 
-// RCU-safe container iterator. Must only be used within an RCU critical
-// section. The list need not be locked, but other threads that insert nodes
-// must use the _release variants of the insert functions, and any thread that
-// deletes a node must allow an RCU grace period to elapse before either freeing
-// the memory or adding it to a list again.
-#define list_foreach_container_consume(container, list, cname, nname)          \
-	list__foreach_container_safe(container, list, cname, nname,            \
-				     util_cpp_unique_ident(next),              \
-				     atomic_load_consume)
+// Container iterator with consume memory ordering. This macro provides
+// atomic_load_consume() semantics for safe concurrent access to list nodes.
+// It must be used in the following scenario:
+//
+// Lists that are not locked must be RCU-protected. The iterator must be used
+// within an RCU critical section.  The list is not locked, however other
+// threads that insert nodes must use the _release variants of the insert
+// functions, and any thread that deletes a node must allow an RCU grace period
+// to elapse before freeing the removed list container objects.
+//
+// Usage for RCU-protected lists:
+// rcu_read_start();
+// LIST_FOREACH_CONTAINER_CONSUME_BEGIN(type, list_ptr, container_name,
+//                                      node_member_name, var_name)
+//     // loop body here - 'var_name' variable contains current container
+//     // RCU-safe access without locks
+// LIST_FOREACH_CONTAINER_CONSUME_END(list_ptr, container_name,
+//                                    node_member_name, var_name)
+// rcu_read_finish();
+#define LIST_FOREACH_CONTAINER_CONSUME_BEGIN(ctype, list_ptr, cname, nname,    \
+					     varname)                          \
+	LIST_FOREACH_CONTAINER_BEGIN_LOAD_(ctype, list_ptr, cname, nname,      \
+					   varname, atomic_load_consume)
+
+#define LIST_FOREACH_CONTAINER_CONSUME_END LIST_FOREACH_CONTAINER_END_LOAD_

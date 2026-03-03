@@ -1,0 +1,2 @@
+// self referential constant
+define C constant uint32 = C;

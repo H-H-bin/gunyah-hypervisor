@@ -1,8 +1,10 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 module partition_standard
+
+subscribe boot_runtime_first_init()
 
 subscribe boot_cold_init()
 	priority first
@@ -27,3 +29,6 @@ subscribe object_create_partition
 subscribe object_activate_partition
 
 subscribe object_deactivate_partition()
+
+subscribe rcu_update[RCU_UPDATE_CLASS_PARTITION_RELEASE_MAPPED_RANGE]
+	handler partition_standard_free_mapped_range(entry)

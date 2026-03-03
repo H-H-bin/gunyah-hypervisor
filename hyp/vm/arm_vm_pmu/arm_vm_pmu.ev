@@ -1,12 +1,12 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 module arm_vm_pmu
 
-subscribe thread_save_state()
-
-subscribe thread_load_state()
+subscribe vcpu_save_state()
+subscribe vcpu_load_state()
+subscribe vcpu_disable_state()
 
 subscribe thread_context_switch_post()
 	require_preempt_disabled

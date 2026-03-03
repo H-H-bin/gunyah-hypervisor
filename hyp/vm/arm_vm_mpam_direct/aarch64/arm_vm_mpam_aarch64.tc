@@ -1,0 +1,26 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+#if defined(ARCH_ARM_FEAT_MPAM) && ARCH_ARM_FEAT_MPAM
+define vcpu_mpam_registers structure {
+	mpam0_el1	bitfield MPAM0_EL1;
+	mpam1_el1	bitfield MPAM1_EL1;
+	mpam2_el2	bitfield MPAM2_EL2;
+	mpamhcr_el2	bitfield MPAMHCR_EL2;
+};
+
+#if defined(ARCH_ARM_FEAT_SME)
+extend vcpu_mpam_registers structure {
+	mpamsm_el1	bitfield MPAMSM_EL1;
+};
+#endif
+
+define mpam structure {
+	mpam_regs	structure vcpu_mpam_registers;
+};
+
+extend thread object {
+	mpam		structure mpam;
+};
+#endif

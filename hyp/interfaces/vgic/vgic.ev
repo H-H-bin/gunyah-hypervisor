@@ -1,0 +1,10 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+interface vgic
+#if VGIC_HAS_LPI && !GICV3_HAS_VLPI_V4_1
+event vgic_lpi_received
+		param vcpu: thread_t *
+		param lpi: irq_t
+#endif

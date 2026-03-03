@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -24,7 +24,7 @@
 
 #include "event_handlers.h"
 
-void NOINLINE
+void NOINLINE COLD
 abort_handle_scheduler_stop(void)
 {
 	if (!idle_is_current()) {
@@ -32,14 +32,12 @@ abort_handle_scheduler_stop(void)
 	}
 }
 
-noreturn void NOINLINE
+noreturn void NOINLINE COLD
 abort_handle_ipi_received(void)
 {
 	preempt_disable();
 
-	if (!idle_is_current()) {
-		trigger_thread_save_state_event();
-	}
+	abort_handle_scheduler_stop();
 
 	trigger_abort_kernel_remote_event();
 

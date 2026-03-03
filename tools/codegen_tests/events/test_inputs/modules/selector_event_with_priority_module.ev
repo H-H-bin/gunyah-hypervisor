@@ -1,0 +1,5 @@
+
+module selector_event_with_priority_module
+
+subscribe selector_event_with_priority_interface_event[selector_1]
+		priority 1

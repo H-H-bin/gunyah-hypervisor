@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -192,7 +192,7 @@ vic_bind_hwirq_forward_private(vic_t *vic, hwirq_t *hwirq, virq_t virq)
 
 	list_insert_at_tail(&vic->forward_private_list, &fp->list_node);
 
-	// FIXME:
+	// FIXME: QC Gunyah issue #221
 	// Abstract ARM GIC specific details below from this vic module.
 
 	// Bind for VCPUs that are attached to the VIC and active.
@@ -232,7 +232,7 @@ vic_unbind_hwirq_forward_private(hwirq_t *hwirq)
 bool
 vic_handle_vcpu_activate_thread_forward_private(thread_t *thread)
 {
-	bool   ret = true;
+	bool   ret;
 	vic_t *vic = vic_get_vic(thread);
 
 	if (vic != NULL) {
@@ -241,17 +241,23 @@ vic_handle_vcpu_activate_thread_forward_private(thread_t *thread)
 		thread->vic_base_forward_private_active	 = true;
 		thread->vic_base_forward_private_in_sync = false;
 
-		vic_forward_private_t *fp;
-
-		list_foreach_container (fp, &vic->forward_private_list,
-					vic_forward_private, list_node) {
+		LIST_FOREACH_CONTAINER_BEGIN(vic_forward_private_t,
+					     &vic->forward_private_list,
+					     vic_forward_private, list_node, fp)
 			if (vic_bind_private_hwirq_helper(fp, thread) != OK) {
 				ret = false;
-				break;
+				goto out_unlock;
 			}
-		}
+		LIST_FOREACH_CONTAINER_END
 
+		// All bindings successful
+		ret = true;
+
+	out_unlock:
 		spinlock_release(&vic->forward_private_lock);
+	} else {
+		// No VIC attached, consider this successful
+		ret = true;
 	}
 
 	return ret;
@@ -271,11 +277,13 @@ vic_handle_object_create_vic_forward_private(vic_create_t vic_create)
 void
 vic_handle_object_deactivate_hwirq_forward_private(hwirq_t *hwirq)
 {
-	vic_unbind_private_hwirq_helper(hwirq);
+	if (hwirq->action == HWIRQ_ACTION_VIC_BASE_FORWARD_PRIVATE) {
+		vic_unbind_private_hwirq_helper(hwirq);
+	}
 }
 
 bool
-vic_handle_irq_received_forward_private(hwirq_t *hwirq)
+vic_handle_irq_received_forward_private(const hwirq_t *hwirq)
 {
 	assert(hwirq != NULL);
 	assert(hwirq->action == HWIRQ_ACTION_VIC_BASE_FORWARD_PRIVATE);
@@ -343,7 +351,7 @@ vic_handle_virq_check_pending_forward_private(virq_source_t *source,
 	vic_private_irq_info_t *irq_info =
 		private_irq_info_from_virq_source(source);
 
-	// FIXME:
+	// FIXME: QC Gunyah issue #220
 	if (!reasserted &&
 	    atomic_fetch_and_explicit(&irq_info->hw_active, false,
 				      memory_order_relaxed)) {
@@ -372,7 +380,7 @@ vic_handle_virq_set_enabled_forward_private(virq_source_t *source, bool enabled)
 	// the GICD lock held, and the sync handler above calls a vgic function
 	// that acquires the GICD lock with the forward-private lock held.
 	// The same applies to the other VIRQ configuration handlers.
-	// FIXME:
+	// FIXME: QC Gunyah issue #220
 	if (enabled) {
 		platform_irq_enable_percpu(irq_info->irq, irq_info->cpu);
 	} else {
@@ -392,7 +400,7 @@ vic_handle_virq_set_mode_forward_private(virq_source_t *source,
 	assert(source->is_private);
 	assert(platform_irq_is_percpu(irq_info->irq));
 
-	// FIXME:
+	// FIXME: QC Gunyah issue #220
 	return platform_irq_set_mode_percpu(irq_info->irq, mode, irq_info->cpu);
 }
 
@@ -432,11 +440,12 @@ vic_base_handle_vcpu_started(bool warm_reset)
 
 	assert(!vcpu->vic_base_forward_private_in_sync);
 
-	vic_forward_private_t *fp;
-	list_foreach_container (fp, &vic->forward_private_list,
-				vic_forward_private, list_node) {
+	LIST_FOREACH_CONTAINER_BEGIN(vic_forward_private_t,
+				     &vic->forward_private_list,
+				     vic_forward_private, list_node, fp)
 		vic_sync_private_hwirq_helper(fp, vcpu);
-	}
+	LIST_FOREACH_CONTAINER_END
+
 	vcpu->vic_base_forward_private_in_sync = true;
 
 	spinlock_release(&vic->forward_private_lock);
@@ -459,11 +468,12 @@ vic_base_handle_vcpu_stopped(void)
 
 	spinlock_acquire(&vic->forward_private_lock);
 	if (vcpu->vic_base_forward_private_in_sync) {
-		vic_forward_private_t *fp;
-		list_foreach_container (fp, &vic->forward_private_list,
-					vic_forward_private, list_node) {
+		LIST_FOREACH_CONTAINER_BEGIN(vic_forward_private_t,
+					     &vic->forward_private_list,
+					     vic_forward_private, list_node, fp)
 			vic_disable_private_hwirq_helper(fp, vcpu);
-		}
+		LIST_FOREACH_CONTAINER_END
+
 		vcpu->vic_base_forward_private_in_sync = false;
 	}
 	spinlock_release(&vic->forward_private_lock);

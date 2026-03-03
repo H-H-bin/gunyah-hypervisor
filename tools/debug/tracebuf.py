@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -265,7 +265,20 @@ def read_entries(args):
         print("Unexpected magic number {:#x}".format(magic))
         raise StopIteration
 
-    version = struct.unpack('<H', header[62:64])[0]
+    # Check tracebuffer version
+    version = struct.unpack(endian + 'H', header[62:64])[0]
+
+    # Check if this buffer has wrapped around. Since the older traces that
+    # don't implement this flag will read it as zero, to stay backwards
+    # compatible, we decode a 0 as "wrapped" and 1 as "unwrapped".
+    if version < 0x101:
+        not_wrapped = struct.unpack('?', header[44:45])[0]
+    elif version < 0x200:
+        wrap_count = struct.unpack(endian + 'L', header[48:52])[0]
+        not_wrapped = wrap_count == 0
+    else:
+        print("unknown trace version {:#x}".format(version))
+        raise StopIteration
 
     cpu_mask = struct.unpack(endian + 'QQQQ', header[8:40])
 
@@ -288,13 +301,6 @@ def read_entries(args):
 
     entries_max = struct.unpack(endian + 'L', header[4:8])[0]
     head_index = struct.unpack(endian + 'L', header[40:44])[0]
-
-    # Check if this buffer has wrapped around. Since the older traces that
-    # don't implement this flag will read it as zero, to stay backwards
-    # compatible, we decode a 0 as "wrapped" and 1 as "unwrapped".
-    if version != 0:
-        print("Unexpected version number {:#x}", version)
-    not_wrapped = struct.unpack('?', header[44:45])[0]
 
     # If wrapped around or old format, read the whole buffer, otherwise only
     # read the valid entries

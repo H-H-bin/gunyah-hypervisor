@@ -1,4 +1,4 @@
-// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -28,15 +28,19 @@ extend range_map_value union {
 	me_map		bitfield memextent_map_range;
 };
 
-define memextent_sparse_arg structure {
+extend range_map_callback enumeration {
+	memextent_unmap;
+};
+
+define memextent_sparse_range_arg structure {
 	addrspace	pointer object addrspace;
-	vbase		type vmaddr_t;
-	pbase		type paddr_t;
-	memtype		enumeration pgtable_vm_memtype;
-	user_access	enumeration pgtable_access;
-	kernel_access	enumeration pgtable_access;
-	fail_addr	type paddr_t;
+	memextent	pointer object memextent;
 	map_flags	bitfield addrspace_map_flags;
+};
+
+extend range_map_arg union {
+	memextent_sparse_arg
+			pointer structure memextent_sparse_range_arg;
 };
 
 define memextent_sparse_mapping structure {

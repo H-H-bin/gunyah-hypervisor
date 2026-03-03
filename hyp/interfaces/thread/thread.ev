@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -109,6 +109,13 @@ event thread_entry_from_user
 // newly initialised, either because the thread itself is new or because an
 // exception or hypercall has caused the context to be reset.
 event thread_exit_to_user
+	param reason: thread_entry_reason_t
+
+// Handle exit to userspace (final).
+//
+// This event is called with preemption disabled.
+event thread_exit_to_user_final
+	param current: thread_t *
 	param reason: thread_entry_reason_t
 
 // Events for profiling. These handlers must not have any side-effects for the

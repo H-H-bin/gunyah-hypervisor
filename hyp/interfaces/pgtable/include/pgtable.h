@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -14,20 +14,22 @@
 //
 // The caller will generally need to operate on some higher-level model of the
 // address space first, and hold locks on that model (possibly fine-grained)
-// to prevent conflicting updates. The update operations defined here are not
-// required to be thread-safe with respect to updates affecting overlapping
-// address ranges.
-// FIXME: The current implementation is not thread-safe and the caller must
-// ensure that the address space being operated on is locked. This may possibly
-// require different modules directly operating on a page-table to share a
-// lock.
+// to prevent conflicting updates.
 //
 // A caller must always flag the start of a set of one or more map and unmap
-// operations by calling the start function.  If synchronisation of updates
+// operations by calling the start function. If synchronisation of updates
 // with the page-table walkers (either locally or on other CPUs) can be
 // deferred, then it will be deferred until a call is made to the corresponding
 // commit function. The caller must always call the commit function before
 // relying in any way on the updates having taken effect.
+//
+// The implementation will serialise start/commit pairs if necessary. This may
+// involve disabling preemption or holding a spinlock.
+//
+// In the specific case that existing mappings are removed, with or without
+// being replaced by new mappings at the same address, the commit function can
+// optionally defer synchronisation until a subsequent commit. This allows long
+// sequences of unmaps to be batched, e.g. during tear-down of an address space.
 //
 // In multi-processor systems, remote CPUs or IOMMU-protected devices using
 // an affected address space might either continue to see the old mapping, or
@@ -59,34 +61,27 @@
 // technique must be used for useraccess on those that do not.
 //
 
+extern opaque_lock_t pgtable_hyp_map_lock;
+
 // Returns false if the specified address is unmapped.
+//
+// This may acquire a spinlock that serialises updates for the page table, and
+// therefore must not be called during a page table update sequence.
 bool
 pgtable_hyp_lookup(uintptr_t virtual_address, paddr_t *mapped_base,
 		   size_t *mapped_size, pgtable_hyp_memtype_t *mapped_memtype,
 		   pgtable_access_t *mapped_access);
 
-// Returns false if there is no mapping in the specified range. If a mapping
-// is found and can be efficiently determined to be the last mapping in the
-// range, the boolean *remainder_unmapped will be set to true; otherwise it
-// will be unchanged. Note that the returned mapping may extend beyond the
-// specified range.
-bool
-pgtable_hyp_lookup_range(uintptr_t virt_base, size_t virt_size,
-			 uintptr_t *mapped_virt, paddr_t *mapped_phys,
-			 size_t		       *mapped_size,
-			 pgtable_hyp_memtype_t *mapped_memtype,
-			 pgtable_access_t      *mapped_access,
-			 bool		       *remainder_unmapped);
-
 // Creates page table levels owned by the given partition which are able to
 // directly map entries covering the given size, but don't actually map
 // anything. This is intended for preallocating levels using the hypervisor's
 // private allocator, but might be more generally useful.
+//
+// This may acquire a spinlock that serialises updates for the page table, and
+// therefore must not be called during a page table update sequence.
 error_t
 pgtable_hyp_preallocate(partition_t *partition, uintptr_t virtual_address,
 			size_t size);
-
-extern opaque_lock_t pgtable_hyp_map_lock;
 
 // Flag the start of one of more map or unmap calls.
 void
@@ -103,6 +98,11 @@ pgtable_hyp_start(void) ACQUIRE_LOCK(pgtable_hyp_map_lock);
 // this will be freed into the specified partition, so merge_limit should be no
 // greater than preserved_prealloc would be for an unmap operation in the same
 // region.
+//
+// The partition provided is used as the partition to allocate new page table
+// levels from, or free page table levels to if merging. The same partition
+// must used for all map and unmaps for a specified VA range (including region
+// covered by the merge_limit).
 //
 // Note that this operation may cause transient translation aborts or TLB
 // conflict aborts in the affected range or within a merge_limit aligned region
@@ -158,7 +158,7 @@ pgtable_hyp_unmap(partition_t *partition, uintptr_t virtual_address,
 		  size_t size, size_t preserved_prealloc)
 	REQUIRE_LOCK(pgtable_hyp_map_lock);
 #define PGTABLE_HYP_UNMAP_PRESERVE_ALL	0U
-#define PGTABLE_HYP_UNMAP_PRESERVE_NONE util_bit((sizeof(uintptr_t) * 8U) - 1U)
+#define PGTABLE_HYP_UNMAP_PRESERVE_NONE util_bit(util_width(uintptr_t) - 1U)
 
 // Ensure that all previous hypervisor map and unmap calls are complete.
 void
@@ -173,38 +173,35 @@ pgtable_hyp_commit(void) RELEASE_LOCK(pgtable_hyp_map_lock);
 error_t
 pgtable_vm_init(partition_t *partition, pgtable_vm_t *pgtable, vmid_t vmid);
 
+// Returns true if a page table is platform managed.
+bool
+pgtable_vm_is_platform_managed(pgtable_vm_t *pgtable);
+
 // Free all resources for page table
 void
 pgtable_vm_destroy(partition_t *partition, pgtable_vm_t *pgtable);
 
 // Returns false if the specified address is unmapped.
+//
+// This may acquire a spinlock that serialises updates for the page table, and
+// therefore must not be called during a page table update sequence.
 bool
 pgtable_vm_lookup(pgtable_vm_t *pgtable, vmaddr_t virtual_address,
 		  paddr_t *mapped_base, size_t *mapped_size,
 		  pgtable_vm_memtype_t *mapped_memtype,
 		  pgtable_access_t     *mapped_vm_kernel_access,
-		  pgtable_access_t     *mapped_vm_user_access);
+		  pgtable_access_t     *mapped_vm_user_access)
+	EXCLUDE_LOCK(pgtable);
 
-// Returns false if there is no mapping in the specified range. If a mapping
-// is found and can be efficiently determined to be the last mapping in the
-// range, the boolean *remainder_unmapped will be set to true; otherwise it
-// will be unchanged. Note that the returned mapping may extend beyond the
-// specified range.
-bool
-pgtable_vm_lookup_range(pgtable_vm_t *pgtable, vmaddr_t virt_base,
-			size_t virt_size, vmaddr_t *mapped_virt,
-			paddr_t *mapped_phys, size_t *mapped_size,
-			pgtable_vm_memtype_t *mapped_memtype,
-			pgtable_access_t     *mapped_vm_kernel_access,
-			pgtable_access_t     *mapped_vm_user_access,
-			bool		     *remainder_unmapped);
-
+// We can only update one VM page table at a time, because we have switched
+// the current VMID so we can execute TLB invalidates.
+// FIXME: QC Gunyah issue #70
 extern opaque_lock_t pgtable_vm_map_lock;
 
 // Flag the start of one of more map or unmap calls.
 void
 pgtable_vm_start(pgtable_vm_t *pgtable) ACQUIRE_LOCK(pgtable)
-	ACQUIRE_LOCK(pgtable_vm_map_lock);
+ACQUIRE_LOCK(pgtable_vm_map_lock);
 
 // Creates a new mapping.
 //
@@ -233,7 +230,7 @@ pgtable_vm_map(partition_t *partition, pgtable_vm_t *pgtable,
 	       pgtable_vm_memtype_t memtype, pgtable_access_t vm_kernel_access,
 	       pgtable_access_t vm_user_access, bool try_map, bool allow_merge,
 	       bool protected) REQUIRE_LOCK(pgtable)
-	REQUIRE_LOCK(pgtable_vm_map_lock);
+REQUIRE_LOCK(pgtable_vm_map_lock);
 
 // Removes all mappings in the given range.
 //
@@ -241,7 +238,7 @@ pgtable_vm_map(partition_t *partition, pgtable_vm_t *pgtable,
 error_t
 pgtable_vm_unmap(partition_t *partition, pgtable_vm_t *pgtable,
 		 vmaddr_t virtual_address, size_t size) REQUIRE_LOCK(pgtable)
-	REQUIRE_LOCK(pgtable_vm_map_lock);
+REQUIRE_LOCK(pgtable_vm_map_lock);
 
 // Remove only mappings that match the physical address within the specified
 // range.
@@ -256,7 +253,7 @@ error_t
 pgtable_vm_unmap_matching(partition_t *partition, pgtable_vm_t *pgtable,
 			  vmaddr_t virtual_address, paddr_t phys, size_t size,
 			  bool protected) REQUIRE_LOCK(pgtable)
-	REQUIRE_LOCK(pgtable_vm_map_lock);
+REQUIRE_LOCK(pgtable_vm_map_lock);
 
 // Find and update any protected pages in the address space.
 //
@@ -289,25 +286,33 @@ pgtable_vm_modify_protected(partition_t *partition, pgtable_vm_t *pgtable,
 // Mark a protected page in the address space as having been accessed.
 //
 // Given the address of a faulting access in a page table, this function will
-// look up the address to see whether it is marked as protected and unlocked,
-// and would have the specified permissions if it was locked. If it is, then the
-// page table will be updated to allow the operation to proceed and to mark the
-// page as locked, and the function returns success. Otherwise, the function
-// returns ERROR_DENIED.
+// look up the address to see whether it is marked as protected, unlocked, and
+// sanitised on unmap. If it is, then the page table will be updated to allow
+// the operation to proceed and to mark the page as locked, and the function
+// returns success. Otherwise, the function returns ERROR_DENIED.
 //
 // pgtable_vm_start() must have been called before this call.
 error_t
 pgtable_vm_access_protected(pgtable_vm_t *pgtable, vmaddr_t virtual_address,
 			    bool write) REQUIRE_LOCK(pgtable_vm_map_lock);
 
+// Check if a kernel & user access combination is supported for a VM map call.
+bool
+pgtable_vm_access_validate(pgtable_access_t vm_kernel_access,
+			   pgtable_access_t vm_user_access);
+
 // Ensure that all preceding VM map, unmap and unlock calls are complete.
+//
+// If the no_sync_unmap flag is true, this function does not guarantee that
+// unmap operations are complete. A subsequent start/commit pair with the flag
+// clear must be executed to guarantee that unmap operations are complete.
 void
-pgtable_vm_commit(pgtable_vm_t *pgtable) RELEASE_LOCK(pgtable)
-	RELEASE_LOCK(pgtable_vm_map_lock);
+pgtable_vm_commit(pgtable_vm_t *pgtable, bool no_sync_unmap)
+	RELEASE_LOCK(pgtable) RELEASE_LOCK(pgtable_vm_map_lock);
 
 // Set VTCR and VTTBR registers with page table vtcr and vttbr bitfields values.
 void
-pgtable_vm_load_regs(pgtable_vm_t *vm_pgtable);
+pgtable_vm_load_regs(pgtable_vm_t *vm_pgtable) REQUIRE_PREEMPT_DISABLED;
 
 // Validate page table access
 bool
@@ -324,3 +329,19 @@ pgtable_access_is_equal(pgtable_access_t access, pgtable_access_t access_check);
 // Get combined access
 pgtable_access_t
 pgtable_access_combine(pgtable_access_t access1, pgtable_access_t access2);
+
+// Enable broadcast of page table operations to IOMMUs, if supported by the
+// platform. This is reference-counted, either globally or per address space,
+// so that multiple IOMMU drivers can make enable() and disable() calls
+// independently.
+//
+// For AArch64 targets that implement FEAT_TLBIOS, this enables use of outer
+// shareable TLB invalidate instructions.
+//
+// Returns ERROR_UNIMPLEMENTED if broadcast is not supported by the platform.
+error_t
+pgtable_vm_enable_coherent_iommu(pgtable_vm_t *vm_pgtable);
+
+// Undo the effect of a successful call to pgtable_vm_enable_coherent_iommu().
+void
+pgtable_vm_disable_coherent_iommu(pgtable_vm_t *vm_pgtable);

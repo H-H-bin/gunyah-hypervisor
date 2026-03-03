@@ -1,0 +1,132 @@
+// Automatically generated. Do not modify.
+
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define object_state enumeration {
+	NONE = 0;
+	INIT;
+	ACTIVE;
+	FAILED;
+	DESTROYING;
+};
+
+extend error enumeration {
+	OBJECT_STATE = 33;
+	OBJECT_CONFIG = 34;
+	OBJECT_CONFIGURED = 35;
+};
+
+define object_type enumeration {
+	addrspace;
+	cspace;
+	doorbell;
+	gicv3_its;
+	hwirq;
+	memextent;
+	msgqueue;
+	partition;
+	thread;
+	vic;
+	virtio_backend;
+	vpm_group;
+	vrtc;
+};
+
+define object_ptr union {
+	raw	uintptr;
+	addrspace pointer object addrspace;
+	cspace pointer object cspace;
+	doorbell pointer object doorbell;
+	gicv3_its pointer object gicv3_its;
+	hwirq pointer object hwirq;
+	memextent pointer object memextent;
+	msgqueue pointer object msgqueue;
+	partition pointer object partition;
+	thread pointer object thread;
+	vic pointer object vic;
+	virtio_backend pointer object virtio_backend;
+	vpm_group pointer object vpm_group;
+	vrtc pointer object vrtc;
+};
+
+define addrspace object {
+};
+define cspace object {
+};
+define doorbell object {
+};
+define gicv3_its object {
+};
+define hwirq object {
+};
+define memextent object {
+};
+define msgqueue object {
+};
+define partition object {
+};
+define thread object {
+};
+define vic object {
+};
+define virtio_backend object {
+};
+define vpm_group object {
+};
+define vrtc object {
+};
+
+
+define addrspace_create structure {
+	addrspace pointer object addrspace;
+};
+
+define cspace_create structure {
+	cspace pointer object cspace;
+};
+
+define doorbell_create structure {
+	doorbell pointer object doorbell;
+};
+
+define gicv3_its_create structure {
+	gicv3_its pointer object gicv3_its;
+};
+
+define hwirq_create structure {
+	hwirq pointer object hwirq;
+};
+
+define memextent_create structure {
+	memextent pointer object memextent;
+};
+
+define msgqueue_create structure {
+	msgqueue pointer object msgqueue;
+};
+
+define partition_create structure {
+	partition pointer object partition;
+};
+
+define thread_create structure {
+	thread pointer object thread;
+};
+
+define vic_create structure {
+	vic pointer object vic;
+};
+
+define virtio_backend_create structure {
+	virtio_backend pointer object virtio_backend;
+};
+
+define vpm_group_create structure {
+	vpm_group pointer object vpm_group;
+};
+
+define vrtc_create structure {
+	vrtc pointer object vrtc;
+};

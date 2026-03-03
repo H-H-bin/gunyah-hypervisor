@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -21,6 +21,15 @@ define smccc_owner_id public enumeration(explicit) {
 	STANDARD_HYP = 5;
 	VENDOR_HYP = 6;
 };
+
+define SMCCC_1_1_ARGS constant uint32 = 6;	// excludes x0
+define SMCCC_1_1_RETS constant uint32 = 4;
+define SMCCC_1_2_ARGS constant uint32 = 17;	// excludes x0
+define SMCCC_1_2_RETS constant uint32 = 18;
+
+// SMC32 calls following SMCCC v1.2 must preserve x8-x30.
+define SMCCC_1_2_SMC32_ARGS constant uint32 = 7; // excludes x0
+define SMCCC_1_2_SMC32_RETS constant uint32 = 8;
 
 define smccc_function_t public newtype uint16;
 
@@ -77,4 +86,11 @@ define smccc_vendor_hyp_function public enumeration(explicit) {
 	CALL_COUNT = 0x3f00;
 	CALL_UID = 0x3f01;
 	REVISION = 0x3f03;
+};
+
+define smccc_ret enumeration(explicit) {
+	SUCCESS = 0;
+	NOT_SUPPORTED = -1;
+	NOT_REQUIRES = -2;
+	INVALID_PARAMETER = -3;
 };

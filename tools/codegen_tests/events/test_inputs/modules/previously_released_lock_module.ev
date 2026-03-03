@@ -1,0 +1,17 @@
+
+module previously_released_lock_module
+
+subscribe previously_released_lock_interface_event
+		handler handle1()
+		priority -10
+		acquire_lock(lock)
+
+subscribe previously_released_lock_interface_event
+		handler handle2()
+		priority -5
+		release_lock(lock)
+
+subscribe previously_released_lock_interface_event
+		handler handle2()
+		priority -1
+		release_lock(lock)

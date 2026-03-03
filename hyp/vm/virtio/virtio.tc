@@ -1,8 +1,10 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 define virtio structure {
+	partition	pointer object partition;
+
 	transport_type	enumeration virtio_transport_type;
 	backend_type	enumeration virtio_backend_type;
 
@@ -20,6 +22,8 @@ define virtio structure {
 	reset_request	bool;
 
 	shutdown	bool;
+
+	per_queue_notify bool;
 
 	config_update	bool(atomic);
 	config_gen	uint8(atomic);

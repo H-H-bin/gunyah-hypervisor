@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -9,8 +9,10 @@
 
 #include <compiler.h>
 #include <cpulocal.h>
+#include <qcbor.h>
 #include <scheduler.h>
 #include <thread.h>
+#include <vcpu.h>
 
 #include <asm/barrier.h>
 #include <asm/sysregs.h>
@@ -43,7 +45,7 @@ vcpu_context_switch_load(void)
 	register_CONTEXTIDR_EL2_write(ctxidr);
 #endif
 
-	if (compiler_expected(thread->kind == THREAD_KIND_VCPU)) {
+	if (compiler_expected(vcpu_is_vcpu(thread))) {
 		register_CPACR_EL1_write(thread->vcpu_regs_el1.cpacr_el1);
 		register_CSSELR_EL1_write(thread->vcpu_regs_el1.csselr_el1);
 		register_CONTEXTIDR_EL1_write(
@@ -81,17 +83,6 @@ vcpu_context_switch_load(void)
 		register_AFSR1_EL1_write(thread->vcpu_regs_el1.afsr1_el1);
 #endif
 
-		// Floating-point access should not be disabled for any VM
-#if defined(ARCH_ARM_FEAT_VHE)
-		assert_debug(CPTR_EL2_E2H1_get_FPEN(
-				     &thread->vcpu_regs_el2.cptr_el2) == 3U);
-		register_CPTR_EL2_E2H1_write(thread->vcpu_regs_el2.cptr_el2);
-#else
-		assert_debug(CPTR_EL2_E2H0_get_TFP(
-				     &thread->vcpu_regs_el2.cptr_el2) == 0);
-		register_CPTR_EL2_E2H0_write(thread->vcpu_regs_el2.cptr_el2);
-#endif
-
 #if defined(VERBOSE) && VERBOSE
 #if defined(ARCH_ARM_FEAT_VHE)
 		assert_debug(HCR_EL2_get_E2H(&thread->vcpu_regs_el2.hcr_el2));
@@ -106,9 +97,6 @@ vcpu_context_switch_load(void)
 		register_VBAR_EL2_write(
 			VBAR_EL2_cast(CPULOCAL(vcpu_aarch64_vectors)));
 
-		register_FPCR_write(thread->vcpu_regs_fpr.fpcr);
-		register_FPSR_write(thread->vcpu_regs_fpr.fpsr);
-
 #if defined(ARCH_ARM_HAVE_SCXT)
 		if (vcpu_runtime_flags_get_scxt_allowed(&thread->vcpu_flags)) {
 			register_SCXTNUM_EL0_write(
@@ -117,6 +105,24 @@ vcpu_context_switch_load(void)
 				thread->vcpu_regs_el1.scxtnum_el1);
 		}
 #endif
+
+		// If FEAT_SVE or FEAT_SME is implemented then the FP context
+		// switching will be handled in the `vfp` module instead.
+#if !defined(ARCH_ARM_FEAT_SVE) && !defined(ARCH_ARM_FEAT_SME)
+		// Floating-point access should not be disabled for any VM
+#if defined(ARCH_ARM_FEAT_VHE)
+		assert_debug(CPTR_EL2_E2H1_get_FPEN(
+				     &thread->vcpu_regs_el2.cptr_el2) == 3U);
+		register_CPTR_EL2_E2H1_write(thread->vcpu_regs_el2.cptr_el2);
+#else
+		assert_debug(!CPTR_EL2_E2H0_get_TFP(
+			&thread->vcpu_regs_el2.cptr_el2));
+		register_CPTR_EL2_E2H0_write(thread->vcpu_regs_el2.cptr_el2);
+#endif
+
+		register_FPCR_write(thread->vcpu_regs_fpr.fpcr);
+		register_FPSR_write(thread->vcpu_regs_fpr.fpsr);
+
 		__asm__ volatile(".arch_extension fp;"
 				 "ldp	q0, q1, [%[q]]		;"
 				 "ldp	q2, q3, [%[q], 32]	;"
@@ -137,6 +143,7 @@ vcpu_context_switch_load(void)
 				 :
 				 : [q] "r"(thread->vcpu_regs_fpr.q),
 				   "m"(thread->vcpu_regs_fpr));
+#endif
 	} else {
 		// Set the constant non-VCPU HCR
 		HCR_EL2_t nonvm_hcr = HCR_EL2_default();
@@ -157,7 +164,6 @@ vcpu_context_switch_save(void)
 	thread_t *thread = thread_get_self();
 
 	if (compiler_expected(
-		    (thread->kind == THREAD_KIND_VCPU) &&
 		    !scheduler_is_blocked(thread, SCHEDULER_BLOCK_VCPU_OFF))) {
 		thread->vcpu_regs_el1.cpacr_el1	 = register_CPACR_EL1_read();
 		thread->vcpu_regs_el1.csselr_el1 = register_CSSELR_EL1_read();
@@ -195,17 +201,22 @@ vcpu_context_switch_save(void)
 
 		// Read back HCR_EL2 as VSE may have been cleared.
 		thread->vcpu_regs_el2.hcr_el2 = register_HCR_EL2_read();
-		thread->vcpu_regs_fpr.fpcr    = register_FPCR_read();
-		thread->vcpu_regs_fpr.fpsr    = register_FPSR_read();
 
 #if defined(ARCH_ARM_HAVE_SCXT)
 		if (vcpu_runtime_flags_get_scxt_allowed(&thread->vcpu_flags)) {
 			thread->vcpu_regs_el1.scxtnum_el0 =
-				register_SCXTNUM_EL0_read();
+				register_SCXTNUM_EL0_read_volatile();
 			thread->vcpu_regs_el1.scxtnum_el1 =
-				register_SCXTNUM_EL1_read();
+				register_SCXTNUM_EL1_read_volatile();
 		}
 #endif
+
+		// If FEAT_SVE or FEAT_SME is implemented then the FP context
+		// switching will be handled in the `vfp` module instead.
+#if !defined(ARCH_ARM_FEAT_SVE) && !defined(ARCH_ARM_FEAT_SME)
+		thread->vcpu_regs_fpr.fpcr = register_FPCR_read();
+		thread->vcpu_regs_fpr.fpsr = register_FPSR_read();
+
 		__asm__ volatile(".arch_extension fp;"
 				 "stp	q0, q1, [%[q]]		;"
 				 "stp	q2, q3, [%[q], 32]	;"
@@ -225,6 +236,7 @@ vcpu_context_switch_save(void)
 				 "stp	q30, q31, [%[q], 480]	;"
 				 : "=m"(thread->vcpu_regs_fpr)
 				 : [q] "r"(thread->vcpu_regs_fpr.q));
+#endif
 
 #if SCHEDULER_CAN_MIGRATE
 		if (!vcpu_option_flags_get_pinned(&thread->vcpu_options)) {

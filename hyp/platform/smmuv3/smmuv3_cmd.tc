@@ -1,0 +1,175 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define smmu_v3_cmd_id enumeration {
+	// TODO: Add more CMD opcodes as needed
+	CMD_PREFETCH_CONFIG	= 0x01;
+	CMD_CFGI_STE		= 0x03;
+	CMD_CFGI_STE_RANGE	= 0x04; // CMD_CFGI_ALL uses the same opcode
+	CMD_CFGI_CD		= 0x05;
+	CMD_CFGI_CD_ALL		= 0x06;
+	CMD_TLBI_NH_ALL		= 0x10;
+	CMD_TLBI_NH_ASID	= 0x11;
+	CMD_TLBI_NH_VA		= 0x12;
+	CMD_TLBI_NH_VAA		= 0x13;
+	CMD_TLBI_EL2_ALL	= 0x20;
+	CMD_TLBI_NSNH_ALL	= 0x30;
+	CMD_ATC_INV		= 0x40;
+	CMD_SYNC		= 0x46;
+};
+
+define smmu_v3_cmd_base bitfield<128> {
+	7:0	cmd		enumeration smmu_v3_cmd_id;
+	127:8	unknown=0;
+};
+
+define smmu_v3_cmd_prefetch_config bitfield<128> {
+	7:0	cmd		enumeration smmu_v3_cmd_id(const)=0x01;
+	//10	SSec		bool; // Secure CMDQ only
+	11	SSV		bool;
+	31:12	SubstreamID	uint32;
+	63:32	StreamID	uint32;
+	others	unknown=0;
+};
+
+define smmu_v3_cmd_cfgi_ste bitfield<128> {
+	7:0	cmd		enumeration smmu_v3_cmd_id(const)=0x03;
+	//10	SSec		bool; // Secure CMDQ only
+	63:32	StreamID	uint32;
+	64	Leaf		bool;
+	others	unknown=0;
+};
+
+define smmu_v3_cmd_cfgi_ste_range bitfield<128> {
+	7:0	cmd		enumeration smmu_v3_cmd_id(const)=0x04;
+	//10	SSec		bool; // Secure CMDQ only
+	63:32	StreamID	uint32;
+	68:64	Range		uint32;
+	others	unknown=0;
+};
+
+// Same opcode as CMD_CFGI_STE_RANGE, but with max range
+define smmu_v3_cmd_cfgi_all bitfield<128> {
+	7:0	cmd		enumeration smmu_v3_cmd_id(const)=0x04;
+	//10	SSec		bool; // Secure CMDQ only
+	68:64	Range		uint32(const)=0x1f; // Set the max range
+	others	unknown=0;
+};
+
+define smmu_v3_cmd_cfgi_cd bitfield<128> {
+	7:0	cmd		enumeration smmu_v3_cmd_id(const)=0x05;
+	//10	SSec		bool; // Secure CMDQ only
+	31:12	SubstreamID	uint32;
+	63:32	StreamID	uint32;
+	64	Leaf		bool;
+	others	unknown=0;
+};
+
+define smmu_v3_cmd_cfgi_cd_all bitfield<128> {
+	7:0	cmd		enumeration smmu_v3_cmd_id(const)=0x06;
+	//10	SSec		bool; // Secure CMDQ only
+	63:32	StreamID	uint32;
+	others	unknown=0;
+};
+
+define smmu_v3_cmd_tlbi_nh_all bitfield<128> {
+	7:0	cmd		enumeration smmu_v3_cmd_id(const)=0x10;
+	47:32	VMID		uint16;
+	others	unknown=0;
+};
+
+define smmu_v3_cmd_tlbi_nh_asid bitfield<128> {
+	7:0	cmd		enumeration smmu_v3_cmd_id(const)=0x11;
+	47:32	VMID		uint16;
+	63:48	ASID		uint16;
+	others	unknown=0;
+};
+
+define smmu_v3_cmd_tlbi_nh_va bitfield<128> {
+	7:0	cmd		enumeration smmu_v3_cmd_id(const)=0x12;
+	16:12	NUM		uint8;
+	24:20	SCALE		uint8;
+	47:32	VMID		uint16;
+	63:48	ASID		uint16;
+	64	Leaf		bool;
+	73:72	TTL		uint8;
+	75:74	TG		uint8;
+	127:76	Address		type vmaddr_t lsl(12);
+	others	unknown=0;
+};
+
+define smmu_v3_cmd_tlbi_nh_vaa bitfield<128> {
+	7:0	cmd		enumeration smmu_v3_cmd_id(const)=0x13;
+	16:12	NUM		uint8;
+	24:20	SCALE		uint8;
+	47:32	VMID		uint16;
+	64	Leaf		bool;
+	73:72	TTL		uint8;
+	75:74	TG		uint8;
+	127:76	Address		type vmaddr_t lsl(12);
+	others	unknown=0;
+};
+
+define smmu_v3_cmd_tlbi_el2_all bitfield<128> {
+	7:0	cmd		enumeration smmu_v3_cmd_id(const)=0x20;
+	others	unknown=0;
+};
+
+define smmu_v3_cmd_tlbi_nsnh_all bitfield<128> {
+	7:0	cmd		enumeration smmu_v3_cmd_id(const)=0x30;
+	others	unknown=0;
+};
+
+define SMMU_V3_CMD_ATC_INV_SPAN_ALL constant uint8 = 52;
+define smmu_v3_cmd_atc_inv bitfield<128> {
+	7:0	cmd		enumeration smmu_v3_cmd_id(const)=0x40;
+	9	G		bool;
+	11	SSV		bool;
+	31:12	SubstreamID	uint32;
+	63:32	StreamID	uint32;
+	69:64	Size		uint8;
+	127:76	Address		type vmaddr_t lsl(12);
+	others	unknown=0;
+};
+
+define smmu_v3_cmd_sync_CS enumeration {
+	SIG_NONE	= 0x0;
+	SIG_IRQ		= 0x1;
+	SIG_SEV		= 0x2;
+};
+
+define smmu_v3_cmd_sync bitfield<128> {
+	7:0	cmd		enumeration smmu_v3_cmd_id(const)=0x46;
+	13:12	CS		enumeration smmu_v3_cmd_sync_CS;
+
+	// TODO:
+	//	- We are not using MSI for SYNC for now
+	//	- We can also set the MSIAddr to be some memory location we poll
+	23:22	MSH		uint8; //enumeration smmu_v3_cmd_sync_MSH;
+	27:24	MSIAttr		uint8; //enumeration smmu_v3_cmd_sync_MSIAttr;
+	63:32	MSIData		uint32;
+	115:66	MSIAddress	type vmaddr_t lsl(2);
+	127	MSI_NS		bool;
+	others	unknown=0;
+};
+
+define smmu_v3_cmd union(aligned(16)) {
+	prefetch_config		bitfield smmu_v3_cmd_prefetch_config;
+	cfgi_ste		bitfield smmu_v3_cmd_cfgi_ste;
+	cfgi_ste_range		bitfield smmu_v3_cmd_cfgi_ste_range;
+	cfgi_all		bitfield smmu_v3_cmd_cfgi_all;
+	cfgi_cd			bitfield smmu_v3_cmd_cfgi_cd;
+	cfgi_cd_all		bitfield smmu_v3_cmd_cfgi_cd_all;
+	tlbi_nh_all		bitfield smmu_v3_cmd_tlbi_nh_all;
+	tlbi_nh_asid		bitfield smmu_v3_cmd_tlbi_nh_asid;
+	tlbi_nh_va		bitfield smmu_v3_cmd_tlbi_nh_va;
+	tlbi_nh_vaa		bitfield smmu_v3_cmd_tlbi_nh_vaa;
+	tlbi_el2_all		bitfield smmu_v3_cmd_tlbi_el2_all;
+	tlbi_nsnh_all		bitfield smmu_v3_cmd_tlbi_nsnh_all;
+	atc_inv			bitfield smmu_v3_cmd_atc_inv;
+	sync			bitfield smmu_v3_cmd_sync;
+
+	// Used to read the command ID when parsing commands
+	base			bitfield smmu_v3_cmd_base;
+};

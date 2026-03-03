@@ -1,0 +1,13 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+extend range_tree structure {
+	root		pointer(atomic) structure range_tree_node;
+};
+
+extend range_tree_node structure {
+	left		pointer(atomic) structure range_tree_node;
+	right		pointer(atomic) structure range_tree_node;
+	balance		sint8;
+};

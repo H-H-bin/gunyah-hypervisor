@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -36,6 +36,8 @@ subscribe object_activate_thread
 	priority 50
 
 subscribe object_deactivate_thread
+
+subscribe thread_killed
 
 subscribe object_deactivate_vpm_group
 

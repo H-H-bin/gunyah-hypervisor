@@ -1,9 +1,23 @@
-// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 extend vpm_group object {
-	options			bitfield vpm_group_option_flags;
+	options		bitfield vpm_group_option_flags;
+	vm_on		bool(atomic);
+};
+
+#if defined(PLATFORM_ENABLE_SYSTEM_SUSPEND) && PLATFORM_ENABLE_SYSTEM_SUSPEND
+// This flag indicates that the vpm_group controls entry into the platform
+// suspend-to-ram power state
+extend vpm_group object {
+	power_system_suspend	bool;
+};
+#endif // PLATFORM_ENABLE_SYSTEM_SUSPEND
+
+// This flag indicates power state threshold of the vpm_group
+extend vpm_group object {
+	power_state_threshold	bitfield psci_suspend_powerstate;
 };
 
 define vpm_mode enumeration {
@@ -12,5 +26,5 @@ define vpm_mode enumeration {
 };
 
 extend thread object {
-	vpm_mode		enumeration vpm_mode;
+	vpm_mode	enumeration vpm_mode;
 };

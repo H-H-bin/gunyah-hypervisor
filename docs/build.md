@@ -47,8 +47,6 @@ for every parameter that is not otherwise specified. The when multiple options
 are selected, each combination (variant) will be built in separate output
 directories under the `build` directory.
 
-Each project may be built using `ninja` or `scons` and the process for build configuration depends on the selected build tool used. See the sections below.
-
 ## Building
 
 The Gunyah Hypervisor, Resource Manager and C runtime are built separately,
@@ -59,9 +57,11 @@ to be packaged together into a final boot image.
 
 ### Building with Ninja
 
-To configure the build for use with *Ninja*, run `./configure.py <configuration>`
-in the top-level source repository of the component, specifying the desired
-configuration parameters.
+The build system uses [Ninja](https://ninja-build.org/) to execute build tasks. The configuration stage generates build rules which are read by Ninja.
+
+To configure the build system, run `configure.py <configuration>` either in the top-level source repository of the component, or using a relative path from an otherwise empty build directory, specifying the desired configuration parameters.
+
+If `configure.py` is run from the top-level source directory, it will create a build output directory called `build`. If it is run from any other working directory, build outputs will be created in that directory.
 
 For example, in each of the Gunyah Hypervisor, Resource Manager and Gunyah C Runtime source directories, run:
 ```sh
@@ -75,14 +75,13 @@ or to build all available configurations for the QEMU platform:
 
 This will create a `build` directory and Ninja build rules file for each enabled build variant. Generally, the `configure` step only needs to be run once.
 
+> Note, if configuration files are modified, Ninja will rerun `configure.py` with the previous parameters. However, you must manually rerun `configure.py` if you rename or delete an existing module or configuration file, as Ninja will refuse to run if a build configuration file is missing.
+
+To build, run `ninja` from the same working directory as `configure.py`. There is usually no need to specify `-j` or similar, as Ninja will select this automatically. Ninja will incrementally re-build if run again after making code changes.
+
 ```sh
 ninja
 ```
-
-Run `ninja` to build. There is usually no need to specify `-j` or similar, as
-Ninja will select this automatically. Ninja also will incrementally re-build if
-run again after making code changes.
-> Note, if configuration files are modified, Ninja will rerun the configuration tool with the previous parameters. However, you must manually rerun the configuration step if you rename or delete an existing module or configuration parameter, as Ninja will refuse to run if a build configuration file is missing.
 
 To build a specific file (for example, a single variant when multiple variants have been configured), specify its full name as the target on the `ninja` command line.
 
@@ -90,17 +89,7 @@ To clean the build, run `ninja -t clean`. It should not be necessary to do this 
 
 ### Building with SCons
 
-To perform a standalone SCons build, run `scons`, specifying the configuration
-parameters. For example, to build debug builds of all available feature sets
-for the QEMU platform:
-
-```sh
-scons platform=qemu featureset=all quality=debug
-```
-
-Note, configuration parameters *must* be specified on every time you perform a SCons build; configuration is not cached.
-
-To clean the build, run `scons -c all=true`, or use configuration parameters to select a specific variant to clean. It should not be necessary to do this routinely.
+The build system also supports integration with existing SCons projects, but the use of SCons for standalone builds is deprecated and is no longer routinely tested. Ninja should be used for all new projects.
 
 ## Producing a Boot Image
 

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -9,14 +9,30 @@ extend hyp_api_flags0 bitfield {
 };
 #endif
 
+extend vpm_group object {
+	power	pointer object power;
+};
+
+extend thread object module vpm {
+	// Reference-counted virtual PM group pointer
+	group pointer object vpm_group;
+};
+
 extend cap_rights_vpm_group bitfield {
 	0	attach_vcpu	bool;
 	1	bind_virq	bool;
 	2	query		bool;
 };
 
+extend cap_rights_vpm_group bitfield {
+	3	wakeup		bool;	// Right to wake-up a vpm-group
+	4	bind_power	bool;	// Right to bind to power object
+	5	set_threshold	bool;	// Right to set power_state threshold
+};
+
 define vpm_group_option_flags public bitfield<64> {
 	0	no_aggregation	bool;
+	1	explicit_wakeup	bool;
 	others	unknown=0;
 };
 

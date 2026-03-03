@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -22,6 +22,7 @@
 #include <thread.h>
 #include <trace.h>
 #include <util.h>
+#include <vic.h>
 
 #include "event_handlers.h"
 #include "gicv3.h"
@@ -32,11 +33,9 @@
 // used in the virtual GICD_IIDR and GICR_IIDR.
 #define JEP106_IDENTITY 0x70U
 #define JEP106_CONTCODE 0x0U
-#define IIDR_IMPLEMENTER                                                       \
-	(((uint16_t)JEP106_CONTCODE << 8U) | (uint16_t)JEP106_IDENTITY)
-#define IIDR_PRODUCTID (uint8_t)'G' /* For "Gunyah" */
-#define IIDR_VARIANT   0U
-#define IIDR_REVISION  0U
+#define IIDR_PRODUCTID	(uint8_t)'G' /* For "Gunyah" */
+#define IIDR_VARIANT	0U
+#define IIDR_REVISION	0U
 
 static void
 vgic_update_irqbits_flag(vic_t *vic, const thread_t *vcpu, size_t base_offset,
@@ -248,9 +247,11 @@ vgic_read_irqbits(vic_t *vic, thread_t *vcpu, size_t base_offset, size_t offset)
 						       range_base))
 			     : 32U;
 
+	rcu_read_start();
 	_Atomic vgic_delivery_state_t *dstates =
 		vgic_find_dstate(vic, vcpu, range_base);
 	if (dstates == NULL) {
+		rcu_read_finish();
 		goto out;
 	}
 	assert(compiler_sizeof_object(dstates) >=
@@ -260,6 +261,7 @@ vgic_read_irqbits(vic_t *vic, thread_t *vcpu, size_t base_offset, size_t offset)
 
 	bits = vgic_read_gicd_irqbits(range_size, dstates, base_offset,
 				      &listed);
+	rcu_read_finish();
 
 #if GICV3_HAS_VLPI_V4_1 && defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE
 	if ((range_base == GIC_SGI_BASE) &&
@@ -305,6 +307,7 @@ vgic_read_priority(vic_t *vic, thread_t *vcpu, size_t offset,
 {
 	register_t bits = 0U;
 
+	rcu_read_start();
 	_Atomic vgic_delivery_state_t *dstates =
 		vgic_find_dstate(vic, vcpu, (count_t)offset);
 	if (dstates == NULL) {
@@ -319,10 +322,12 @@ vgic_read_priority(vic_t *vic, thread_t *vcpu, size_t offset,
 
 		bits |= (register_t)vgic_delivery_state_get_priority(
 				&this_dstate)
-			<< (i * 8U);
+			<< (i * util_width(uint8_t));
 	}
 
 out:
+	rcu_read_finish();
+
 	return bits;
 }
 
@@ -369,6 +374,7 @@ vgic_read_config(vic_t *vic, thread_t *vcpu, size_t base_offset, size_t offset)
 						       range_base))
 			     : 16U;
 
+	rcu_read_start();
 	_Atomic vgic_delivery_state_t *dstates =
 		vgic_find_dstate(vic, vcpu, range_base);
 	if (dstates == NULL) {
@@ -387,6 +393,8 @@ vgic_read_config(vic_t *vic, thread_t *vcpu, size_t base_offset, size_t offset)
 	}
 
 out:
+	rcu_read_finish();
+
 	return bits;
 }
 
@@ -394,7 +402,7 @@ static bool
 gicd_vdevice_read(vic_t *vic, size_t offset, register_t *val,
 		  size_t access_size)
 {
-	bool	  ret	 = true;
+	bool	  ret;
 	thread_t *thread = thread_get_self();
 
 	uint32_t read_val = 0U;
@@ -450,7 +458,8 @@ gicd_vdevice_read(vic_t *vic, size_t offset, register_t *val,
 	}
 	case offsetof(gicd_t, iidr): {
 		GICD_IIDR_t iidr = GICD_IIDR_default();
-		GICD_IIDR_set_Implementer(&iidr, IIDR_IMPLEMENTER);
+		GICD_IIDR_set_Implementer_Identity(&iidr, JEP106_IDENTITY);
+		GICD_IIDR_set_Implementer_ContCode(&iidr, JEP106_CONTCODE);
 		GICD_IIDR_set_ProductID(&iidr, IIDR_PRODUCTID);
 		GICD_IIDR_set_Variant(&iidr, IIDR_VARIANT);
 		GICD_IIDR_set_Revision(&iidr, IIDR_REVISION);
@@ -465,7 +474,7 @@ gicd_vdevice_read(vic_t *vic, size_t offset, register_t *val,
 		read_val = GICD_TYPER2_raw(typer2);
 		break;
 	}
-	case (size_t)OFS_GICD_PIDR2:
+	case OFS_GICD_PIDR2:
 		read_val = VGIC_PIDR2;
 		break;
 	case util_offset_case_range(gicd_t, igroupr):
@@ -569,6 +578,7 @@ gicd_vdevice_read(vic_t *vic, size_t offset, register_t *val,
 	}
 
 	*val = read_val;
+	ret  = true;
 
 	return ret;
 }
@@ -723,7 +733,7 @@ gicd_vdevice_write(vic_t *vic, size_t offset, register_t val,
 		break;
 	case util_offset_case_range(gicd_t, typer):
 	case util_offset_case_range(gicd_t, iidr):
-	case (size_t)OFS_GICD_PIDR2:
+	case OFS_GICD_PIDR2:
 	case util_offset_case_range(gicd_t, typer2): {
 		// RO registers
 		GICD_STATUSR_t statusr;
@@ -790,7 +800,7 @@ gicd_vdevice_write(vic_t *vic, size_t offset, register_t val,
 		     i < (n + access_size); i++) {
 			vgic_gicd_set_irq_priority(vic, i,
 						   (uint8_t)shifted_val);
-			shifted_val >>= 8U;
+			shifted_val >>= util_width(uint8_t);
 		}
 		break;
 	}
@@ -891,7 +901,7 @@ gicd_vdevice_write(vic_t *vic, size_t offset, register_t val,
 		for (index_t i = n; i < (n + access_size); i++) {
 			vgic_gicd_set_irq_priority(vic, GIC_SPI_EXT_BASE + i,
 						   (uint8_t)shifted_val);
-			shifted_val >>= 8U;
+			shifted_val >>= util_width(uint8_t);
 		}
 		break;
 	}
@@ -1082,7 +1092,8 @@ gicr_vdevice_read(vic_t *vic, thread_t *gicr_vcpu, index_t gicr_num,
 	}
 	case util_offset_case_range(gicr_t, rd.iidr): {
 		GICR_IIDR_t iidr = GICR_IIDR_default();
-		GICR_IIDR_set_Implementer(&iidr, IIDR_IMPLEMENTER);
+		GICR_IIDR_set_Implementer_Identity(&iidr, JEP106_IDENTITY);
+		GICR_IIDR_set_Implementer_ContCode(&iidr, JEP106_CONTCODE);
 		GICR_IIDR_set_ProductID(&iidr, IIDR_PRODUCTID);
 		GICR_IIDR_set_Variant(&iidr, IIDR_VARIANT);
 		GICR_IIDR_set_Revision(&iidr, IIDR_REVISION);
@@ -1134,7 +1145,7 @@ gicr_vdevice_read(vic_t *vic, thread_t *gicr_vcpu, index_t gicr_num,
 		break;
 	}
 	case util_offset_case_range(gicr_t, rd.syncr): {
-#if VGIC_HAS_LPI
+#if VGIC_HAS_LPI && GICV3_HAS_VLPI_V4_1
 		GICR_SYNCR_t syncr = GICR_SYNCR_default();
 		GICR_SYNCR_set_Busy(&syncr,
 				    vgic_gicr_get_inv_pending(vic, gicr_vcpu));
@@ -1234,7 +1245,7 @@ gicr_vdevice_ipriorityr_write(vic_t *vic, thread_t *gicr_vcpu, size_t offset,
 	for (index_t i = 0U; i < access_size; i++) {
 		vgic_gicr_sgi_set_sgi_ppi_priority(vic, gicr_vcpu, n + i,
 						   (uint8_t)shifted_val);
-		shifted_val >>= 8U;
+		shifted_val >>= util_width(uint8_t);
 	}
 }
 
@@ -1323,7 +1334,7 @@ gicr_vdevice_ipriorityr_e_write(vic_t *vic, thread_t *gicr_vcpu, size_t offset,
 		vgic_gicr_sgi_set_sgi_ppi_priority(vic, gicr_vcpu,
 						   GIC_PPI_EXT_BASE + i,
 						   (uint8_t)shifted_val);
-		shifted_val >>= 8U;
+		shifted_val >>= util_width(uint8_t);
 	}
 }
 
@@ -1399,7 +1410,7 @@ gicr_vdevice_igroupr_e_write(vic_t *vic, thread_t *gicr_vcpu, size_t offset,
 }
 #endif // VGIC_HAS_EXT_PPIS
 
-#if VGIC_HAS_LPI
+#if VGIC_HAS_LPI && GICV3_HAS_VLPI_V4_1
 static void
 gicr_vdevice_invallr_write(vic_t *vic, thread_t *gicr_vcpu, register_t val)
 {
@@ -1475,10 +1486,22 @@ gicr_vdevice_write(vic_t *vic, thread_t *gicr_vcpu, size_t offset,
 					  GICR_PENDBASER_cast(val));
 		break;
 	case offsetof(gicr_t, rd.invlpir):
+#if GICV3_HAS_VLPI_V4_1
 		gicr_vdevice_invlpir_write(vic, gicr_vcpu, val);
+#elif GICV3_HAS_ITS // && !GICV3_HAS_VLPI_V4_1
+		// WI for GICv3 with ITS
+#else		    // !GICV3_HAS_VLPI_V4_1 && !GICV3_HAS_ITS
+#error GICv3 with LPIs but without ITS not supported.
+#endif // !GICV3_HAS_VLPI_V4_1 && !GICV3_HAS_ITS
 		break;
 	case offsetof(gicr_t, rd.invallr):
+#if GICV3_HAS_VLPI_V4_1
 		gicr_vdevice_invallr_write(vic, gicr_vcpu, val);
+#elif GICV3_HAS_ITS // && !GICV3_HAS_VLPI_V4_1
+		// WI for GICv3 with ITS
+#else		    // !GICV3_HAS_VLPI_V4_1 && !GICV3_HAS_ITS
+#error GICv3 with LPIs but without ITS not supported.
+#endif // !GICV3_HAS_VLPI_V4_1 && !GICV3_HAS_ITS
 		break;
 #endif // VGIC_HAS_LPI
 	case offsetof(gicr_t, sgi.igroupr0):
@@ -1722,3 +1745,26 @@ vgic_handle_vdevice_access_fixed_addr(vmaddr_t ipa, size_t access_size,
 
 	return ret;
 }
+
+#if defined(VIC_VIRTUAL_MSI) && VIC_VIRTUAL_MSI
+error_t
+vic_dispatch_msi(vic_t *vic, vmaddr_t mailbox, uint32_t message,
+		 index_t device_id)
+{
+	error_t err;
+
+	if (mailbox == (vic->gicd_base + offsetof(gicd_t, setspi_nsr))) {
+		(void)device_id;
+		vgic_gicd_change_irq_pending(
+			vic,
+			GICD_CLRSPI_SETSPI_NSR_SR_get_INTID(
+				&GICD_CLRSPI_SETSPI_NSR_SR_cast(message)),
+			true, true);
+		err = OK;
+	} else {
+		err = ERROR_ADDR_INVALID;
+	}
+
+	return err;
+}
+#endif

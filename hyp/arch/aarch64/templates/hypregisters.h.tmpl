@@ -1,9 +1,11 @@
 // Automatically generated. Do not modify.
 //
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
+\#ifndef HYPREGISTERS_H_
+\#define HYPREGISTERS_H_
 \#pragma clang diagnostic push
 \#pragma clang diagnostic ignored "-Wshorten-64-to-32"
 \#pragma clang diagnostic ignored "-Wimplicit-int-conversion"
@@ -166,3 +168,6 @@ ${register_write(r, vt, vn, True, True)}
 #end for
 
 \#pragma clang diagnostic pop
+\#else
+\#error HYPREGISTERS_H_ multiple include
+\#endif

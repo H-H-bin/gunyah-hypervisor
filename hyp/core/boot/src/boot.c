@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -11,6 +11,8 @@
 #include <compiler.h>
 #include <log.h>
 #include <memdb.h>
+#include <panic.h>
+#include <partition.h>
 #include <prng.h>
 #include <qcbor.h>
 #include <thread_init.h>
@@ -22,20 +24,17 @@
 #include "boot_init.h"
 #include "event_handlers.h"
 
-#define STR(x)	#x
-#define XSTR(x) STR(x)
-
-const char hypervisor_version[] = XSTR(HYP_CONF_STR) "-" XSTR(HYP_GIT_VERSION)
-#if defined(QUALITY)
-	" " XSTR(QUALITY)
+const char hypervisor_version[] = HYP_CONF_STR "-" HYP_GIT_VERSION
+#if defined(HYP_QUALITY)
+					       " " HYP_QUALITY
 #endif
 	;
 const char hypervisor_build_date[] = HYP_BUILD_DATE;
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wreserved-identifier"
-extern uintptr_t	 __stack_chk_guard;
-uintptr_t __stack_chk_guard __attribute__((used, visibility("hidden")));
+extern uintptr_t __stack_chk_guard;
+uintptr_t	 __stack_chk_guard __attribute__((used, visibility("hidden")));
 #pragma clang diagnostic pop
 
 noreturn void
@@ -77,9 +76,9 @@ boot_cold_init(cpu_index_t cpu) LOCK_IMPL
 #include <string.h>
 
 #include <panic.h>
+#endif
 
 extern char aarch64_boot_stack[];
-#endif
 
 void
 boot_handle_boot_cold_init(void)
@@ -97,8 +96,9 @@ boot_handle_boot_cold_init(void)
 void
 boot_handle_idle_start(void)
 {
-#if defined(VERBOSE) && VERBOSE
 	char *stack_bottom = (char *)aarch64_boot_stack;
+
+#if defined(VERBOSE) && VERBOSE
 	// Check red-zone in the boot stack
 	for (index_t i = 0; i < STACK_GUARD_SIZE; i++) {
 		if (stack_bottom[i] != (char)STACK_GUARD_BYTE) {
@@ -106,6 +106,20 @@ boot_handle_idle_start(void)
 		}
 	}
 #endif
+
+	partition_t *private = partition_get_private();
+
+	size_t stack_size = BOOT_STACK_SIZE;
+
+	// Free the boot stack
+	// Find a better place to free the boot stack
+	// FIXME: QC Gunyah issue #44
+	error_t err = partition_add_heap(
+		private, partition_image_virt_to_phys((uintptr_t)stack_bottom),
+		stack_size);
+	if (err != OK) {
+		panic("Error freeing stack to hypervisor partition");
+	}
 }
 
 noreturn void
@@ -137,7 +151,7 @@ boot_warm_init(void) LOCK_IMPL
 	trigger_boot_cpu_warm_init_event();
 	trigger_boot_cpu_start_event();
 	TRACE_LOCAL(DEBUG, INFO, "cpu warm boot complete");
-	thread_boot_set_idle();
+	thread_boot_restore_frozen();
 }
 
 static error_t

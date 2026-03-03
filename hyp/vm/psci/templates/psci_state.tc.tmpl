@@ -1,0 +1,13 @@
+// Automatically generated. Do not modify.
+//
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define vpm_group_suspend_state bitfield<64> {
+#for i in range(0, $PLATFORM_MAX_HIERARCHY+1)
+    auto<PLATFORM_PSCI_L${i}_COUNTS * PLATFORM_PSCI_L${i}_STATE_BITS>
+        level_${i}_state uint64;
+#end for
+	auto<1> system_suspend bool;
+};

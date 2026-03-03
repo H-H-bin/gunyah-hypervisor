@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -161,6 +161,23 @@ preempt_abort_dispatch(void) LOCK_IMPL
 	preempt_disable_count &= ~preempt_in_interrupt;
 
 	return ret;
+}
+
+bool
+preempt_check(void)
+{
+	bool pending;
+
+	preempt_disable();
+	if (asm_interrupt_is_pending() && irq_interrupt_dispatch()) {
+		scheduler_trigger();
+		pending = true;
+	} else {
+		pending = trigger_preempt_check_event();
+	}
+	preempt_enable();
+
+	return pending;
 }
 
 void

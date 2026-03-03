@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -112,7 +112,8 @@ cspace_init_id_encoder(cspace_t *cspace)
 
 out:
 #else
-	cspace->id_rand_base = 0U;
+	// Use a constant non-zero base id
+	cspace->id_rand_base = 0x0ff51deU;
 	cspace->id_mult	     = 1U;
 	cspace->id_inv	     = util_bit(32U) + 1U;
 	err		     = OK;
@@ -135,11 +136,10 @@ cspace_decode_cap_id(const cspace_t *cspace, cap_id_t id)
 	uint64_t	   r = id ^ cspace->id_rand_base;
 	uint64_t	   v = (r * cspace->id_inv) >> 32U;
 
-	if (compiler_expected((r == (uint64_t)(uint32_t)r) &&
-			      (v == (uint64_t)(uint16_t)v))) {
+	if (compiler_expected((r < util_bit(32U)) && (v < util_bit(16U)))) {
 		ret = cap_value_result_ok(cap_value_cast((uint16_t)v));
 	} else {
-		ret = cap_value_result_error(ERROR_ARGUMENT_INVALID);
+		ret = cap_value_result_error(ERROR_CSPACE_CAP_NULL);
 	}
 
 	return ret;
@@ -159,7 +159,7 @@ cspace_cap_id_to_indices(const cspace_t *cspace, cap_id_t cap_id,
 				      (*lower < CAP_TABLE_NUM_CAP_SLOTS))) {
 			err = OK;
 		} else {
-			err = ERROR_ARGUMENT_INVALID;
+			err = ERROR_CSPACE_CAP_NULL;
 		}
 	} else {
 		err = ret.e;
@@ -467,6 +467,8 @@ cspace_lookup_object(cspace_t *cspace, cap_id_t cap_id, object_type_t type,
 		ret = object_ptr_result_error(err);
 		goto lookup_object_error;
 	}
+	assert_safety(cap_data.object.raw != (uintptr_t)NULL);
+
 	if (active_only) {
 		object_state_t obj_state = atomic_load_acquire(
 			&object_get_header(type, cap_data.object)->state);
@@ -815,10 +817,9 @@ cspace_revoke_caps(cspace_t *cspace, cap_id_t master_cap_id)
 	list_t *list = &header->cap_list;
 	assert(list_get_head(list) == &master_cap->cap_list_node);
 
-	// FIXME:
-	cap_t *curr_cap = NULL;
+	// FIXME: QC Gunyah issue #46
 
-	list_foreach_container_maydelete (curr_cap, list, cap, cap_list_node) {
+	LIST_FOREACH_CONTAINER_BEGIN(cap_t, list, cap, cap_list_node, curr_cap)
 		if (curr_cap == master_cap) {
 			continue;
 		}
@@ -846,7 +847,7 @@ cspace_revoke_caps(cspace_t *cspace, cap_id_t master_cap_id)
 		list_insert_at_head(&curr_cspace->revoked_cap_list,
 				    &curr_cap->cap_list_node);
 		spinlock_release_nopreempt(&curr_cspace->revoked_cap_list_lock);
-	}
+	LIST_FOREACH_CONTAINER_END
 
 	spinlock_release(&header->cap_list_lock);
 

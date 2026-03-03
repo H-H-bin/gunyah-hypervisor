@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -24,6 +24,7 @@ define watchdog_manage_op public enumeration(explicit) {
 
 define watchdog_option_flags public bitfield<64> {
 	0	critical_bite	bool = 0;
+	1	fatal_bite	bool = 0;
 	others	unknown = 0;
 };
 

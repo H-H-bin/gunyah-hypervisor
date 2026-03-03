@@ -1,0 +1,29 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define smmu_v3_cd_ips enumeration {
+	phys_32bits		= 0x0;
+	phys_36bits		= 0x1;
+};
+
+// Context Descriptor (CD)
+// Let CD default config force a fail
+define smmu_v3_context_desc_entry bitfield<512> {
+	5:0	T0SZ		uint8;
+	14	EPD0		bool;
+	30	EPD1		bool;
+	31	Valid		bool;
+	34:32	IPS		enumeration smmu_v3_cd_ips; // same as physical machine space?
+	41	AA64		bool;
+	44	Stall		bool;
+	45	Record		bool;
+	46	Abort		bool;
+	47	ASET		bool;
+	63:48	ASID		uint16;
+	65	HAD0		bool;
+	115:68	TTB0		uint64;
+	129	HAD1		bool;
+	179:132	TTB1		uint64;
+	others	unknown=0;
+};

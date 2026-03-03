@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -86,7 +86,7 @@ out:
 error_t
 hypercall_msgqueue_unbind_send_virq(cap_id_t msgqueue_cap)
 {
-	error_t	  err	 = OK;
+	error_t	  err;
 	cspace_t *cspace = cspace_get_self();
 
 	msgqueue_ptr_result_t p = cspace_lookup_msgqueue(
@@ -98,6 +98,7 @@ hypercall_msgqueue_unbind_send_virq(cap_id_t msgqueue_cap)
 	msgqueue_t *msgqueue = p.r;
 
 	msgqueue_unbind_send(msgqueue);
+	err = OK;
 
 	object_put_msgqueue(msgqueue);
 out:
@@ -107,7 +108,7 @@ out:
 error_t
 hypercall_msgqueue_unbind_receive_virq(cap_id_t msgqueue_cap)
 {
-	error_t	  err	 = OK;
+	error_t	  err;
 	cspace_t *cspace = cspace_get_self();
 
 	msgqueue_ptr_result_t p = cspace_lookup_msgqueue(
@@ -119,6 +120,7 @@ hypercall_msgqueue_unbind_receive_virq(cap_id_t msgqueue_cap)
 	msgqueue_t *msgqueue = p.r;
 
 	msgqueue_unbind_receive(msgqueue);
+	err = OK;
 
 	object_put_msgqueue(msgqueue);
 out:

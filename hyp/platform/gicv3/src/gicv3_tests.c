@@ -1,4 +1,4 @@
-// © 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -58,7 +58,7 @@ gicv3_handle_tests_start(void)
 }
 
 bool
-gicv3_handle_irq_received_ext_spi_test_action(hwirq_t *hwirq)
+gicv3_handle_irq_received_ext_spi_test_action(const hwirq_t *hwirq)
 {
 	// Extended SPI Test Handler
 	LOG(DEBUG, INFO, "Extended SPI test handler for received irq {:d}\n",

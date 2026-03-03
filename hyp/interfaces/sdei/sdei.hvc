@@ -1,0 +1,10 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define sdei_get_error_flags hypercall {
+	call_num	0x80;
+	res0		input uregister;
+	error		output enumeration error;
+	result		output bitfield sdei_error_flags;
+};

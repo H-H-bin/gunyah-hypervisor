@@ -1,4 +1,4 @@
-// © 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -67,6 +67,11 @@ selector_event virtio_device_config_write
 // Read from the device specific configuration registers.
 //
 // A handler for this event is allowed to block until the read is complete.
+//
+// There is no fallback behaviour for this event if no handler is registered;
+// all trapped reads will fault in that case. If the backend wants to use the
+// configuration cache to complete reads, virtio_device_config_read_cached()
+// should be registered as the handler or called by a module-specific handler.
 selector_event virtio_device_config_read
 	selector backend: virtio_backend_type_t
 	param virtio: virtio_t *
@@ -99,6 +104,8 @@ selector_event virtio_shutdown
 
 // Inform the frontend that a synchronised features_ok is complete. This is
 // only triggered if the device was configured with the feature sync flag set.
+// It is called with the status lock held, but before the status field is
+// updated.
 selector_event virtio_ack_features_ok
 	selector transport: virtio_transport_type_t
 	param virtio: virtio_t *
@@ -129,8 +136,19 @@ selector_event virtio_queue_ready
 
 // Inform the frontend that a requested reset is complete. This is called
 // after the reset completes, so it cannot fail. It is called with the
-// status lock held.
+// status lock held, but before the status register is updated.
 selector_event virtio_reset_complete
 	selector transport: virtio_transport_type_t
 	param virtio: virtio_t *
+	return: void
+
+// Inform the frontend that the status has changed. It is called with the
+// status lock held, after the status field of the virtio structure has been
+// updated. If the status change was a synchronous event completion triggered
+// by the backend, it is called after the more specific event handlers,
+// virtio_reset_complete and virtio_ack_features_ok.
+selector_event virtio_status_updated
+	selector transport: virtio_transport_type_t
+	param virtio: virtio_t *
+	param new_status: virtio_status_t
 	return: void

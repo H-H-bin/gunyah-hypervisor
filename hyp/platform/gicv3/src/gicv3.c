@@ -1,5 +1,4 @@
-// © 2019 Qualcomm Innovation Center, Inc. All rights reserved.
-// All Rights Reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -25,6 +24,7 @@
 #include <platform_ipi.h>
 #include <platform_irq.h>
 #include <preempt.h>
+#include <qcbor.h>
 #include <scheduler.h>
 #include <spinlock.h>
 #include <thread.h>
@@ -55,15 +55,15 @@ static_assert(!GICV3_HAS_ITS || GICV3_HAS_LPI,
 static_assert(!GICV3_ENABLE_VPE || GICV3_HAS_VLPI,
 	      "VPE support cannot be enabled unless VLPIs are implemented");
 #endif
-static_assert(!GICV3_HAS_VLPI || GICV3_HAS_ITS,
+#if defined(GICV3_USE_VLPI)
+static_assert(!GICV3_USE_VLPI || GICV3_HAS_ITS,
 	      "VLPIs (GICv4) cannot be implemented without an ITS");
+#endif
 static_assert(!GICV3_HAS_VLPI_V4_1 || GICV3_HAS_VLPI,
 	      "VPEs (GICv4.1) cannot be implemented without VLPIs (GICv4.0)");
-static_assert(!GICV3_HAS_LPI || !GICV3_HAS_ITS || GICV3_HAS_VLPI_V4_1,
-	      "LPIs only supported if ITS is absent or GICv4.1 is implemented");
 
 #define GICD_ENABLE_GET_N(x) ((x) >> 5)
-#define GIC_ENABLE_BIT(x)    (uint32_t)(util_bit((x)&31UL))
+#define GIC_ENABLE_BIT(x)    (uint32_t)(util_bit((x) & 31UL))
 
 static gicd_t *gicd;
 static gicr_t *mapped_gicrs[PLATFORM_GICR_COUNT];
@@ -92,20 +92,12 @@ static spinlock_t bitmap_update_lock;
 static spinlock_t spi_route_lock;
 
 #if GICV3_HAS_LPI
-#if GICV3_HAS_VLPI_V4_1
-// Currently we only need one LPI per VCPU with a VGIC attachment, to be used
-// as a GICv4.1 default scheduling doorbell. We therefore allocate the minimum
-// nonzero number of LPIs.
-#define GIC_LPI_NUM 8192U
-#else
-#error define GIC_LPI_NUM
-#endif
-static_assert(util_is_p2(GIC_LPI_BASE + GIC_LPI_NUM) && (GIC_LPI_NUM > 0),
+static_assert(util_is_p2(GIC_LPI_BASE + GIC_LPI_NUM) && (GIC_LPI_NUM > 0U),
 	      "Hard-coded max LPI count must be 8192 less than a power of two");
 
 #define GIC_LPI_PROP_ALIGNMENT ((size_t)util_bit(GICR_PROPBASER_PA_SHIFT))
-static gic_lpi_prop_t alignas(GIC_LPI_PROP_ALIGNMENT)
-	gic_lpi_prop_table[GIC_LPI_NUM];
+static gic_lpi_prop_t
+	alignas(GIC_LPI_PROP_ALIGNMENT) gic_lpi_prop_table[GIC_LPI_NUM];
 
 static GICR_PROPBASER_t gic_lpi_propbase;
 #endif // GICV3_HAS_LPI
@@ -118,7 +110,15 @@ gicd_needs_enable_lock(void);
 static bool
 gicd_needs_enable_lock(void)
 {
+#if defined(GICD_600_ERRATUM_1494863) && GICD_600_ERRATUM_1494863
+	return true;
+#elif defined(CPU_ERRATUM_1297) && CPU_ERRATUM_1297
+	const global_options_t *global_options = globals_get_options();
+	return compiler_unexpected(
+		global_options_get_cpu_erratum_1297(global_options));
+#else
 	return false;
+#endif
 }
 
 // We must disable IRQs before route updates to guarantee there is no race with
@@ -163,7 +163,9 @@ gicr_wait_for_write(gicr_t *gicr)
 	atomic_device_fence(memory_order_acquire);
 }
 
-#if GICV3_HAS_LPI && (!GICV3_HAS_ITS || GICV3_HAS_VLPI_V4_1)
+#if GICV3_HAS_LPI &&                                                           \
+	(!GICV3_HAS_ITS ||                                                     \
+	 (GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI))
 static void
 gicr_wait_for_sync(gicr_t *gicr)
 {
@@ -378,6 +380,7 @@ is_irq_reserved(irq_t irq)
 	// Assume that all CPUs have the same set of reserved SGIs / PPIs,
 	// so it doesn't matter which GICR we check.
 	assert(irq <= gicv3_irq_max());
+
 	cpu_index_t cpu	 = cpulocal_check_index(cpulocal_get_index_unsafe());
 	gicr_t	   *gicr = CPULOCAL_BY_INDEX(gicr_cpu, cpu).gicr;
 
@@ -386,9 +389,20 @@ is_irq_reserved(irq_t irq)
 	case GICV3_IRQ_TYPE_PPI:
 		ipriority = atomic_load_relaxed(&gicr->sgi.ipriorityr[irq]);
 		break;
-	case GICV3_IRQ_TYPE_SPI:
-		ipriority = atomic_load_relaxed(&gicd->ipriorityr[irq]);
+	case GICV3_IRQ_TYPE_SPI: {
+#if defined(PLATFORM_GICV3_LAST_FORWARDED_SPI) &&                              \
+	PLATFORM_GICV3_LAST_FORWARDED_SPI
+		if (irq > PLATFORM_GICV3_LAST_FORWARDED_SPI) {
+			ipriority = 0U;
+		} else {
+#endif
+			ipriority = atomic_load_relaxed(&gicd->ipriorityr[irq]);
+#if defined(PLATFORM_GICV3_LAST_FORWARDED_SPI) &&                              \
+	PLATFORM_GICV3_LAST_FORWARDED_SPI
+		}
+#endif
 		break;
+	}
 #if GICV3_HAS_LPI
 	case GICV3_IRQ_TYPE_LPI:
 		// All LPIs are in group 1 and are not reserved.
@@ -400,10 +414,21 @@ is_irq_reserved(irq_t irq)
 		ipriority = atomic_load_relaxed(
 			&gicr->sgi.ipriorityr_e[irq - GIC_PPI_EXT_BASE]);
 		break;
-	case GICV3_IRQ_TYPE_SPI_EXT:
-		ipriority = atomic_load_relaxed(
-			&gicd->ipriorityr_e[irq - GIC_SPI_EXT_BASE]);
+	case GICV3_IRQ_TYPE_SPI_EXT: {
+#if defined(PLATFORM_GICV3_LAST_FORWARDED_SPI) &&                              \
+	PLATFORM_GICV3_LAST_FORWARDED_SPI
+		if (irq > PLATFORM_GICV3_LAST_FORWARDED_SPI) {
+			ipriority = 0U;
+		} else {
+#endif
+			ipriority = atomic_load_relaxed(
+				&gicd->ipriorityr_e[irq - GIC_SPI_EXT_BASE]);
+#if defined(PLATFORM_GICV3_LAST_FORWARDED_SPI) &&                              \
+	PLATFORM_GICV3_LAST_FORWARDED_SPI
+		}
+#endif
 		break;
+	}
 #endif
 	case GICV3_IRQ_TYPE_SPECIAL:
 	case GICV3_IRQ_TYPE_RESERVED:
@@ -420,7 +445,7 @@ is_irq_reserved(irq_t irq)
 error_t
 gicv3_irq_check(irq_t irq)
 {
-	error_t ret = OK;
+	error_t ret;
 
 	if (irq > gicv3_irq_max()) {
 		ret = ERROR_ARGUMENT_INVALID;
@@ -572,7 +597,8 @@ gicv3_boot_cold_init_lpis(GICD_TYPER_t typer, partition_t *hyp_partition,
 			// zero-initialised. We allocate these from the heap
 			// rather than BSS in the hope of not wasting the space
 			// between them (~0.5MiB total)
-			size_t lpi_bitmap_sz = (size_t)gicv3_lpi_max_cache / 8U;
+			size_t lpi_bitmap_sz = (size_t)gicv3_lpi_max_cache /
+					       util_width(uint8_t);
 			void_ptr_result_t alloc_r = partition_alloc(
 				hyp_partition, lpi_bitmap_sz,
 				(size_t)util_bit(GICR_PENDBASER_PA_SHIFT));
@@ -621,7 +647,7 @@ gicv3_boot_cold_init_lpis(GICD_TYPER_t typer, partition_t *hyp_partition,
 					     &gicr_typer));
 #endif // GICV3_HAS_ITS
 
-#if GICV3_HAS_VLPI_V4_1
+#if defined(GICV3_USE_VLPI) && GICV3_USE_VLPI && GICV3_HAS_VLPI_V4_1
 	// Check the supported vPE range
 	GICD_TYPER2_t typer2   = atomic_load_relaxed(&gicd->typer2);
 	count_t	      vpe_bits = (GICD_TYPER2_get_VIL(&typer2) == 0U)
@@ -724,7 +750,7 @@ gicv3_map_gicd_and_gicrs(size_t gicr_size, partition_t *hyp_partition,
 // their base addresses and sizes read from the device tree. We then initialize
 // the distributor.
 void
-gicv3_handle_boot_cold_init(cpu_index_t boot_cpu_index)
+gicv3_handle_irq_init(cpu_index_t boot_cpu_index)
 {
 	partition_t *hyp_partition = partition_get_private();
 
@@ -736,8 +762,9 @@ gicv3_handle_boot_cold_init(cpu_index_t boot_cpu_index)
 	size_t gicr_size = PLATFORM_GICR_COUNT * util_bit(GICR_STRIDE_SHIFT);
 	size_t gicd_size = 0x10000U; // GICD is always 64K
 
-	static_assert(PLATFORM_GICR_SIZE ==
-			      (PLATFORM_GICR_COUNT << GICR_STRIDE_SHIFT),
+	static_assert((uintmax_t)PLATFORM_GICR_SIZE ==
+			      ((uintmax_t)PLATFORM_GICR_COUNT
+			       << GICR_STRIDE_SHIFT),
 		      "bad PLATFORM_GICR_SIZE");
 
 	if (gicd_needs_enable_lock()) {
@@ -944,7 +971,8 @@ gicv3_handle_boot_cold_init(cpu_index_t boot_cpu_index)
 	// register of its own (GICD_SETCLASSR).
 	GICD_IIDR_t iidr = atomic_load_relaxed(&gicd->iidr);
 	// Implementer must be ARM (JEP106 code: [0x4] 0x3b)
-	assert(GICD_IIDR_get_Implementer(&iidr) == 0x43bU);
+	assert(GICD_IIDR_get_Implementer_Identity(&iidr) == 0x3bU);
+	assert(GICD_IIDR_get_Implementer_ContCode(&iidr) == 0x4U);
 	// Product ID must be 2 (GIC-600) or 4 (GIC-700)
 	assert((GICD_IIDR_get_ProductID(&iidr) == 2U) ||
 	       (GICD_IIDR_get_ProductID(&iidr) == 4U));
@@ -1051,7 +1079,7 @@ gicv3_handle_boot_cpu_cold_init(cpu_index_t cpu)
 	// delivery, and polling for completion of vPE scheduling.
 	assert(GICR_TYPER_get_RVPEID(&typer) && GICR_TYPER_get_VSGI(&typer) &&
 	       GICR_TYPER_get_Dirty(&typer));
-#elif GICV3_HAS_VLPI
+#elif defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 	// GICv4.0 requires the GICR not to use the vPE-format VPENDBASER.
 	assert(!GICR_TYPER_get_RVPEID(&typer));
 #endif
@@ -1072,18 +1100,24 @@ gicv3_handle_boot_cpu_cold_init(cpu_index_t cpu)
 		// Enable LPIs (note: this may be permanent until reset)
 		GICR_CTLR_set_Enable_LPIs(&ctlr, true);
 		atomic_store_release(&gicr->rd.ctlr, ctlr);
+
+#if defined(GICV3_RETRY_ENABLE_LPIS) && GICV3_RETRY_ENABLE_LPIS
+		ctlr = atomic_load_relaxed(&gicr->rd.ctlr);
+		if (!GICR_CTLR_get_Enable_LPIs(&ctlr)) {
+			LOG(ERROR, WARN, "Retrying LPI enable for CPU {:d}\n",
+			    cpu);
+			GICR_CTLR_set_Enable_LPIs(&ctlr, true);
+			atomic_store_release(&gicr->rd.ctlr, ctlr);
+
+			ctlr = atomic_load_relaxed(&gicr->rd.ctlr);
+			if (!GICR_CTLR_get_Enable_LPIs(&ctlr)) {
+				panic("LPI enable failed");
+			}
+		}
+#endif
 	}
 
 #endif // GICV3_HAS_LPI
-
-#if PLATFORM_IPI_LINES > ENUM_IPI_REASON_MAX_VALUE
-	// Enable the SGIs used by IPIs
-	atomic_store_release(&gicr->sgi.isenabler0,
-			     util_mask(ENUM_IPI_REASON_MAX_VALUE + 1U));
-#else
-	// Enable the shared SGI for all IPIs
-	atomic_store_release(&gicr->sgi.isenabler0, 0x1);
-#endif
 }
 
 // Redistributor control register initialization
@@ -1128,8 +1162,17 @@ gicv3_handle_boot_cpu_warm_init(void)
 	register_ICC_IGRPEN1_EL1_write_ordered(icc_grpen1, &gic_init_order);
 	asm_context_sync_ordered(&gic_init_order);
 
-#if GICV3_DEBUG
 	gicr_t *gicr = CPULOCAL(gicr_cpu).gicr;
+#if PLATFORM_IPI_LINES > ENUM_IPI_REASON_MAX_VALUE
+	// Enable the SGIs used by IPIs
+	atomic_store_release(&gicr->sgi.isenabler0,
+			     util_mask(ENUM_IPI_REASON_MAX_VALUE + 1U));
+#else
+	// Enable the shared SGI for all IPIs
+	atomic_store_release(&gicr->sgi.isenabler0, 0x1);
+#endif
+
+#if GICV3_DEBUG
 	TRACE_LOCAL(
 		DEBUG, INFO,
 		"gicv3 cpu warm init, en {:#x} act {:#x} grp {:#x} hpp {:#x}",
@@ -1327,31 +1370,65 @@ gicv3_irq_enable_percpu(irq_t irq, cpu_index_t cpu)
 
 	gicr_t		*gicr	  = CPULOCAL_BY_INDEX(gicr_cpu, cpu).gicr;
 	gicv3_irq_type_t irq_type = gicv3_get_irq_type(irq);
+#if defined(CPU_ERRATUM_1297) && CPU_ERRATUM_1297
+	const global_options_t *global_options = globals_get_options();
+#endif
 
 	switch (irq_type) {
 	case GICV3_IRQ_TYPE_SGI:
 	case GICV3_IRQ_TYPE_PPI: {
+#if defined(CPU_ERRATUM_1297) && CPU_ERRATUM_1297
+		if (compiler_unexpected(global_options_get_cpu_erratum_1297(
+			    global_options))) {
+			spinlock_acquire(&enable_update_lock);
+
 			atomic_store_release(&gicr->sgi.isenabler0,
 					     GIC_ENABLE_BIT(irq));
+
+			spinlock_release(&enable_update_lock);
+		} else
+#endif // CPU_ERRATUM_1297
+		{
+			atomic_store_release(&gicr->sgi.isenabler0,
+					     GIC_ENABLE_BIT(irq));
+		}
 		break;
 	}
 
 #if GICV3_EXT_IRQS
 	case GICV3_IRQ_TYPE_PPI_EXT: {
 		// Extended PPI
+#if defined(CPU_ERRATUM_1297) && CPU_ERRATUM_1297
+		if (compiler_unexpected(global_options_get_cpu_erratum_1297(
+			    global_options))) {
+			spinlock_acquire(&enable_update_lock);
 			atomic_store_release(
 				&gicr->sgi.isenabler_e[GICD_ENABLE_GET_N(
 					irq - GIC_PPI_EXT_BASE)],
 				GIC_ENABLE_BIT(irq - GIC_PPI_EXT_BASE));
+			spinlock_release(&enable_update_lock);
+		} else
+#endif // CPU_ERRATUM_1297
+		{
+			atomic_store_release(
+				&gicr->sgi.isenabler_e[GICD_ENABLE_GET_N(
+					irq - GIC_PPI_EXT_BASE)],
+				GIC_ENABLE_BIT(irq - GIC_PPI_EXT_BASE));
+		}
 		break;
 	}
 #endif
 #if GICV3_HAS_LPI
 	case GICV3_IRQ_TYPE_LPI:
-		gic_lpi_prop_set_enable(&gic_lpi_prop_table[irq - GIC_LPI_BASE],
-					true);
+		gicv3_lpi_enable(irq);
+#if !GICV3_HAS_ITS ||                                                          \
+	(GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI)
 		gicv3_lpi_inv_by_id(cpu, irq);
 		break;
+#else
+		panic("Cannot invalidate by ID on GICv3 with ITS.");
+#endif // !GICV3_HAS_ITS || (GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) &&
+       // GICV3_USE_VLPI)
 #endif
 	case GICV3_IRQ_TYPE_SPI:
 #if GICV3_EXT_IRQS
@@ -1477,17 +1554,43 @@ gicv3_irq_disable_percpu_nowait(irq_t irq, cpu_index_t cpu)
 
 	gicr_t		*gicr	  = CPULOCAL_BY_INDEX(gicr_cpu, cpu).gicr;
 	gicv3_irq_type_t irq_type = gicv3_get_irq_type(irq);
+#if defined(CPU_ERRATUM_1297) && CPU_ERRATUM_1297
+	const global_options_t *global_options = globals_get_options();
+#endif
 
 	switch (irq_type) {
 	case GICV3_IRQ_TYPE_SGI:
 	case GICV3_IRQ_TYPE_PPI: {
+#if defined(CPU_ERRATUM_1297) && CPU_ERRATUM_1297
+		if (compiler_unexpected(global_options_get_cpu_erratum_1297(
+			    global_options))) {
+			spinlock_acquire(&enable_update_lock);
 			atomic_store_relaxed(&gicr->sgi.icenabler0,
 					     GIC_ENABLE_BIT(irq));
+			spinlock_release(&enable_update_lock);
+		} else
+#endif // CPU_ERRATUM_1297
+		{
+			atomic_store_relaxed(&gicr->sgi.icenabler0,
+					     GIC_ENABLE_BIT(irq));
+		}
 		break;
 	}
 #if GICV3_EXT_IRQS
 	case GICV3_IRQ_TYPE_PPI_EXT: {
 		// Extended PPI
+#if defined(CPU_ERRATUM_1297) && CPU_ERRATUM_1297
+		if (compiler_unexpected(global_options_get_cpu_erratum_1297(
+			    global_options))) {
+			spinlock_acquire(&enable_update_lock);
+			atomic_store_relaxed(
+				&gicr->sgi.icenabler_e[GICD_ENABLE_GET_N(
+					irq - GIC_PPI_EXT_BASE)],
+				GIC_ENABLE_BIT(irq - GIC_PPI_EXT_BASE));
+			spinlock_release(&enable_update_lock);
+		} else
+#endif // CPU_ERRATUM_1297
+		{
 			atomic_store_relaxed(
 				&gicr->sgi.icenabler_e[GICD_ENABLE_GET_N(
 					irq - GIC_PPI_EXT_BASE)],
@@ -1498,10 +1601,15 @@ gicv3_irq_disable_percpu_nowait(irq_t irq, cpu_index_t cpu)
 #endif
 #if GICV3_HAS_LPI
 	case GICV3_IRQ_TYPE_LPI:
-		gic_lpi_prop_set_enable(&gic_lpi_prop_table[irq - GIC_LPI_BASE],
-					false);
+		gicv3_lpi_disable(irq);
+#if !GICV3_HAS_ITS ||                                                          \
+	(GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI)
 		gicv3_lpi_inv_by_id(cpu, irq);
 		break;
+#else
+		panic("Cannot invalidate by ID on GICv3 with ITS.");
+#endif // !GICV3_HAS_ITS || (GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) &&
+       // GICV3_USE_VLPI)
 #endif
 	case GICV3_IRQ_TYPE_SPI:
 #if GICV3_EXT_IRQS
@@ -1520,7 +1628,10 @@ gicv3_irq_disable_percpu(irq_t irq, cpu_index_t cpu)
 	gicv3_irq_disable_percpu_nowait(irq, cpu);
 #if GICV3_HAS_LPI
 	if (gicv3_get_irq_type(irq) == GICV3_IRQ_TYPE_LPI) {
+#if !GICV3_HAS_ITS ||                                                          \
+	(GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI)
 		gicr_wait_for_sync(CPULOCAL_BY_INDEX(gicr_cpu, cpu).gicr);
+#endif
 	} else {
 		gicr_wait_for_write(CPULOCAL_BY_INDEX(gicr_cpu, cpu).gicr);
 	}
@@ -1999,10 +2110,89 @@ gicv3_irq_acknowledge(void)
 {
 	irq_result_t ret = { 0 };
 
+#if defined(CPU_ERRATUM_1297) && CPU_ERRATUM_1297
+	uint32_t       ap1r_pre = 0x0;
+	uint32_t       isactive_pre[util_array_size(gicd->isactiver)];
+	gicr_t	      *gicr	     = CPULOCAL(gicr_cpu).gicr;
+	count_t	       spi_ranges    = (gicv3_spi_max_cache / 32U) + 1U;
+	GICD_IROUTER_t local_irouter = GICD_IROUTER_default();
+
+	const global_options_t *global_options = globals_get_options();
+	if (compiler_unexpected(
+		    global_options_get_cpu_erratum_1297(global_options))) {
+		MPIDR_EL1_t mpidr = register_MPIDR_EL1_read();
+		GICD_IROUTER_set_IRM(&local_irouter, false);
+		GICD_IROUTER_set_Aff0(&local_irouter,
+				      MPIDR_EL1_get_Aff0(&mpidr));
+		GICD_IROUTER_set_Aff1(&local_irouter,
+				      MPIDR_EL1_get_Aff1(&mpidr));
+		GICD_IROUTER_set_Aff2(&local_irouter,
+				      MPIDR_EL1_get_Aff2(&mpidr));
+		GICD_IROUTER_set_Aff3(&local_irouter,
+				      MPIDR_EL1_get_Aff3(&mpidr));
+
+		isactive_pre[0] = atomic_load_relaxed(&gicr->sgi.isactiver0);
+		for (index_t i = 1U; i < spi_ranges; i++) {
+			isactive_pre[i] =
+				atomic_load_relaxed(&gicd->isactiver[i]);
+		}
+
+		ap1r_pre = register_ICC_AP1R0_EL1_read_ordered(&asm_ordering);
+
+		// Ensure the above reads complete before the new activation
+		__asm__ volatile("dsb sy; isb" : "+m"(asm_ordering));
+	}
+#endif // CPU_ERRATUM_1297
+
 	ICC_IAR_EL1_t iar =
 		register_ICC_IAR1_EL1_read_volatile_ordered(&asm_ordering);
 
 	uint32_t intid = ICC_IAR_EL1_get_INTID(&iar);
+
+#if defined(CPU_ERRATUM_1297) && CPU_ERRATUM_1297
+	if (compiler_unexpected(
+		    global_options_get_cpu_erratum_1297(global_options))) {
+		// We can't trust the IAR result to indicate whether an IRQ was
+		// activated, so check AP1R0 to see if it has changed.
+		asm_context_sync_ordered(&asm_ordering);
+		if (register_ICC_AP1R0_EL1_read_ordered(&asm_ordering) ==
+		    ap1r_pre) {
+			ret.e = ERROR_IDLE;
+			goto error;
+		}
+
+		if (intid == 1023U) {
+			// An IRQ was activated, but not returned by IAR. We
+			// must search to determine which IRQ it was. First,
+			// ensure the distributor has updated its active IRQ
+			// bitmaps.
+			__asm__ volatile("dsb sy" : "+m"(asm_ordering));
+			for (index_t i = 0U; i < spi_ranges; i++) {
+				uint32_t isactive_post = atomic_load_relaxed(
+					(i == 0U) ? &gicr->sgi.isactiver0
+						  : &gicd->isactiver[i]);
+				register_t isactive_new =
+					(register_t)(isactive_post &
+						     ~isactive_pre[i]);
+
+				BITMAP_FOREACH_SET_BEGIN(j, &isactive_new, 32U)
+					irq_t irq = (i * 32U) + j;
+					if ((i == 0U) ||
+					    (GICD_IROUTER_is_equal(
+						    atomic_load_relaxed(
+							    &gicd->irouter
+								     [irq -
+								      GIC_SPI_BASE]),
+						    local_irouter))) {
+						intid = irq;
+						goto handle_irq;
+					}
+				BITMAP_FOREACH_SET_END
+			}
+			panic("Unable to identify the activated IRQ");
+		}
+	}
+#endif // CPU_ERRATUM_1297
 
 	// 1023 is returned if there is no pending interrupt with sufficient
 	// priority for it to be signaled to the PE, or if the highest priority
@@ -2016,6 +2206,9 @@ gicv3_irq_acknowledge(void)
 	// Ensure distributor has activated the interrupt before prio drop
 	__asm__ volatile("isb; dsb sy" : "+m"(asm_ordering));
 
+#if defined(CPU_ERRATUM_1297) && CPU_ERRATUM_1297
+handle_irq:
+#endif
 	if (gicv3_get_irq_type(intid) == GICV3_IRQ_TYPE_SGI) {
 		gicv3_irq_priority_drop(intid);
 #if PLATFORM_IPI_LINES > ENUM_IPI_REASON_MAX_VALUE
@@ -2249,6 +2442,12 @@ gicv3_handle_vcpu_poweron(thread_t *vcpu)
 	return OK;
 }
 
+void
+gicv3_unwind_vcpu_poweron(thread_t *vcpu)
+{
+	(void)gicv3_handle_vcpu_poweroff(vcpu);
+}
+
 error_t
 gicv3_handle_vcpu_poweroff(thread_t *current)
 {
@@ -2280,7 +2479,8 @@ platform_irq_msi_max(void)
 	return gicv3_lpi_max_cache;
 }
 
-#if !GICV3_HAS_ITS || GICV3_HAS_VLPI_V4_1
+#if !GICV3_HAS_ITS ||                                                          \
+	(GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI)
 void
 gicv3_lpi_inv_by_id(cpu_index_t cpu, irq_t lpi)
 {
@@ -2311,11 +2511,10 @@ gicv3_lpi_inv_pending(cpu_index_t cpu)
 	GICR_SYNCR_t syncr = atomic_load_acquire(&gicr->rd.syncr);
 	return GICR_SYNCR_get_Busy(&syncr);
 }
-#endif // !GICV3_HAS_ITS || GICV3_HAS_VLPI_V4_1
+#endif // !GICV3_HAS_ITS || (GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) &&
+       // GICV3_USE_VLPI)
 
-#if defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE
-
-#if GICV3_HAS_VLPI_V4_1
+#if GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 void
 gicv3_vlpi_inv_by_id(thread_t *vcpu, virq_t vlpi)
 {
@@ -2371,7 +2570,11 @@ gicv3_vlpi_inv_pending(thread_t *vcpu)
 
 	return busy;
 }
+#endif // GICV3_HAS_VLPI_V4_1 && defined(GICV3_USE_VLPI) && GICV3_USE_VLPI
 
+#if defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE
+
+#if GICV3_HAS_VLPI_V4_1
 void
 gicv3_vpe_schedule(bool enable_group0, bool enable_group1)
 {
@@ -2477,7 +2680,7 @@ gicv3_vpe_check_wakeup(bool retry_trap)
 {
 	thread_t *current    = thread_get_self();
 	bool	  might_wake = false;
-	assert(current->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(current));
 
 	cpulocal_begin();
 
@@ -2563,9 +2766,9 @@ gicv3_vpe_vsgi_query(thread_t *vcpu)
 	return ret;
 }
 
-#elif GICV3_HAS_VLPI // && !GICV3_HAS_VLPI_V4_1
+#elif defined(GICV3_USE_VLPI) && GICV3_USE_VLPI // && !GICV3_HAS_VLPI_V4_1
 #error VPE scheduling is not implemented for GICv4.0
-#endif // GICV3_HAS_VLPI && !GICV3_HAS_VLPI_V4_1
+#endif // defined(GICV3_USE_VLPI) && GICV3_USE_VLPI && !GICV3_HAS_VLPI_V4_1
 
 #endif // defined(GICV3_ENABLE_VPE) && GICV3_ENABLE_VPE
 
@@ -2611,6 +2814,25 @@ gicv3_lpi_disable_all(void) REQUIRE_PREEMPT_DISABLED
 				     GICR_PENDBASER_default());
 	}
 }
+
+void
+gicv3_lpi_disable(irq_t lpi)
+{
+	gic_lpi_prop_set_enable(&gic_lpi_prop_table[lpi - GIC_LPI_BASE], false);
+}
+
+void
+gicv3_lpi_enable(irq_t lpi)
+{
+	gic_lpi_prop_set_enable(&gic_lpi_prop_table[lpi - GIC_LPI_BASE], true);
+}
+
+bool
+gicv3_lpi_is_enabled(irq_t lpi)
+{
+	return gic_lpi_prop_get_enable(&gic_lpi_prop_table[lpi - GIC_LPI_BASE]);
+}
+
 #endif // GICV3_HAS_LPI
 
 void
@@ -2695,7 +2917,7 @@ gicv3_handle_boot_hypervisor_handover(void)
 #endif
 
 #if GICV3_HAS_ITS
-	gicv3_its_disable_all(&mapped_gitss);
+	gicv3_its_disable_all();
 #endif
 }
 
@@ -2849,5 +3071,28 @@ gicd_t *
 gicv3_get_gicd_pointer(void)
 {
 	return gicd;
+}
+#endif
+
+#if defined(PLATFORM_ENABLE_SYSTEM_SUSPEND) && PLATFORM_ENABLE_SYSTEM_SUSPEND
+error_t
+gicv3_handle_power_system_suspend(void)
+{
+#if GICV3_HAS_ITS
+	// Suspend the ITSs by making sure all the outstanding commands are
+	// completed and then disabling them.
+	gicv3_its_system_suspend();
+#endif
+
+	return OK;
+}
+
+void
+gicv3_handle_power_system_resume(void)
+{
+#if GICV3_HAS_ITS
+	// Re-enable the ITSs.
+	gicv3_its_system_resume();
+#endif
 }
 #endif

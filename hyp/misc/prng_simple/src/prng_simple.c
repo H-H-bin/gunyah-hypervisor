@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -75,8 +75,8 @@ typedef struct {
 
 	uint32_t nonce[3];
 
-	uint32_t alignas(CACHE_LINE_SIZE)
-		entropy_pool[BUFFER_BLOCKS][BLOCK_WORDS];
+	uint32_t alignas(CACHE_LINE_SIZE) entropy_pool[BUFFER_BLOCKS]
+						      [BLOCK_WORDS];
 } prng_data_t;
 
 static bool prng_initialized = false;
@@ -148,7 +148,7 @@ prng_simple_handle_boot_runtime_first_init(void)
 void
 prng_simple_handle_boot_hypervisor_start(void)
 {
-	// FIXME:
+	// FIXME: QC Gunyah issue #59
 	// Post boot prng_data protection
 	//  * allocate an unmapped 4K page for the prng_data
 	//  * Aarch64 PAN implementation:
@@ -204,7 +204,9 @@ prng_update_timer(ticks_t now, bool need_update) REQUIRE_SPINLOCK(prng_lock)
 	}
 
 	if (need_update && !queued) {
-		timer_enqueue(&prng_timer, now + REKEY_RETRY_NS);
+		ticks_t rekey_retry_ticks =
+			platform_timer_convert_ns_to_ticks(REKEY_RETRY_NS);
+		timer_enqueue(&prng_timer, now + rekey_retry_ticks);
 	} else if (!need_update && queued) {
 		timer_dequeue(&prng_timer);
 	} else {

@@ -1,4 +1,4 @@
-// © 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -28,6 +28,24 @@ static spinlock_t memdb_lock;
 static_assert((uint64_t)MEMDB_TYPE_NOTYPE == 0U,
 	      "Zero-initialised memdb entries must be empty");
 static memdb_level_table_t memdb_root;
+
+#ifdef HYP_STANDALONE_TEST
+// Host test initialization function to reset memdb state between tests
+error_t
+memdb_init(void)
+{
+	// Reset the global memdb_root to clean state for host testing
+	// This prevents address conflicts between test runs
+	memset(&memdb_root, 0, sizeof(memdb_root));
+
+	// Initialize all entries to MEMDB_TYPE_NOTYPE (which is 0)
+	for (index_t i = 0U; i < util_array_size(memdb_root.entries); i++) {
+		atomic_init(&memdb_root.entries[i], memdb_entry_default());
+	}
+
+	return OK;
+}
+#endif
 
 extern const char image_phys_start;
 extern const char image_phys_last;
@@ -67,8 +85,8 @@ memdb_bitmap_handle_boot_cold_init(void)
 	size_t bootmem_size	 = 0U;
 	void  *bootmem_virt_base = bootmem_get_region(&bootmem_size);
 	assert((bootmem_size != 0U) && (bootmem_virt_base != NULL));
-	paddr_t bootmem_phys_base = partition_virt_to_phys(
-		hyp_partition, (uintptr_t)bootmem_virt_base);
+	paddr_t bootmem_phys_base =
+		partition_image_virt_to_phys((uintptr_t)bootmem_virt_base);
 	assert(!util_add_overflows(bootmem_phys_base, bootmem_size - 1U));
 
 	// Update ownership of the hypervisor partition's allocator memory
@@ -146,6 +164,9 @@ memdb_bitmap_free_level_bitmap(rcu_entry_t *entry)
 static memdb_entry_t
 memdb_entry_for_object(uintptr_t object, memdb_type_t obj_type)
 {
+	// Assert object alignment requirements
+	assert_debug(util_is_p2aligned(object, MEMDB_OBJECT_ALIGN_P2));
+
 	memdb_entry_t entry = memdb_entry_default();
 	memdb_entry_set_entry_ptr(&entry, object);
 	memdb_entry_set_entry_type(&entry, obj_type);
@@ -169,7 +190,7 @@ memdb_create_bitmap(memdb_entry_t initial_entry)
 		(memdb_level_bitmap_t *)alloc_ret.r);
 
 	static_assert(MEMDB_NUM_ENTRIES <
-			      util_bit(8U * sizeof(memdb_bitmap_count_t)),
+			      util_bit(util_width(memdb_bitmap_count_t)),
 		      "memdb_bitmap_count_t is too small");
 	*ret.r = (memdb_level_bitmap_t){
 		.objects = { [0] = initial_entry, },
@@ -1288,4 +1309,16 @@ memdb_bitmap_handle_partition_remove_ram_range(partition_t *owner,
 	}
 
 	return err;
+}
+
+void
+memdb_bitmap_handle_partition_get_private_heap_requirement(size_t  ddr_size,
+							   size_t *heap_size)
+{
+	// Calculate total private heap requirement based on DDR size using the
+	// partition event handler total_required_private = (ddr_size *
+	// sizeof(memdb_level_bitmap)) / MB
+	const size_t memdb_bitmap_size = sizeof(memdb_level_bitmap_t);
+	*heap_size += (size_t)(ddr_size * memdb_bitmap_size /
+			       (1024ULL * 1024ULL)); // Per MB
 }

@@ -1,25 +1,29 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <assert.h>
 #include <hyptypes.h>
-#include <limits.h>
 
 #include <hypcontainers.h>
 
 #include <atomic.h>
+#include <bitmap.h>
 #include <compiler.h>
 #include <cpulocal.h>
 #include <ipi.h>
+#include <log.h>
 #include <object.h>
 #include <panic.h>
 #include <platform_cpu.h>
 #include <platform_psci.h>
+#include <platform_timer.h>
 #include <preempt.h>
 #include <psci.h>
 #include <rcu.h>
 #include <scheduler.h>
+#include <smccc.h>
+#include <spinlock.h>
 #include <thread.h>
 #include <trace.h>
 #include <trace_helpers.h>
@@ -28,20 +32,21 @@
 #include <vgic.h>
 #include <vic.h>
 #include <virq.h>
-#include <vpm.h>
 
 #include <events/power.h>
 #include <events/psci.h>
+#include <events/vcpu.h>
 
 #include "event_handlers.h"
 #include "psci_arch.h"
 #include "psci_common.h"
+#include "psci_helper.h"
 #include "psci_pm_list.h"
+#include "vpm_base.h"
 
 CPULOCAL_DECLARE_STATIC(_Atomic count_t, vpm_active_vcpus);
 
-// vpm_active_pcpus_bitmap could be made a count to avoid a bitmap.
-#define REGISTER_BITS (sizeof(register_t) * (size_t)CHAR_BIT)
+#define REGISTER_BITS util_width(register_t)
 static_assert(PLATFORM_MAX_CORES <= REGISTER_BITS,
 	      "PLATFORM_MAX_CORES > REGISTER_BITS");
 static _Atomic register_t vpm_active_pcpus_bitmap;
@@ -49,6 +54,13 @@ static _Atomic register_t vpm_active_pcpus_bitmap;
 void
 psci_handle_boot_cold_init(void)
 {
+	if (smccc_get_tz_version() < 0x10001U) {
+		panic("smccc version");
+	}
+	if (psci_smc_psci_version() < PSCI_VERSION) {
+		panic("psci version");
+	}
+
 #if !defined(NDEBUG)
 	register_t flags = 0U;
 	TRACE_SET_CLASS(flags, PSCI);
@@ -71,23 +83,31 @@ psci_set_vpm_active_pcpus_bit(cpu_index_t bit)
 index_t
 psci_clear_vpm_active_pcpus_bit(cpu_index_t bit)
 {
+	index_t result;
+
 	register_t cleared_bit = ~util_bit(bit);
 
 	register_t old = atomic_fetch_and_explicit(
 		&vpm_active_pcpus_bitmap, cleared_bit, memory_order_relaxed);
 
 	register_t running = (old & cleared_bit);
-	index_t	   result;
+
+	cpuid_set_t wakeup_check_mask = platform_get_functional_cpus();
+	wakeup_check_mask.bitmap[0] &= cleared_bit;
+
 #if (PLATFORM_MAX_HIERARCHY == 2)
-	if (running == 0U) {
+	if ((running == 0U) && !ipi_check_suspended_cpus(wakeup_check_mask)) {
 		// Last core at the system level
 		result = 2U;
 		goto out;
 	}
-	// Calculate the running cores in the local cluster
-	running &= platform_cluster_mask(bit);
+
+	// Limit the considered cores to the local cluster
+	const register_t cluster_mask = platform_cluster_mask(bit);
+	running &= cluster_mask;
+	wakeup_check_mask.bitmap[0] &= cluster_mask;
 #endif
-	if (running == 0U) {
+	if ((running == 0U) && !ipi_check_suspended_cpus(wakeup_check_mask)) {
 		// Last core at the cluster level
 		result = 1U;
 		goto out;
@@ -146,10 +166,8 @@ psci_vpm_active_vcpus_is_zero(cpu_index_t cpu)
 bool
 psci_handle_vcpu_activate_thread(thread_t *thread)
 {
-	bool ret = true;
-
 	assert(thread != NULL);
-	assert(thread->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(thread));
 
 	scheduler_lock(thread);
 
@@ -166,7 +184,7 @@ psci_handle_vcpu_activate_thread(thread_t *thread)
 
 	cpu_index_t cpu = scheduler_get_affinity(thread);
 	if (cpulocal_index_valid(cpu)) {
-		if (thread->psci_group != NULL) {
+		if (thread->vpm_group != NULL) {
 			psci_pm_list_insert(cpu, thread);
 		}
 	} else {
@@ -184,7 +202,7 @@ psci_handle_vcpu_activate_thread(thread_t *thread)
 
 	scheduler_unlock(thread);
 
-	return ret;
+	return true;
 }
 
 void
@@ -217,7 +235,7 @@ psci_handle_scheduler_affinity_changed_sync(thread_t   *thread,
 					    cpu_index_t next_cpu)
 {
 	if (thread->psci_migrate) {
-		assert(thread->kind == THREAD_KIND_VCPU);
+		assert(vcpu_is_vcpu(thread));
 		assert(thread->vpm_mode == VPM_MODE_PSCI);
 		assert(cpulocal_index_valid(next_cpu));
 
@@ -252,19 +270,19 @@ psci_mpidr_to_cpu(psci_mpidr_t psci_mpidr)
 static thread_t *
 psci_get_thread_by_mpidr(psci_mpidr_t mpidr)
 {
-	thread_t    *current	= thread_get_self();
-	thread_t    *result	= NULL;
-	vpm_group_t *psci_group = current->psci_group;
+	thread_t    *current   = thread_get_self();
+	thread_t    *result    = NULL;
+	vpm_group_t *vpm_group = current->vpm_group;
 
-	assert(psci_group != NULL);
+	assert(vpm_group != NULL);
 
 	// This function is not performance-critical; it is only called during
 	// PSCI_CPU_ON and PSCI_AFFINITY_INFO. A simple linear search of the VPM
 	// group is good enough.
 	rcu_read_start();
-	for (index_t i = 0U; i < util_array_size(psci_group->psci_cpus); i++) {
+	for (index_t i = 0U; i < util_array_size(vpm_group->psci_cpus); i++) {
 		thread_t *thread =
-			atomic_load_consume(&psci_group->psci_cpus[i]);
+			atomic_load_consume(&vpm_group->psci_cpus[i]);
 		if ((thread != NULL) &&
 		    psci_mpidr_matches_thread(thread->vcpu_regs_mpidr_el1,
 					      mpidr) &&
@@ -284,7 +302,7 @@ psci_version(uint32_t *ret0)
 	bool	  handled;
 	thread_t *current = thread_get_self();
 
-	if (compiler_unexpected(current->psci_group == NULL)) {
+	if (compiler_unexpected(current->vpm_group == NULL)) {
 		handled = false;
 	} else {
 		*ret0	= PSCI_VERSION;
@@ -350,13 +368,13 @@ psci_cpu_suspend(psci_suspend_powerstate_t suspend_state,
 	// platform code that the requested state is valid. Otherwise, all
 	// requested states are accepted and treated equally.
 	if (current->vpm_mode == VPM_MODE_PSCI) {
-		assert(current->psci_group != NULL);
+		assert(current->vpm_group != NULL);
 
-		// FIXME:
+		// FIXME: QC Gunyah issue #129
 		cpulocal_begin();
 		ret = platform_psci_suspend_state_validation(
 			suspend_state, cpulocal_get_index(),
-			current->psci_group->psci_mode);
+			current->vpm_group->psci_mode);
 		cpulocal_end();
 		if (ret != PSCI_RET_SUCCESS) {
 			TRACE(PSCI, PSCI_PSTATE_VALIDATION,
@@ -391,7 +409,7 @@ psci_cpu_suspend_32(uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t *ret0)
 	bool	  handled;
 	thread_t *current = thread_get_self();
 
-	if (compiler_unexpected(current->psci_group == NULL)) {
+	if (compiler_unexpected(current->vpm_group == NULL)) {
 		handled = false;
 	} else {
 		psci_ret_t ret = psci_cpu_suspend(
@@ -408,7 +426,7 @@ psci_cpu_suspend_64(uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t *ret0)
 	bool	  handled;
 	thread_t *current = thread_get_self();
 
-	if (compiler_unexpected(current->psci_group == NULL)) {
+	if (compiler_unexpected(current->vpm_group == NULL)) {
 		handled = false;
 	} else {
 		psci_ret_t ret = psci_cpu_suspend(
@@ -430,10 +448,10 @@ psci_cpu_default_suspend(paddr_t entry_point_address, register_t context_id)
 
 	psci_suspend_powerstate_t pstate = psci_suspend_powerstate_default();
 
-	// FIXME:
+	// FIXME: QC Gunyah issue #129
 	cpulocal_begin();
 	psci_suspend_powerstate_stateid_t stateid =
-		platform_psci_deepest_cpu_level_stateid(cpulocal_get_index());
+		platform_psci_deepest_level_stateid(cpulocal_get_index(), 0U);
 	cpulocal_end();
 
 	psci_suspend_powerstate_set_StateID(&pstate, stateid);
@@ -451,7 +469,7 @@ psci_cpu_default_suspend_32(uint32_t arg1, uint32_t arg2, uint32_t *ret0)
 	bool	  handled;
 	thread_t *current = thread_get_self();
 
-	if (compiler_unexpected(current->psci_group == NULL)) {
+	if (compiler_unexpected(current->vpm_group == NULL)) {
 		handled = false;
 	} else {
 		psci_ret_t ret = psci_cpu_default_suspend(arg1, arg2);
@@ -467,7 +485,7 @@ psci_cpu_default_suspend_64(uint64_t arg1, uint64_t arg2, uint64_t *ret0)
 	bool	  handled;
 	thread_t *current = thread_get_self();
 
-	if (compiler_unexpected(current->psci_group == NULL)) {
+	if (compiler_unexpected(current->vpm_group == NULL)) {
 		handled = false;
 	} else {
 		psci_ret_t ret = psci_cpu_default_suspend(arg1, arg2);
@@ -483,10 +501,14 @@ psci_cpu_off(uint32_t *ret0)
 	bool	  handled;
 	thread_t *current = thread_get_self();
 
-	if (compiler_unexpected(current->psci_group == NULL)) {
+	if (compiler_unexpected(current->vpm_group == NULL)) {
 		handled = false;
 	} else {
-		error_t ret = vcpu_poweroff(false, false);
+		vcpu_power_req_flags_t power_flags =
+			vcpu_power_req_flags_default();
+		vcpu_power_req_flags_set_psci_op(&power_flags, true);
+
+		error_t ret = vcpu_poweroff(false, false, power_flags);
 		// If we return, the only reason should be DENIED
 		assert(ret == ERROR_DENIED);
 		*ret0	= (uint32_t)PSCI_RET_DENIED;
@@ -528,39 +550,55 @@ psci_cpu_on(psci_mpidr_t cpu, paddr_t entry_point_address,
 				ret = PSCI_RET_INTERNAL_FAILURE;
 			}
 		}
-	} else {
-		bool reschedule = false;
-
-		scheduler_lock(thread);
-		if (vcpu_option_flags_get_pinned(&thread->vcpu_options) &&
-		    !platform_cpu_functional(thread->scheduler_affinity)) {
-			ret = PSCI_RET_INTERNAL_FAILURE;
-			goto unlock;
-		}
-
-		if (scheduler_is_blocked(thread, SCHEDULER_BLOCK_VCPU_OFF)) {
-			bool_result_t result = vcpu_poweron(
-				thread, vmaddr_result_ok(entry_point_address),
-				register_result_ok(context_id));
-			reschedule = result.r;
-			ret	   = (result.e == OK) ? PSCI_RET_SUCCESS
-				     : (result.e == ERROR_FAILURE)
-					     ? PSCI_RET_INTERNAL_FAILURE
-				     : (result.e == ERROR_RETRY)
-					     ? PSCI_RET_ALREADY_ON
-					     : PSCI_RET_INVALID_PARAMETERS;
-		} else {
-			ret = PSCI_RET_ALREADY_ON;
-		}
-	unlock:
-		scheduler_unlock(thread);
-		object_put_thread(thread);
-
-		if (reschedule) {
-			(void)scheduler_schedule();
-		}
+		goto out;
 	}
 
+	bool	     reschedule = false;
+	vpm_group_t *vpm_group	= thread->vpm_group;
+
+	if (vcpu_option_flags_get_pinned(&thread->vcpu_options) &&
+	    !platform_cpu_functional(thread->scheduler_affinity)) {
+		ret = PSCI_RET_INTERNAL_FAILURE;
+		goto out_put_thread;
+	}
+
+	bool is_online = bitmap_atomic_isset(vpm_group->psci_online_vcpus,
+					     thread->psci_index,
+					     memory_order_acquire);
+	if (bitmap_atomic_isset(vpm_group->psci_started_vcpus,
+				thread->psci_index, memory_order_relaxed)) {
+		if (is_online) {
+			ret = PSCI_RET_ALREADY_ON;
+		} else {
+			ret = PSCI_RET_ON_PENDING;
+		}
+		goto out_put_thread;
+	}
+
+	vcpu_power_req_flags_t power_flags = vcpu_power_req_flags_default();
+	vcpu_power_req_flags_set_psci_op(&power_flags, true);
+
+	scheduler_lock(thread);
+	bool_result_t result =
+		vcpu_poweron(thread, vmaddr_result_ok(entry_point_address),
+			     register_result_ok(context_id), power_flags);
+	reschedule = result.r;
+	ret	   = (result.e == OK) ? PSCI_RET_SUCCESS
+		     : (result.e == ERROR_ARGUMENT_INVALID)
+			     ? PSCI_RET_INVALID_PARAMETERS
+		     : (result.e == ERROR_RETRY) ? PSCI_RET_ALREADY_ON
+		     : (result.e == ERROR_BUSY)	 ? PSCI_RET_ON_PENDING
+						 : PSCI_RET_INTERNAL_FAILURE;
+	scheduler_unlock(thread);
+
+out_put_thread:
+	object_put_thread(thread);
+
+	if (reschedule) {
+		(void)scheduler_schedule();
+	}
+
+out:
 	return ret;
 }
 
@@ -570,7 +608,7 @@ psci_cpu_on_32(uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t *ret0)
 	bool	  handled;
 	thread_t *current = thread_get_self();
 
-	if (compiler_unexpected(current->psci_group == NULL)) {
+	if (compiler_unexpected(current->vpm_group == NULL)) {
 		handled = false;
 	} else {
 		psci_ret_t ret = psci_cpu_on(psci_mpidr_cast(arg1), arg2, arg3);
@@ -586,7 +624,7 @@ psci_cpu_on_64(uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t *ret0)
 	bool	  handled;
 	thread_t *current = thread_get_self();
 
-	if (compiler_unexpected(current->psci_group == NULL)) {
+	if (compiler_unexpected(current->vpm_group == NULL)) {
 		handled = false;
 	} else {
 		psci_ret_t ret = psci_cpu_on(psci_mpidr_cast(arg1), arg2, arg3);
@@ -596,26 +634,34 @@ psci_cpu_on_64(uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t *ret0)
 	return handled;
 }
 
-static psci_ret_t
+static psci_ret_affinity_info_t
 psci_affinity_info(psci_mpidr_t affinity, uint32_t lowest_affinity_level)
 {
-	psci_ret_t ret;
+	psci_ret_affinity_info_t ret;
 
 	thread_t *thread = psci_get_thread_by_mpidr(affinity);
 	if (thread == NULL) {
-		ret = PSCI_RET_INVALID_PARAMETERS;
+		ret = PSCI_RET_AFFINITY_INFO_INVALID_PARAMETERS;
 	} else if (lowest_affinity_level != 0U) {
 		// lowest_affinity_level is legacy from PSCI 0.2; we are
 		// allowed to fail if it is nonzero (which indicates a
 		// query of the cluster-level state).
-		ret = PSCI_RET_INVALID_PARAMETERS;
+		ret = PSCI_RET_AFFINITY_INFO_INVALID_PARAMETERS;
 	} else {
-		// Don't bother locking, this is inherently racy anyway
-		psci_ret_affinity_info_t info =
-			scheduler_is_blocked(thread, SCHEDULER_BLOCK_VCPU_OFF)
-				? PSCI_RET_AFFINITY_INFO_OFF
-				: PSCI_RET_AFFINITY_INFO_ON;
-		ret = (psci_ret_t)info;
+		bool is_online = bitmap_atomic_isset(
+			thread->vpm_group->psci_online_vcpus,
+			thread->psci_index, memory_order_acquire);
+		if (bitmap_atomic_isset(thread->vpm_group->psci_started_vcpus,
+					thread->psci_index,
+					memory_order_relaxed)) {
+			if (is_online) {
+				ret = PSCI_RET_AFFINITY_INFO_ON;
+			} else {
+				ret = PSCI_RET_AFFINITY_INFO_ON_PENDING;
+			}
+		} else {
+			ret = PSCI_RET_AFFINITY_INFO_OFF;
+		}
 	}
 
 	if (thread != NULL) {
@@ -631,10 +677,10 @@ psci_affinity_info_32(uint32_t arg1, uint32_t arg2, uint32_t *ret0)
 	bool	  handled;
 	thread_t *current = thread_get_self();
 
-	if (compiler_unexpected(current->psci_group == NULL)) {
+	if (compiler_unexpected(current->vpm_group == NULL)) {
 		handled = false;
 	} else {
-		psci_ret_t ret =
+		psci_ret_affinity_info_t ret =
 			psci_affinity_info(psci_mpidr_cast(arg1), arg2);
 		*ret0	= (uint32_t)ret;
 		handled = true;
@@ -648,13 +694,13 @@ psci_affinity_info_64(uint64_t arg1, uint64_t arg2, uint64_t *ret0)
 	bool	  handled;
 	thread_t *current = thread_get_self();
 
-	if (compiler_unexpected(current->psci_group == NULL)) {
+	if (compiler_unexpected(current->vpm_group == NULL)) {
 		handled = false;
 	} else {
-		psci_ret_t ret = psci_affinity_info(psci_mpidr_cast(arg1),
-						    (uint32_t)arg2);
-		*ret0	       = (uint64_t)ret;
-		handled	       = true;
+		psci_ret_affinity_info_t ret = psci_affinity_info(
+			psci_mpidr_cast(arg1), (uint32_t)arg2);
+		*ret0	= (uint64_t)ret;
+		handled = true;
 	}
 	return handled;
 }
@@ -664,14 +710,14 @@ psci_stop_all_vcpus(void)
 {
 	thread_t *current = thread_get_self();
 	assert(current != NULL);
-	assert(current->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(current));
 
-	vpm_group_t *psci_group = current->psci_group;
-	if (psci_group != NULL) {
-		for (index_t i = 0U; i < util_array_size(psci_group->psci_cpus);
+	vpm_group_t *vpm_group = current->vpm_group;
+	if (vpm_group != NULL) {
+		for (index_t i = 0U; i < util_array_size(vpm_group->psci_cpus);
 		     i++) {
 			thread_t *thread =
-				atomic_load_consume(&psci_group->psci_cpus[i]);
+				atomic_load_consume(&vpm_group->psci_cpus[i]);
 			if ((thread != NULL) && (thread != current)) {
 				error_t err = thread_kill(thread);
 				if (err != OK) {
@@ -681,10 +727,70 @@ psci_stop_all_vcpus(void)
 		}
 	}
 
+	vcpu_power_req_flags_t power_flags = vcpu_power_req_flags_default();
+	vcpu_power_req_flags_set_psci_op(&power_flags, true);
+
 	// Force power off
-	(void)vcpu_poweroff(false, true);
+	(void)vcpu_poweroff(false, true, power_flags);
 	// We should not be denied when force is true
 	panic("vcpu_poweroff(force=true) returned");
+}
+
+static void
+psci_set_block_all_other_vcpus(const thread_t *current, bool block)
+	REQUIRE_PREEMPT_DISABLED
+{
+	bool trigger = false;
+
+	vpm_group_t *vpm_group = current->vpm_group;
+
+	if (vpm_group == NULL) {
+		goto out;
+	}
+
+	for (index_t i = 0U; i < util_array_size(vpm_group->psci_cpus); i++) {
+		thread_t *thread =
+			atomic_load_consume(&vpm_group->psci_cpus[i]);
+		if ((thread != NULL) && (thread != current)) {
+			scheduler_lock_nopreempt(thread);
+			if (block) {
+				scheduler_block(thread,
+						SCHEDULER_BLOCK_PSCI_STOP);
+			} else {
+				if (scheduler_unblock(
+					    thread,
+					    SCHEDULER_BLOCK_PSCI_STOP)) {
+					trigger = true;
+				}
+			}
+			scheduler_unlock_nopreempt(thread);
+		}
+	}
+
+	if (trigger) {
+		scheduler_trigger();
+	}
+out:
+	return;
+}
+
+static void
+psci_vm_off(thread_t *current, vm_off_flags_t flags, uint64_t type,
+	    uint64_t cookie)
+{
+	bool defer = false;
+
+	preempt_disable();
+
+	trigger_vcpu_vm_off_request_event(current, flags, type, cookie, &defer);
+
+	if (defer) {
+		psci_set_block_all_other_vcpus(current, true);
+		scheduler_yield();
+		psci_set_block_all_other_vcpus(current, false);
+	}
+
+	preempt_enable();
 }
 
 bool
@@ -693,9 +799,11 @@ psci_system_off(void)
 	bool	  handled;
 	thread_t *current = thread_get_self();
 
-	if (compiler_unexpected(current->psci_group == NULL)) {
+	if (compiler_unexpected(current->vpm_group == NULL)) {
 		handled = false;
 	} else {
+		psci_vm_off(current, VM_OFF_FLAGS_OFF, 0U, 0U);
+
 		if (vcpu_option_flags_get_critical(&current->vcpu_options)) {
 			// HLOS VM calls to this function are passed directly to
 			// the firmware, to power off the physical device.
@@ -703,6 +811,7 @@ psci_system_off(void)
 			panic("system_off event returned");
 		}
 
+		atomic_store_relaxed(&current->vpm_group->vm_on, false);
 		psci_stop_all_vcpus();
 	}
 
@@ -715,9 +824,12 @@ psci_system_reset(void)
 	bool	  handled;
 	thread_t *current = thread_get_self();
 
-	if (compiler_unexpected(current->psci_group == NULL)) {
+	if (compiler_unexpected(current->vpm_group == NULL)) {
 		handled = false;
 	} else {
+		psci_vm_off(current, VM_OFF_FLAGS_RESET,
+			    PSCI_REQUEST_SYSTEM_RESET, 0U);
+
 		if (vcpu_option_flags_get_critical(&current->vcpu_options)) {
 			// HLOS VM calls to this function are passed directly to
 			// the firmware, to reset the physical device.
@@ -735,6 +847,7 @@ psci_system_reset(void)
 		thread_get_self()->psci_system_reset_cookie = 0U;
 #endif
 
+		atomic_store_relaxed(&current->vpm_group->vm_on, false);
 		psci_stop_all_vcpus();
 	}
 
@@ -747,7 +860,13 @@ psci_system_reset2(uint64_t reset_type, uint64_t cookie)
 	uint32_t  ret;
 	thread_t *current = thread_get_self();
 
-	if (vcpu_option_flags_get_critical(&current->vcpu_options)) {
+	bool critical = vcpu_option_flags_get_critical(&current->vcpu_options);
+
+	psci_vm_off(current,
+		    critical ? VM_OFF_FLAGS_RESET_MAY_FAIL : VM_OFF_FLAGS_RESET,
+		    reset_type, cookie);
+
+	if (critical) {
 		// HLOS VM calls to this function are passed directly to the
 		// firmware, to reset the physical device.
 		error_t error = OK;
@@ -759,6 +878,8 @@ psci_system_reset2(uint64_t reset_type, uint64_t cookie)
 		} else {
 			ret = (uint32_t)PSCI_RET_NOT_SUPPORTED;
 		}
+
+		trigger_vcpu_vm_off_failed_event(current);
 	} else {
 #if defined(INTERFACE_VCPU_RUN)
 		// Tell the proxy thread that a reset was requested
@@ -767,6 +888,7 @@ psci_system_reset2(uint64_t reset_type, uint64_t cookie)
 		thread_get_self()->psci_system_reset_cookie = cookie;
 #endif
 
+		atomic_store_relaxed(&current->vpm_group->vm_on, false);
 		psci_stop_all_vcpus();
 	}
 
@@ -779,7 +901,7 @@ psci_system_reset2_32(uint32_t arg1, uint32_t arg2, uint32_t *ret0)
 	bool	  handled;
 	thread_t *current = thread_get_self();
 
-	if (compiler_unexpected(current->psci_group == NULL)) {
+	if (compiler_unexpected(current->vpm_group == NULL)) {
 		handled = false;
 	} else {
 		*ret0	= psci_system_reset2(arg1, arg2);
@@ -795,7 +917,7 @@ psci_system_reset2_64(uint64_t arg1, uint64_t arg2, uint64_t *ret0)
 	bool	  handled;
 	thread_t *current = thread_get_self();
 
-	if (compiler_unexpected(current->psci_group == NULL)) {
+	if (compiler_unexpected(current->vpm_group == NULL)) {
 		handled = false;
 	} else {
 		*ret0 = psci_system_reset2(
@@ -810,7 +932,7 @@ bool
 psci_features(uint32_t arg1, uint32_t *ret0)
 {
 	thread_t *current  = thread_get_self();
-	bool	  has_psci = current->psci_group != NULL;
+	bool	  has_psci = current->vpm_group != NULL;
 
 	smccc_function_id_t fn_id = smccc_function_id_cast(arg1);
 	uint32_t	    ret	  = SMCCC_UNKNOWN_FUNCTION32;
@@ -848,17 +970,17 @@ psci_handle_object_create_thread(thread_create_t thread_create)
 	thread_t *thread = thread_create.thread;
 	assert(thread != NULL);
 
-	// FIXME:
+	// FIXME: QC Gunyah issue #129
 	psci_suspend_powerstate_t pstate = psci_suspend_powerstate_default();
 #if !defined(PSCI_AFFINITY_LEVELS_NOT_SUPPORTED) ||                            \
 	!PSCI_AFFINITY_LEVELS_NOT_SUPPORTED
 	psci_suspend_powerstate_stateid_t stateid =
-		platform_psci_deepest_cluster_level_stateid(
-			thread->scheduler_affinity, PLATFORM_MAX_HIERARCHY);
+		platform_psci_deepest_level_stateid(thread->scheduler_affinity,
+						    PLATFORM_MAX_HIERARCHY);
 #else
 	psci_suspend_powerstate_stateid_t stateid =
-		platform_psci_deepest_cpu_level_stateid(
-			thread->scheduler_affinity);
+		platform_psci_deepest_level_stateid(thread->scheduler_affinity,
+						    0U);
 #endif
 	psci_suspend_powerstate_set_StateID(&pstate, stateid);
 	psci_suspend_powerstate_set_StateType(
@@ -874,17 +996,17 @@ error_t
 psci_handle_object_activate_thread(thread_t *thread)
 {
 	error_t err;
-	if (thread->kind != THREAD_KIND_VCPU) {
+	if (!vcpu_is_vcpu(thread)) {
 		thread->vpm_mode = VPM_MODE_NONE;
 		err		 = OK;
-	} else if (thread->psci_group == NULL) {
+	} else if (thread->vpm_group == NULL) {
 		thread->vpm_mode = VPM_MODE_IDLE;
 		err		 = OK;
 	} else {
 		assert(scheduler_is_blocked(thread, SCHEDULER_BLOCK_VCPU_OFF));
 
 		thread->vpm_mode  = vpm_group_option_flags_get_no_aggregation(
-					    &thread->psci_group->options)
+					    &thread->vpm_group->options)
 					    ? VPM_MODE_NONE
 					    : VPM_MODE_PSCI;
 		cpu_index_t index = thread->psci_index;
@@ -893,7 +1015,7 @@ psci_handle_object_activate_thread(thread_t *thread)
 		if (!cpulocal_index_valid(index)) {
 			err = ERROR_OBJECT_CONFIG;
 		} else if (!atomic_compare_exchange_strong_explicit(
-				   &thread->psci_group->psci_cpus[index],
+				   &thread->vpm_group->psci_cpus[index],
 				   &tmp_null, thread, memory_order_release,
 				   memory_order_relaxed)) {
 			err = ERROR_DENIED;
@@ -909,14 +1031,14 @@ psci_handle_object_deactivate_thread(thread_t *thread)
 {
 	assert(thread != NULL);
 
-	if (thread->psci_group != NULL) {
+	if (thread->vpm_group != NULL) {
 		thread_t   *tmp	  = thread;
 		cpu_index_t index = thread->psci_index;
 
 		(void)atomic_compare_exchange_strong_explicit(
-			&thread->psci_group->psci_cpus[index], &tmp, NULL,
+			&thread->vpm_group->psci_cpus[index], &tmp, NULL,
 			memory_order_relaxed, memory_order_relaxed);
-		object_put_vpm_group(thread->psci_group);
+		object_put_vpm_group(thread->vpm_group);
 	}
 
 	if (thread->vpm_mode == VPM_MODE_PSCI) {
@@ -959,14 +1081,14 @@ vpm_attach(vpm_group_t *pg, thread_t *thread, index_t index)
 
 	if (!cpulocal_index_valid((cpu_index_t)index)) {
 		err = ERROR_ARGUMENT_INVALID;
-	} else if (thread->kind != THREAD_KIND_VCPU) {
+	} else if (!vcpu_is_vcpu(thread)) {
 		err = ERROR_ARGUMENT_INVALID;
 	} else {
-		if (thread->psci_group != NULL) {
-			object_put_vpm_group(thread->psci_group);
+		if (thread->vpm_group != NULL) {
+			object_put_vpm_group(thread->vpm_group);
 		}
 
-		thread->psci_group = object_get_vpm_group_additional(pg);
+		thread->vpm_group  = object_get_vpm_group_additional(pg);
 		thread->psci_index = (cpu_index_t)index;
 		trace_ids_set_vcpu_index(&thread->trace_ids,
 					 (cpu_index_t)index);
@@ -1015,88 +1137,41 @@ bool
 vcpus_state_is_any_awake(vpm_group_suspend_state_t vm_state, uint32_t level,
 			 cpu_index_t cpu)
 {
+	uint32_t prev_level = level - 1U;
 	bool	 vcpu_awake = false;
 	error_t	 ret;
-	uint32_t start_idx = 0, children_counts = 0;
-
-	uint64_t vcpus_state =
-		vpm_group_suspend_state_get_vcpus_state(&vm_state);
-
-#if (PLATFORM_MAX_HIERARCHY == 2)
-	uint16_t vcluster_state =
-		vpm_group_suspend_state_get_cluster_state(&vm_state);
-#endif
-
+	uint32_t start_idx = 0U, children_counts = 0U;
 	ret = platform_psci_get_index_by_level(cpu, &start_idx,
 					       &children_counts, level);
-
-	index_t idle_state = 0U, psci_index;
 	if (ret != OK) {
 		goto out;
 	}
 
+	uint64_t lpm_state = psci_get_level_state(&vm_state, prev_level);
+
+	index_t state_bits = 0U, state_mask = 0U;
+	psci_get_level_bits_mask(prev_level, &state_bits, &state_mask);
+
+	index_t counts_till_level = psci_get_level_node_count(0U);
+
+	for (uint32_t idx = 1U; idx < prev_level; idx++) {
+		counts_till_level += psci_get_level_node_count(idx);
+	}
+
 	for (index_t i = 0U; i < children_counts; i++) {
 		// Check if another vcpu is awake
-		psci_index = start_idx + i;
+		index_t psci_index = (start_idx + i) % (counts_till_level);
 
-		if (level == 1U) {
-			idle_state =
-				(index_t)(vcpus_state >>
-					  (psci_index *
-					   PSCI_VCPUS_STATE_PER_VCPU_BITS)) &
-				PSCI_VCPUS_STATE_PER_VCPU_MASK;
-			if (platform_psci_is_cpu_active(
-				    (psci_cpu_state_t)idle_state)) {
-				vcpu_awake = true;
-				goto out;
-			}
-		}
-#if (PLATFORM_MAX_HIERARCHY == 2)
-		else if (level == 2U) {
-			idle_state = ((index_t)vcluster_state >>
-				      ((psci_index % (PLATFORM_MAX_CORES)) *
-				       PSCI_PER_CLUSTER_STATE_BITS)) &
-				     PSCI_PER_CLUSTER_STATE_BITS_MASK;
-			if (platform_psci_is_cluster_active(
-				    (psci_cluster_state_L3_t)idle_state)) {
-				vcpu_awake = true;
-				goto out;
-			}
-		}
-#endif
-		else {
-			// Only two levels are implemented. Return false
+		uint64_t idle_state = (lpm_state >> (psci_index * state_bits)) &
+				      (uint64_t)state_mask;
+		if (platform_psci_is_node_active((index_t)idle_state,
+						 prev_level)) {
+			vcpu_awake = true;
+			goto out;
 		}
 	}
 out:
 	return vcpu_awake;
-}
-
-void
-vcpus_state_set(vpm_group_suspend_state_t *vm_state, cpu_index_t cpu,
-		psci_cpu_state_t cpu_state)
-{
-	uint64_t vcpus_state =
-		vpm_group_suspend_state_get_vcpus_state(vm_state);
-
-	vcpus_state &= ~((uint64_t)PSCI_VCPUS_STATE_PER_VCPU_MASK
-			 << (cpu * PSCI_VCPUS_STATE_PER_VCPU_BITS));
-	vcpus_state |= (uint64_t)cpu_state
-		       << (cpu * PSCI_VCPUS_STATE_PER_VCPU_BITS);
-
-	vpm_group_suspend_state_set_vcpus_state(vm_state, vcpus_state);
-}
-
-void
-vcpus_state_clear(vpm_group_suspend_state_t *vm_state, cpu_index_t cpu)
-{
-	uint64_t vcpus_state =
-		vpm_group_suspend_state_get_vcpus_state(vm_state);
-
-	vcpus_state &= ~((uint64_t)PSCI_VCPUS_STATE_PER_VCPU_MASK
-			 << (cpu * PSCI_VCPUS_STATE_PER_VCPU_BITS));
-
-	vpm_group_suspend_state_set_vcpus_state(vm_state, vcpus_state);
 }
 
 error_t
@@ -1162,10 +1237,15 @@ psci_handle_vcpu_started(bool warm_reset)
 {
 	thread_t *current = thread_get_self();
 
-	if (current->psci_group != NULL) {
-		(void)atomic_fetch_or_explicit(
-			&current->psci_group->psci_online_vcpus,
-			util_bit(current->psci_index), memory_order_relaxed);
+	if ((current->vpm_group != NULL) && !warm_reset) {
+		bitmap_atomic_set(current->vpm_group->psci_online_vcpus,
+				  current->psci_index, memory_order_relaxed);
+		psci_vcpu_clear_vcpu_state(current);
+
+		if (!atomic_exchange_relaxed(&current->vpm_group->vm_on,
+					     true)) {
+			trigger_vcpu_vm_on_event(current);
+		}
 	}
 
 	// If the VCPU has been warm-reset, there was no vcpu_stopped event and
@@ -1203,7 +1283,9 @@ psci_handle_vcpu_wakeup_self(void)
 bool
 psci_handle_vcpu_expects_wakeup(const thread_t *vcpu)
 {
-	return scheduler_is_blocked(vcpu, SCHEDULER_BLOCK_VCPU_SUSPEND);
+	return !scheduler_is_blocked(vcpu,
+				     SCHEDULER_BLOCK_PSCI_SYSTEM_SUSPEND) &&
+	       scheduler_is_blocked(vcpu, SCHEDULER_BLOCK_VCPU_SUSPEND);
 }
 
 #if defined(INTERFACE_VCPU_RUN)
@@ -1221,7 +1303,7 @@ psci_handle_vcpu_run_check(const thread_t *vcpu, register_t *state_data_0,
 		ret = VCPU_RUN_STATE_EXPECTS_WAKEUP;
 		*state_data_0 =
 			psci_suspend_powerstate_raw(vcpu->psci_suspend_state);
-		vpm_group_t *vpm_group = vcpu->psci_group;
+		vpm_group_t *vpm_group = vcpu->vpm_group;
 		bool	     system_suspend;
 		if (vpm_group != NULL) {
 			vpm_group_suspend_state_t vm_state =
@@ -1247,47 +1329,90 @@ psci_handle_vcpu_run_check(const thread_t *vcpu, register_t *state_data_0,
 #endif
 
 error_t
-psci_handle_vcpu_poweron(thread_t *vcpu)
+psci_handle_vcpu_poweron(thread_t *vcpu, vcpu_power_req_flags_t power_flags)
 {
-	if (compiler_unexpected(vcpu->psci_group == NULL)) {
+	error_t	     ret;
+	vpm_group_t *vpm_group = vcpu->vpm_group;
+
+	if (compiler_unexpected(vpm_group == NULL)) {
+		ret = OK;
 		goto out;
 	}
+	bool psci_mode = vcpu->vpm_mode == VPM_MODE_PSCI;
 
-	cpu_index_t cpu = vcpu->scheduler_affinity;
-	if (cpulocal_index_valid(cpu)) {
-		psci_vcpu_clear_vcpu_state(vcpu, cpu);
-	}
+	static_assert(sizeof(vpm_group->psci_started_vcpus) ==
+			      sizeof(register_t),
+		      "psci cpu bitmap");
+	register_t started_vcpus =
+		atomic_load_relaxed(&vpm_group->psci_started_vcpus[0]);
+	register_t cpu_bit = util_bit(vcpu->psci_index);
 
+	// Atomically check for first vcpu poweron and update started_vcpus
+	do {
+		// If this is the not the first vcpu poweron
+		if (psci_mode && (started_vcpus != 0U)) {
+			// Permit only the first non-psci power-on as this can
+			// never be done via PSCI calls. Note, the vcpu_poweron
+			// may set the vcpu to started, so if the power on
+			// fails, we can't retry, and the vcpu needs to be
+			// deleted.
+			if (!vcpu_power_req_flags_get_psci_op(&power_flags)) {
+				ret = ERROR_DENIED;
+				goto out;
+			}
+		}
+	} while (!atomic_compare_exchange_weak_explicit(
+		&vpm_group->psci_started_vcpus[0], &started_vcpus,
+		started_vcpus | cpu_bit, memory_order_relaxed,
+		memory_order_relaxed));
+
+	ret = OK;
 out:
-	return OK;
+	return ret;
 }
 
 error_t
-psci_handle_vcpu_poweroff(thread_t *current, bool last_vcpu, bool force)
+psci_handle_vcpu_poweroff(thread_t *current, bool last_vcpu, bool force,
+			  vcpu_power_req_flags_t power_flags)
 {
 	error_t	     ret;
-	vpm_group_t *psci_group = current->psci_group;
+	vpm_group_t *vpm_group = current->vpm_group;
 
-	if (psci_group == NULL) {
+	if (vpm_group == NULL) {
 		// This is always the last CPU in the VM, so permit the poweroff
 		// request if and only if it is intended for the last CPU or is
 		// forced.
 		ret = (last_vcpu || force) ? OK : ERROR_DENIED;
-	} else if (current->vpm_mode == VPM_MODE_PSCI) {
-		register_t cpu_bit = util_bit(current->psci_index);
-		register_t online_cpus =
-			atomic_load_relaxed(&psci_group->psci_online_vcpus);
-		assert((online_cpus & cpu_bit) != 0U);
-		if (!force && (last_vcpu != (online_cpus == cpu_bit))) {
+		goto out;
+	}
+
+	if (!vcpu_power_req_flags_get_psci_op(&power_flags)) {
+		// Don't permit non-PSCI poweroff in PSCI mode
+		ret = ERROR_DENIED;
+		goto out;
+	}
+
+	static_assert(sizeof(vpm_group->psci_started_vcpus) ==
+			      sizeof(register_t),
+		      "psci cpu bitmap");
+	register_t cpu_bit = util_bit(current->psci_index);
+	register_t started_vcpus =
+		atomic_load_relaxed(&vpm_group->psci_started_vcpus[0]);
+	// Clear the current vcpu in psci_started_vcpus. Use atomic exchange to
+	// handle concurrent power-offs.
+	do {
+		// We check here whether we are the last vcpu, and attempt to
+		// prevent turning it off.
+		if (!force && (last_vcpu != (started_vcpus == cpu_bit))) {
 			ret = ERROR_DENIED;
 			goto out;
 		}
+	} while (!atomic_compare_exchange_weak_explicit(
+		&vpm_group->psci_started_vcpus[0], &started_vcpus,
+		started_vcpus & ~cpu_bit, memory_order_relaxed,
+		memory_order_relaxed));
 
-		ret = OK;
-	} else {
-		assert(current->vpm_mode == VPM_MODE_NONE);
-		ret = OK;
-	}
+	ret = OK;
 
 out:
 	return ret;
@@ -1296,10 +1421,11 @@ out:
 void
 psci_handle_vcpu_stopped(void)
 {
-	thread_t *vcpu = thread_get_self();
-	error_t	  ret;
+	thread_t    *current   = thread_get_self();
+	vpm_group_t *vpm_group = current->vpm_group;
+	error_t	     ret;
 
-	if (vcpu->psci_group != NULL) {
+	if (vpm_group != NULL) {
 		// Stopping a VCPU forces it into a power-off suspend state.
 		psci_suspend_powerstate_t pstate =
 			psci_suspend_powerstate_default();
@@ -1307,45 +1433,77 @@ psci_handle_vcpu_stopped(void)
 			&pstate, PSCI_SUSPEND_POWERSTATE_TYPE_POWERDOWN);
 
 		preempt_disable();
-		// Turn off VCPU
-		register_t cpu_bit	= util_bit(vcpu->psci_index);
+
+		// Note, if this is a forced vcpu halt, then the vcpu poweroff
+		// event isn't called, and psci_started_vcpus will remain set.
+		// We don't support resuming a halted vcpu, and if we need to,
+		// a new event would be needed to reset this vcpu state.
 		register_t online_vcpus = atomic_fetch_and_explicit(
-			&vcpu->psci_group->psci_online_vcpus, ~cpu_bit,
-			memory_order_relaxed);
+			&vpm_group->psci_online_vcpus[0],
+			~util_bit(current->psci_index), memory_order_release);
+		online_vcpus &= ~util_bit(current->psci_index);
 
 		cpu_index_t cpu	  = cpulocal_get_index();
 		count_t	    tries = 0;
+
+		// Turn off the VCPU
 		do {
-			tries++;
+			// On retries, delay by (tries) ms, in order to avoid
+			// racing
+			platform_timer_ndelay(tries * 1000000);
 
 			TRACE(PSCI, PSCI_PSTATE_VALIDATION,
 			      "psci vcpu poweroff try {:d}: core {:d} and current cores on {:d}",
-			      tries, vcpu->psci_index, online_vcpus);
+			      tries, current->psci_index, online_vcpus);
 			psci_suspend_powerstate_stateid_t stateid =
-				psci_vcpu_get_poweroff_state(vcpu, cpu,
+				psci_vcpu_get_poweroff_state(current, cpu,
 							     online_vcpus);
 
 			psci_suspend_powerstate_set_StateID(&pstate, stateid);
-			vcpu->psci_suspend_state = pstate;
+			current->psci_suspend_state = pstate;
 
-			if (vcpu->vpm_mode != VPM_MODE_NONE) {
-				ret = psci_vcpu_suspend(vcpu);
+			if (current->vpm_mode != VPM_MODE_NONE) {
+				ret = psci_vcpu_suspend(current);
 			} else {
 				ret = OK;
 			}
-			online_vcpus = atomic_load_relaxed(
-				&vcpu->psci_group->psci_online_vcpus);
+
+			if (ret != OK) {
+				TRACE(PSCI, PSCI_PSTATE_VALIDATION,
+				      "vcpu_suspend try {:d} failed due with error {:d}",
+				      tries, (register_t)ret);
+			}
+
+			// Check for VCPUs that have come online, which might
+			// require us to make a shallower suspend request if
+			// we are in OSI mode. Note that it is never necessary
+			// to make a deeper suspend request; if another CPU went
+			// offline and made a deeper state possible, that CPU
+			// will make the corresponding request.
+			online_vcpus |= atomic_load_relaxed(
+				&vpm_group->psci_online_vcpus[0]);
+			tries++;
 		} while ((ret != OK) && (tries < 3U));
 		preempt_enable();
-	} else if (vcpu->vpm_mode != VPM_MODE_NONE) {
+	} else if (current->vpm_mode != VPM_MODE_NONE) {
 		preempt_disable();
-		ret = psci_vcpu_suspend(vcpu);
+		ret = psci_vcpu_suspend(current);
 		preempt_enable();
 	} else {
 		// VPM mode is none; nothing to do
 		ret = OK;
 	}
 	assert(ret == OK);
+}
+
+void
+psci_handle_thread_killed(thread_t *thread)
+{
+	vpm_group_t *vpm_group = thread->vpm_group;
+	if (vpm_group != NULL) {
+		bitmap_atomic_clear(vpm_group->psci_started_vcpus,
+				    thread->psci_index, memory_order_relaxed);
+	}
 }
 
 void
@@ -1358,4 +1516,72 @@ void
 psci_handle_power_cpu_offline(void)
 {
 	(void)psci_clear_vpm_active_pcpus_bit(cpulocal_get_index());
+}
+
+error_t
+vpm_system_wakeup(vpm_group_t *vpm_group)
+{
+	error_t	  err;
+	thread_t *wakeup_vcpu = NULL;
+
+	static_assert(sizeof(vpm_group->psci_started_vcpus) ==
+			      sizeof(register_t),
+		      "psci cpu bitmap");
+	register_t started_vcpus =
+		atomic_load_relaxed(&vpm_group->psci_started_vcpus[0]);
+
+	if (started_vcpus == 0U) {
+		err = ERROR_FAILURE;
+		goto out;
+	}
+	index_t cpu_last = compiler_msb(started_vcpus);
+
+	// If started_vcpus has multiple bits set, then we should not attempt a
+	// VM wakeup.
+	if (started_vcpus != util_bit(cpu_last)) {
+		err = ERROR_DENIED;
+		goto out;
+	}
+
+	rcu_read_start();
+	wakeup_vcpu = atomic_load_consume(&vpm_group->psci_cpus[cpu_last]);
+	if (wakeup_vcpu == NULL) {
+		// We raced with thread deletion
+		err = ERROR_DENIED;
+		rcu_read_finish();
+		goto out;
+	}
+	scheduler_lock(wakeup_vcpu);
+	if (!scheduler_is_blocked(wakeup_vcpu,
+				  SCHEDULER_BLOCK_PSCI_SYSTEM_SUSPEND)) {
+		scheduler_unlock(wakeup_vcpu);
+		rcu_read_finish();
+		err = ERROR_DENIED;
+		goto out;
+	}
+	wakeup_vcpu = object_get_thread_additional(wakeup_vcpu);
+	rcu_read_finish();
+
+	(void)scheduler_unblock(wakeup_vcpu,
+				SCHEDULER_BLOCK_PSCI_SYSTEM_SUSPEND);
+
+	vcpu_wakeup(wakeup_vcpu);
+	err = OK;
+
+	scheduler_unlock(wakeup_vcpu);
+	object_put_thread(wakeup_vcpu);
+out:
+	return err;
+}
+
+void
+vpm_set_threshold(vpm_group_t *vpm_group, uint64_t power_state)
+{
+	psci_suspend_powerstate_t pstate =
+		psci_suspend_powerstate_cast((uint32_t)power_state);
+
+	TRACE_AND_LOG(DEBUG, INFO, "vpm_set_threshold: power_state {:#x}",
+		      psci_suspend_powerstate_raw(pstate));
+
+	vpm_group->power_state_threshold = pstate;
 }

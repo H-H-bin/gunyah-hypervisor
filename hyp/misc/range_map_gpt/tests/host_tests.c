@@ -1,4 +1,4 @@
-// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -11,6 +11,7 @@
 #define register_t std_register_t
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #undef register_t
 
 #include <compiler.h>
@@ -51,6 +52,14 @@ size_t
 util_strnlen(const char *str, size_t maxlen)
 {
 	return strnlen(str, maxlen);
+}
+
+size_t
+memscpy(void *s1, size_t s1_size, const void *s2, size_t s2_size)
+{
+	size_t copy_size = util_min(s1_size, s2_size);
+	(void)memcpy(s1, s2, copy_size);
+	return copy_size;
 }
 
 static void
@@ -215,6 +224,8 @@ main(void)
 	range_map_gpt_handle_tests_init();
 
 	range_map_gpt_handle_tests_start();
+
+	printf("SUCCESS: All GPT tests completed successfully!\n");
 
 	return 0;
 }

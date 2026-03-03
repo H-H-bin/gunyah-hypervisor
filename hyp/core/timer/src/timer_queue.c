@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -44,7 +44,7 @@ timer_handle_boot_cold_init(cpu_index_t boot_cpu_index)
 	}
 }
 
-#if !defined(UNITTESTS) || !UNITTESTS
+#if !defined(UNIT_TESTS) || !UNIT_TESTS
 void
 timer_handle_rootvm_init(hyp_env_data_t *hyp_env)
 {
@@ -61,7 +61,7 @@ timer_get_timer_frequency(void)
 ticks_t
 timer_get_current_timer_ticks(void)
 {
-	return platform_timer_get_current_ticks();
+	return platform_timer_get_current_ticks_sync();
 }
 
 ticks_t
@@ -117,7 +117,7 @@ timer_queue_get_next_timeout(void)
 }
 
 static void
-timer_update_timeout(timer_queue_t *tq) REQUIRE_SPINLOCK(tq->lock)
+timer_update_timeout(timer_queue_t *tq) REQUIRE_SPINLOCK(tq -> lock)
 {
 	assert_preempt_disabled();
 	assert(tq == &CPULOCAL(timer_queue));
@@ -131,7 +131,7 @@ timer_update_timeout(timer_queue_t *tq) REQUIRE_SPINLOCK(tq->lock)
 
 static void
 timer_enqueue_internal(timer_queue_t *tq, timer_t *timer, ticks_t timeout)
-	REQUIRE_SPINLOCK(timer->lock) REQUIRE_SPINLOCK(tq->lock)
+	REQUIRE_SPINLOCK(timer -> lock) REQUIRE_SPINLOCK(tq->lock)
 {
 	assert_preempt_disabled();
 	assert(tq == &CPULOCAL(timer_queue));
@@ -163,7 +163,7 @@ timer_enqueue_internal(timer_queue_t *tq, timer_t *timer, ticks_t timeout)
 
 static bool
 timer_dequeue_internal(timer_queue_t *tq, timer_t *timer, bool clear_queue)
-	REQUIRE_SPINLOCK(tq->lock)
+	REQUIRE_SPINLOCK(tq -> lock)
 {
 	assert_preempt_disabled();
 
@@ -197,7 +197,7 @@ timer_dequeue_internal(timer_queue_t *tq, timer_t *timer, bool clear_queue)
 
 static void
 timer_update_internal(timer_queue_t *tq, timer_t *timer, ticks_t timeout)
-	REQUIRE_SPINLOCK(timer->lock) REQUIRE_SPINLOCK(tq->lock)
+	REQUIRE_SPINLOCK(timer -> lock) REQUIRE_SPINLOCK(tq->lock)
 {
 	assert_preempt_disabled();
 	assert(tq == &CPULOCAL(timer_queue));

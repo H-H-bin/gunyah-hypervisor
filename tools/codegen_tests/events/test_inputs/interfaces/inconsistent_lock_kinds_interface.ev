@@ -1,0 +1,5 @@
+
+interface inconsistent_lock_kinds_interface
+
+selector_event inconsistent_lock_kinds_interface_event
+	selector action: uint32_t

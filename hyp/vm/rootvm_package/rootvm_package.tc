@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -15,7 +15,7 @@ define rootvm_package_entry structure {
 };
 
 define ROOTVM_PACKAGE_IDENT constant uint32 = 0x47504b47;
-define ROOTVM_PACKAGE_ITEMS_MAX constant = 3;
+define ROOTVM_PACKAGE_ITEMS_MAX constant type count_t = 3;
 
 define rootvm_package_header structure {
 	ident	uint32;

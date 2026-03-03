@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -12,11 +12,23 @@
 #include <bitmap.h>
 #include <compiler.h>
 #include <cpulocal.h>
+#if defined(INTERFACE_ROOTVM)
+#include <cspace.h>
+#include <doorbell.h>
+#include <log.h>
+#endif
 #include <hyp_aspace.h>
+#include <memdb.h>
+#include <memextent.h>
+#include <object.h>
 #include <panic.h>
 #include <partition.h>
+#include <partition_alloc.h>
 #include <platform_cpu.h>
 #include <platform_mem.h>
+#include <platform_security.h>
+#include <platform_timer.h>
+#include <qcbor.h>
 #include <thread.h>
 #include <trace.h>
 #include <util.h>
@@ -24,10 +36,10 @@
 #include <asm/cache.h>
 #include <asm/cpu.h>
 #include <asm/prefetch.h>
-#include <asm/timestamp.h>
 
 #include "event_handlers.h"
 #include "trace_helpers.h"
+#include "trace_internal.h"
 
 static_assert((uintmax_t)PLATFORM_MAX_CORES <
 		      ((uintmax_t)1 << TRACE_INFO_CPU_ID_BITS),
@@ -51,9 +63,20 @@ static trace_buffer_header_t *trace_buffer_global;
 // A set of function help to log trace easily. The macro TRACE can help to
 // construct the correct parameter to call the API.
 
+size_t
+trace_get_minimum_size(void)
+{
+	count_t local_buffer_count = platform_get_existing_cpus_count();
+
+	// Ensure the size left for the global buffer is at least equal
+	// to the size reserved for each local buffer
+	return (size_t)PER_CPU_TRACE_ENTRIES * (size_t)TRACE_BUFFER_ENTRY_SIZE *
+	       ((size_t)local_buffer_count + 1U);
+}
+
 static void
-trace_init_common(partition_t *partition, void *base, size_t size,
-		  count_t buffer_count, trace_buffer_header_t *tbuffers[])
+trace_init_common(void *base, paddr_t phys, size_t size, count_t buffer_count,
+		  trace_buffer_header_t *tbuffers[])
 {
 	count_t global_entries, local_entries;
 
@@ -76,9 +99,7 @@ trace_init_common(partition_t *partition, void *base, size_t size,
 
 		// Ensure the size left for the global buffer is at least equal
 		// to the size reserved for each local buffer
-		assert(size > ((size_t)PER_CPU_TRACE_ENTRIES *
-			       (size_t)TRACE_BUFFER_ENTRY_SIZE *
-			       ((size_t)local_buffer_count + 1U)));
+		assert(size >= trace_get_minimum_size());
 
 		global_entries =
 			(count_t)((size / (size_t)TRACE_BUFFER_ENTRY_SIZE) -
@@ -87,9 +108,8 @@ trace_init_common(partition_t *partition, void *base, size_t size,
 		local_entries = PER_CPU_TRACE_ENTRIES;
 	}
 
-	hyp_trace.header = (trace_buffer_header_t *)base;
-	hyp_trace.header_phys =
-		partition_virt_to_phys(partition, (uintptr_t)base);
+	hyp_trace.header      = (trace_buffer_header_t *)base;
+	hyp_trace.header_phys = phys;
 
 	count_t		       entries;
 	trace_buffer_header_t *ptr = (trace_buffer_header_t *)base;
@@ -104,12 +124,18 @@ trace_init_common(partition_t *partition, void *base, size_t size,
 			trace_buffer_header_t *tb = ptr;
 			ptr += entries;
 
-			*tb		= (trace_buffer_header_t){ 0U };
-			tb->buf_magic	= TRACE_MAGIC_BUFFER;
-			tb->entries	= entries - 1U;
-			tb->not_wrapped = true;
+			*tb	      = (trace_buffer_header_t){ 0U };
+			tb->buf_magic = TRACE_MAGIC_BUFFER;
+			tb->version   = hyp_trace.version;
+			tb->flags     = hyp_trace.flags;
+			tb->entries   = entries - 1U;
+
+			// Notify mask is initially disabled
+			tb->notify_mask = TRACE_NOTIFY_DISABLED;
 
 			atomic_init(&tb->head, 0);
+			atomic_init(&tb->wrap_count, 0);
+
 			tbuffers[i] = tb;
 		} else {
 			tbuffers[i] = NULL;
@@ -134,7 +160,7 @@ trace_boot_init(void)
 	TRACE_SET_CLASS(flags, ERROR);
 #if !defined(NDEBUG)
 	TRACE_SET_CLASS(flags, INFO);
-#if !defined(UNITTESTS) || !UNITTESTS
+#if !defined(UNIT_TESTS) || !UNIT_TESTS
 	TRACE_SET_CLASS(flags, USER);
 #endif
 #endif
@@ -148,8 +174,10 @@ trace_boot_init(void)
 	TRACE_CLEAR_CLASS(trace_public_class_flags, ERROR);
 	TRACE_CLEAR_CLASS(trace_public_class_flags, LOG_BUFFER);
 
+	paddr_t phys =
+		partition_image_virt_to_phys((uintptr_t)&trace_boot_buffer);
 	trace_init_common(
-		partition_get_private(), &trace_boot_buffer,
+		&trace_boot_buffer, phys,
 		((size_t)TRACE_BOOT_ENTRIES * (size_t)TRACE_BUFFER_ENTRY_SIZE),
 		1U, &trace_buffer_global);
 }
@@ -161,8 +189,14 @@ trace_buffer_init(partition_t *partition, void *base, size_t size)
 	assert(size != 0U);
 	assert(base != NULL);
 
+	// Only permit one update of the trace buffer
+	assert(hyp_trace.header == &trace_boot_buffer);
+
+	paddr_t phys = partition_virt_to_phys(partition, (uintptr_t)base);
+	assert(phys != PADDR_INVALID);
+
 	trace_buffer_header_t *tbs[TRACE_BUFFER_NUM];
-	trace_init_common(partition, base, size, TRACE_BUFFER_NUM, tbs);
+	trace_init_common(base, phys, size, TRACE_BUFFER_NUM, tbs);
 	// The global buffer will be the first, followed by the local buffers
 	trace_buffer_global = tbs[0];
 	for (cpu_index_t i = 0U; i < PLATFORM_MAX_CORES; i++) {
@@ -203,15 +237,16 @@ trace_buffer_init(partition_t *partition, void *base, size_t size)
 #if defined(PLATFORM_TRACE_STANDALONE_REGION) &&                               \
 	PLATFORM_TRACE_STANDALONE_REGION
 void
-trace_single_region_init(partition_t *partition, paddr_t base, size_t size)
+trace_single_region_init(partition_t *partition, void *base, size_t size)
 {
 	assert(size != 0);
-	assert(base != 0);
+	assert(base != NULL);
 
-	// Call to initiaize the trace buffer
-	trace_buffer_init(partition, (void *)base, size);
+	// Call to initialize the trace buffer
+	trace_buffer_init(partition, base, size);
 }
 #else
+
 void
 trace_init(partition_t *partition, size_t size)
 {
@@ -223,8 +258,109 @@ trace_init(partition_t *partition, size_t size)
 		panic("Error allocating trace buffer");
 	}
 
-	// Call to initiaize the trace buffer
+	paddr_t phys =
+		partition_virt_to_phys(partition, (uintptr_t)alloc_ret.r);
+
+	error_t	     ret;
+	partition_t *hyp_partition = partition_get_private();
+
+	// Tag this region as trace memory
+	ret = memdb_update(hyp_partition, phys, phys + (size - 1U),
+			   (uintptr_t)NULL, MEMDB_TYPE_TRACE,
+			   (uintptr_t)&partition->allocator,
+			   MEMDB_TYPE_ALLOCATOR);
+	if (ret != OK) {
+		panic("memdb_update");
+	}
+
+	// Call to initialize the trace buffer
 	trace_buffer_init(partition, alloc_ret.r, size);
+}
+#endif
+
+#if defined(INTERFACE_ROOTVM)
+
+void
+trace_standard_handle_rootvm_init(partition_t	   *root_partition,
+				  cspace_t	   *root_cspace,
+				  qcbor_enc_ctxt_t *qcbor_enc_ctxt)
+{
+	cap_id_t me_cap;
+
+	paddr_t trace_phys = hyp_trace.header_phys;
+	size_t	trace_size = (size_t)hyp_trace.area_size_64 * 64U;
+
+	// If debug is disabled, don't expose the trace buffer
+	if (platform_security_state_debug_disabled()) {
+		goto out;
+	}
+
+	// Move trace back to partition
+	error_t err = memdb_update(partition_get_private(), trace_phys,
+				   trace_phys + (trace_size - 1U),
+				   (uintptr_t)root_partition,
+				   MEMDB_TYPE_PARTITION, (uintptr_t)NULL,
+				   MEMDB_TYPE_TRACE);
+	if (err != OK) {
+		LOG(DEBUG, INFO, "convert trace to memextent failed: {:d}",
+		    (register_t)err);
+		goto out;
+	}
+
+	memextent_ptr_result_t me_ret = memextent_construct(
+		root_partition, root_cspace, trace_phys, trace_size,
+		PGTABLE_ACCESS_R, MEMEXTENT_MEMTYPE_ANY, MEMEXTENT_TYPE_BASIC,
+		false, &me_cap);
+	if (me_ret.e != OK) {
+		panic("trace memextent construct");
+	}
+
+	memextent_t *me = me_ret.r;
+
+	hyp_trace.me = object_get_memextent_additional(me);
+
+	QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt, "trace_me_capid", me_cap);
+	QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt, "trace_phys", trace_phys);
+	QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt, "trace_size", trace_size);
+
+	// Create a doorbell object with restricted master rights to share with
+	// root VM.
+	doorbell_ptr_result_t dbl_ret;
+	doorbell_create_t     dbl_params = { 0 };
+	cap_rights_doorbell_t dbl_rights = cap_rights_doorbell_default();
+
+	dbl_ret = partition_allocate_doorbell(root_partition, dbl_params);
+	if (dbl_ret.e != OK) {
+		panic("doorbell create");
+	}
+	doorbell_t *doorbell = dbl_ret.r;
+
+	err = object_activate_doorbell(doorbell);
+	if (err != OK) {
+		panic("doorbell activate");
+	}
+
+	// Only give the bind right, not a receive right so doorbell hypercalls
+	// cannot be used.
+	cap_rights_doorbell_set_bind(&dbl_rights, true);
+
+	object_ptr_t obj_ptr = {
+		.doorbell = object_get_doorbell_additional(doorbell),
+	};
+
+	cap_id_result_t capid_ret = cspace_create_restricted_master_cap(
+		root_cspace, obj_ptr, OBJECT_TYPE_DOORBELL,
+		cap_rights_doorbell_raw(dbl_rights));
+	if (capid_ret.e != OK) {
+		panic("doorbell cap");
+	}
+
+	hyp_trace.dbl = object_get_doorbell_additional(doorbell);
+
+	QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt, "trace_dbl_capid",
+				   capid_ret.r);
+out:
+	return;
 }
 #endif
 
@@ -234,9 +370,9 @@ trace_init(partition_t *partition, size_t size)
 // argn: information to store for this trace.
 void
 trace_standard_handle_trace_log(trace_id_t id, trace_action_t action,
-				const char *arg0, register_t arg1,
-				register_t arg2, register_t arg3,
-				register_t arg4, register_t arg5)
+				const char *fmt, register_t arg0,
+				register_t arg1, register_t arg2,
+				register_t arg3, register_t arg4)
 {
 	trace_buffer_header_t *tb;
 	trace_info_t	       trace_info;
@@ -265,7 +401,7 @@ trace_standard_handle_trace_log(trace_id_t id, trace_action_t action,
 	}
 
 	cpu_id	  = cpulocal_get_index_unsafe();
-	timestamp = arch_get_timestamp();
+	timestamp = platform_timer_get_current_ticks();
 
 	trace_info_init(&trace_info);
 	trace_info_set_cpu_id(&trace_info, cpu_id);
@@ -296,16 +432,16 @@ trace_standard_handle_trace_log(trace_id_t id, trace_action_t action,
 
 	// If we wrap, decrement by the number of entries.
 	if (compiler_unexpected(head >= entries)) {
+		if (head == entries) {
+			(void)atomic_fetch_add_explicit(&tb->wrap_count, 1,
+							memory_order_relaxed);
+		}
+
 		index_t cur_head = head + 1U;
 		do {
 			(void)atomic_compare_exchange_ll_sc_weak(
 				&tb->head, &cur_head, cur_head - entries);
 		} while (cur_head >= entries);
-
-		// We only need to clear this once, however since the
-		// cache-line is likely local and dirty already, its is cheaper
-		// not to read not_wrapped first.
-		tb->not_wrapped = false;
 
 		head -= entries;
 		// If we reached 2x entries, something is really wrong
@@ -329,9 +465,9 @@ trace_standard_handle_trace_log(trace_id_t id, trace_action_t action,
 		"dc zva, %[entry_addr];"
 #endif
 		"stnp %[info], %[tag], [%[entry_addr], 0];"
-		"stnp %[arg0], %[arg1], [%[entry_addr], 16];"
-		"stnp %[arg2], %[arg3], [%[entry_addr], 32];"
-		"stnp %[arg4], %[arg5], [%[entry_addr], 48];"
+		"stnp %[fmt], %[arg0], [%[entry_addr], 16];"
+		"stnp %[arg1], %[arg2], [%[entry_addr], 32];"
+		"stnp %[arg3], %[arg4], [%[entry_addr], 48];"
 #if ((1 << CPU_L1D_LINE_BITS) <= TRACE_BUFFER_ENTRY_SIZE) &&                   \
 	((1 << CPU_L1D_LINE_BITS) <= TRACE_BUFFER_ENTRY_ALIGN)
 		"dc civac, %[entry_addr];"
@@ -339,22 +475,38 @@ trace_standard_handle_trace_log(trace_id_t id, trace_action_t action,
 		: [entry] "=m"(buffers[head])
 		: [entry_addr] "r"(&buffers[head]),
 		  [info] "r"(trace_info_raw(trace_info)),
-		  [tag] "r"(trace_tag_raw(trace_tag)), [arg0] "r"(arg0),
-		  [arg1] "r"(arg1), [arg2] "r"(arg2), [arg3] "r"(arg3),
-		  [arg4] "r"(arg4), [arg5] "r"(arg5));
+		  [tag] "r"(trace_tag_raw(trace_tag)), [fmt] "r"(fmt),
+		  [arg0] "r"(arg0), [arg1] "r"(arg1), [arg2] "r"(arg2),
+		  [arg3] "r"(arg3), [arg4] "r"(arg4));
 #else
 	prefetch_store_stream(&buffers[head]);
 
 	buffers[head].info    = trace_info;
 	buffers[head].tag     = trace_tag;
-	buffers[head].fmt     = arg0;
-	buffers[head].args[0] = arg1;
-	buffers[head].args[1] = arg2;
-	buffers[head].args[2] = arg3;
-	buffers[head].args[3] = arg4;
-	buffers[head].args[4] = arg5;
+	buffers[head].fmt     = fmt;
+	buffers[head].args[0] = arg0;
+	buffers[head].args[1] = arg1;
+	buffers[head].args[2] = arg2;
+	buffers[head].args[3] = arg3;
+	buffers[head].args[4] = arg4;
 #endif
 
+#if defined(INTERFACE_ROOTVM)
+	// If a trace buffer notify listener is enabled, signal the virq
+	// whenever the head index notify modulus is zero.
+	if (compiler_unexpected(tb->notify_mask != TRACE_NOTIFY_DISABLED)) {
+		if (compiler_unexpected((head & tb->notify_mask) == 0U)) {
+			assert(hyp_trace.dbl != NULL);
+			doorbell_flags_t dbl_flags = 0U;
+			// signal the event
+			doorbell_flags_result_t dbl_ret =
+				doorbell_send(hyp_trace.dbl, dbl_flags);
+			if (dbl_ret.e != OK) {
+				panic("trace signal");
+			}
+		}
+	}
+#endif
 out:
 	return;
 }
@@ -393,4 +545,78 @@ trace_get_class_flags(void)
 {
 	return atomic_load_explicit(&hyp_trace.enabled_class_flags,
 				    memory_order_relaxed);
+}
+
+// Calculate optimal trace notify_mask and set for the trace_buffer
+static void
+trace_set_notify_mask(trace_buffer_header_t *tb)
+{
+#define COUNT_BITS util_width(count_t)
+
+	// Ensure we notify at least 3 times per buffer
+	count_t entries_notify = tb->entries / 3U;
+	assert_debug(entries_notify > 1U);
+
+	index_t msb = (index_t)(COUNT_BITS - 1U) -
+		      (index_t)compiler_clz(entries_notify);
+
+	tb->notify_mask = (uint32_t)util_mask(msb);
+}
+
+#define TRACE_ENTRIES_MIN 1023U
+
+error_t
+trace_update_notify_mask(bool enable)
+{
+	error_t ret;
+
+	if (enable) {
+		// If we don't have a large enough trace, we risk causing
+		// interrupt storms.
+		if (trace_buffer_global->entries < TRACE_ENTRIES_MIN) {
+			ret = ERROR_DENIED;
+			goto out;
+		}
+		for (cpu_index_t i = 0U; i < PLATFORM_MAX_CORES; i++) {
+			trace_buffer_header_t *cpu_tb =
+				CPULOCAL_BY_INDEX(trace_buffer, i);
+			if ((cpu_tb != NULL) &&
+			    (cpu_tb->entries < TRACE_ENTRIES_MIN)) {
+				ret = ERROR_DENIED;
+				goto out;
+			}
+		}
+
+		trace_set_notify_mask(trace_buffer_global);
+		for (cpu_index_t i = 0U; i < PLATFORM_MAX_CORES; i++) {
+			trace_buffer_header_t *cpu_tb =
+				CPULOCAL_BY_INDEX(trace_buffer, i);
+			if (cpu_tb != NULL) {
+				trace_set_notify_mask(cpu_tb);
+			}
+		}
+		ret = OK;
+	} else {
+		trace_buffer_global->notify_mask = TRACE_NOTIFY_DISABLED;
+
+		for (cpu_index_t i = 0U; i < PLATFORM_MAX_CORES; i++) {
+			if (platform_cpu_exists(i)) {
+				CPULOCAL_BY_INDEX(trace_buffer, i)->notify_mask =
+					TRACE_NOTIFY_DISABLED;
+			}
+		}
+		ret = OK;
+	}
+
+out:
+	return ret;
+}
+
+phys_range_t
+trace_get_area(void)
+{
+	return (phys_range_t){
+		.base = hyp_trace.header_phys,
+		.size = (size_t)hyp_trace.area_size_64 * 64U,
+	};
 }

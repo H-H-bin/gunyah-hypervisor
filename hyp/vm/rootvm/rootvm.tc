@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -18,13 +18,13 @@ extend hyp_env_data structure {
 	env_data_size		size;
 };
 
-define ROOTVM_ENV_DATA_SIGNATURE public constant = 0x454D5652;
-define ROOTVM_ENV_DATA_VERSION public constant = 0x1000;
+define ROOTVM_ENV_DATA_SIGNATURE public constant uint32 = 0x454D5652;
+define ROOTVM_ENV_DATA_VERSION public constant uint16 = 0x1000;
 
 // Do NOT extend this structure, since its cross image interface
 define rt_env_data public structure {
 	signature	uint32;
-	version	uint16;
+	version		uint16;
 
 	runtime_ipa	type vmaddr_t;
 	app_ipa		type vmaddr_t;
@@ -40,13 +40,13 @@ define rt_env_data public structure {
 	rm_config_size	size;
 };
 
-define RM_ENV_DATA_SIGNATURE public constant = 0x524D4544;
-define RM_ENV_DATA_VERSION public constant = 0x1000;
+define RM_ENV_DATA_SIGNATURE public constant uint32 = 0x524D4544;
+define RM_ENV_DATA_VERSION public constant uint16 = 0x1000;
 
 // Do NOT extend this structure, since its cross image interface
 define rm_env_data_hdr public structure {
 	signature	uint32;
-	version	uint16;
+	version		uint16;
 	data_payload_offset	uint32;
 	data_payload_size	uint32;
 };

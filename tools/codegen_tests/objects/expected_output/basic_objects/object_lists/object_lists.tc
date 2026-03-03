@@ -1,0 +1,105 @@
+// Automatically generated. Do not modify.
+
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+
+extend partition object {
+	addrspace_list structure list;
+	addrspace_list_lock structure spinlock;
+};
+
+extend addrspace object {
+	addrspace_list_node structure list_node(contained);
+};
+
+extend partition object {
+	cspace_list structure list;
+	cspace_list_lock structure spinlock;
+};
+
+extend cspace object {
+	cspace_list_node structure list_node(contained);
+};
+
+extend partition object {
+	doorbell_list structure list;
+	doorbell_list_lock structure spinlock;
+};
+
+extend doorbell object {
+	doorbell_list_node structure list_node(contained);
+};
+
+extend partition object {
+	gicv3_its_list structure list;
+	gicv3_its_list_lock structure spinlock;
+};
+
+extend gicv3_its object {
+	gicv3_its_list_node structure list_node(contained);
+};
+
+extend partition object {
+	memextent_list structure list;
+	memextent_list_lock structure spinlock;
+};
+
+extend memextent object {
+	memextent_list_node structure list_node(contained);
+};
+
+extend partition object {
+	msgqueue_list structure list;
+	msgqueue_list_lock structure spinlock;
+};
+
+extend msgqueue object {
+	msgqueue_list_node structure list_node(contained);
+};
+
+extend partition object {
+	thread_list structure list;
+	thread_list_lock structure spinlock;
+};
+
+extend thread object {
+	thread_list_node structure list_node(contained);
+};
+
+extend partition object {
+	vic_list structure list;
+	vic_list_lock structure spinlock;
+};
+
+extend vic object {
+	vic_list_node structure list_node(contained);
+};
+
+extend partition object {
+	virtio_backend_list structure list;
+	virtio_backend_list_lock structure spinlock;
+};
+
+extend virtio_backend object {
+	virtio_backend_list_node structure list_node(contained);
+};
+
+extend partition object {
+	vpm_group_list structure list;
+	vpm_group_list_lock structure spinlock;
+};
+
+extend vpm_group object {
+	vpm_group_list_node structure list_node(contained);
+};
+
+extend partition object {
+	vrtc_list structure list;
+	vrtc_list_lock structure spinlock;
+};
+
+extend vrtc object {
+	vrtc_list_node structure list_node(contained);
+};

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -23,7 +23,7 @@
 error_t
 hypercall_vrtc_configure(cap_id_t vrtc_cap, vmaddr_t ipa)
 {
-	error_t	  err	 = OK;
+	error_t	  err;
 	cspace_t *cspace = cspace_get_self();
 
 	if (!util_is_baligned(ipa, VRTC_DEV_SIZE) ||
@@ -43,6 +43,7 @@ hypercall_vrtc_configure(cap_id_t vrtc_cap, vmaddr_t ipa)
 	spinlock_acquire(&vrtc->header.lock);
 	if (atomic_load_relaxed(&vrtc->header.state) == OBJECT_STATE_INIT) {
 		vrtc->ipa = ipa;
+		err	  = OK;
 	} else {
 		err = ERROR_OBJECT_STATE;
 	}
@@ -57,7 +58,7 @@ error_t
 hypercall_vrtc_set_time_base(cap_id_t vrtc_cap, nanoseconds_t time_base,
 			     ticks_t sys_timer_ref)
 {
-	error_t	  err	 = OK;
+	error_t	  err;
 	cspace_t *cspace = cspace_get_self();
 
 	vrtc_ptr_result_t vrtc_r = cspace_lookup_vrtc(
@@ -90,6 +91,7 @@ hypercall_vrtc_set_time_base(cap_id_t vrtc_cap, nanoseconds_t time_base,
 	// hypercall is handled in the hypervisor.
 	vrtc->time_base = time_base_ticks - sys_timer_ref;
 	vrtc->lr	= (rtc_seconds_t)(time_base / TIMER_NANOSECS_IN_SECOND);
+	err		= OK;
 
 out_preempt:
 	preempt_enable();
@@ -102,7 +104,7 @@ out:
 error_t
 hypercall_vrtc_attach_addrspace(cap_id_t vrtc_cap, cap_id_t addrspace_cap)
 {
-	error_t	  err	 = OK;
+	error_t	  err;
 	cspace_t *cspace = cspace_get_self();
 
 	vrtc_ptr_result_t vrtc_r = cspace_lookup_vrtc(
@@ -139,6 +141,7 @@ hypercall_vrtc_attach_addrspace(cap_id_t vrtc_cap, cap_id_t addrspace_cap)
 	}
 
 	addrspace->vrtc = object_get_vrtc_additional(vrtc);
+	err		= OK;
 
 out_release_addrspace:
 	spinlock_release(&addrspace->header.lock);

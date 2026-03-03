@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -7,6 +7,7 @@
 
 #include <hypregisters.h>
 
+#include <bitmap.h>
 #include <compiler.h>
 #include <cpulocal.h>
 #include <panic.h>
@@ -44,11 +45,6 @@
 // which is essentially defined the same as the ARM physical counter and
 // virtualising it does not provide any additional security.
 
-#if defined(ARCH_ARM_FEAT_AMUv1p1)
-#error Implement the AMU virtual offset registers
-#error Investigate the need to support non-consecutive auxiliary counters
-#endif
-
 #if defined(ARCH_ARM_FEAT_AMUv1) || defined(ARCH_ARM_FEAT_AMUv1p1)
 CPULOCAL_DECLARE_STATIC(uint64_t, amu_counter_offsets)[PLATFORM_AMU_CNT_NUM];
 CPULOCAL_DECLARE_STATIC(uint64_t, amu_aux_counter_offsets)
@@ -72,14 +68,11 @@ arm_vm_amu_handle_boot_cpu_cold_init(cpu_index_t cpu)
 	AMCFGR_EL0_t amcfgr = register_AMCFGR_EL0_read();
 	AMCGCR_EL0_t amcgcr = register_AMCGCR_EL0_read();
 
-#if defined(ARCH_ARM_FEAT_AMUv1p1)
-#error TODO: Check the AMU counter bitmap
-#else
 	if ((AMCFGR_EL0_get_N(&amcfgr) + 1U) !=
 	    (PLATFORM_AMU_CNT_NUM + PLATFORM_AMU_AUX_CNT_NUM)) {
 		panic("Incorrect CPU AMU count");
 	}
-#endif
+
 	if ((AMCGCR_EL0_get_CG0NC(&amcgcr) != PLATFORM_AMU_CNT_NUM) ||
 	    (AMCGCR_EL0_get_CG1NC(&amcgcr) != PLATFORM_AMU_AUX_CNT_NUM)) {
 		panic("Incorrect CPU AMU group counts");
@@ -91,12 +84,20 @@ arm_vm_amu_handle_vcpu_activate_thread(thread_t		  *thread,
 				       vcpu_option_flags_t options)
 {
 	assert(thread != NULL);
-	assert(thread->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(thread));
 
 	// Trap accesses to AMU registers. For HLOS we will emulate
 	// them, for the rest of the VMs we will leave them unhandled
 	// and inject an abort.
 	CPTR_EL2_E2H1_set_TAM(&thread->vcpu_regs_el2.cptr_el2, true);
+
+#if defined(ARCH_ARM_FEAT_AMUv1p1)
+	// On the platforms with support for AMUv1p1, we should use the virtual
+	// offsets to hide the sensitive VMs' counter changes from HLOS, instead
+	// of the current method of calculating and subtracting.
+	// FIXME: QC Gunyah issue #258
+	HCR_EL2_set_AMVOFFEN(&thread->vcpu_regs_el2.hcr_el2, false);
+#endif
 
 	vcpu_option_flags_set_amu_counting_disabled(
 		&thread->vcpu_options,
@@ -113,7 +114,7 @@ arm_vm_amu_handle_thread_context_switch_pre(thread_t *next)
 	// In theory it is not necessary to do this if we are coming from
 	// another sensitive thread, but adding the required extra checks will
 	// likely degrade the performance as this will be a rare occurrence.
-	if (compiler_unexpected((next->kind == THREAD_KIND_VCPU) &&
+	if (compiler_unexpected(vcpu_is_vcpu(next) &&
 				(vcpu_option_flags_get_amu_counting_disabled(
 					&next->vcpu_options)))) {
 		cpulocal_begin();
@@ -134,7 +135,7 @@ arm_vm_amu_handle_thread_context_switch_post(thread_t *prev)
 	// In theory it is not necessary to do this if we are switching to
 	// another sensitive thread, but adding the required extra checks will
 	// likely degrade the performance as this will be a rare occurrence.
-	if (compiler_unexpected((prev->kind == THREAD_KIND_VCPU) &&
+	if (compiler_unexpected(vcpu_is_vcpu(prev) &&
 				(vcpu_option_flags_get_amu_counting_disabled(
 					&prev->vcpu_options)))) {
 		cpulocal_begin();
@@ -142,6 +143,19 @@ arm_vm_amu_handle_thread_context_switch_post(thread_t *prev)
 		arm_vm_amu_add_aux_counters(&CPULOCAL(amu_aux_counter_offsets));
 		cpulocal_end();
 	}
+}
+
+static uint64_t
+get_adjusted_counter_value(uint8_t index)
+{
+	cpulocal_begin();
+	uint64_t *offsets = CPULOCAL(amu_aux_counter_offsets);
+	uint64_t  val	  = arm_vm_amu_get_aux_counter(index);
+	// Adjust the counter value
+	val -= offsets[index];
+	cpulocal_end();
+
+	return val;
 }
 
 static vcpu_trap_result_t
@@ -179,14 +193,22 @@ arm_vm_amu_get_event_register(ESR_EL2_ISS_MSR_MRS_t iss, uint64_t *val)
 		} else if (((crm == 12U) || (crm == 13U)) &&
 			   (index < PLATFORM_AMU_AUX_CNT_NUM)) {
 			// Auxiliary event counter registers
-			cpulocal_begin();
-			uint64_t *offsets = CPULOCAL(amu_aux_counter_offsets);
-			*val		  = arm_vm_amu_get_aux_counter(index);
-			// Adjust the counter value
-			*val -= offsets[index];
-			cpulocal_end();
-
-			ret = VCPU_TRAP_RESULT_EMULATED;
+#if defined(ARCH_ARM_FEAT_AMUv1p1)
+			AMCG1IDR_EL0_t amcg1idr = register_AMCG1IDR_EL0_read();
+			register_t     counters =
+				(register_t)AMCG1IDR_EL0_get_AMEVCNTR1s(
+					&amcg1idr);
+			bool counter_valid = bitmap_isset(&counters, index);
+			if (counter_valid) {
+				*val = get_adjusted_counter_value(index);
+				ret  = VCPU_TRAP_RESULT_EMULATED;
+			} else {
+				ret = VCPU_TRAP_RESULT_UNHANDLED;
+			}
+#else
+			*val = get_adjusted_counter_value(index);
+			ret  = VCPU_TRAP_RESULT_EMULATED;
+#endif
 		} else if (((crm == 14U) || (crm == 15U)) &&
 			   (index < PLATFORM_AMU_AUX_CNT_NUM)) {
 			// Auxiliary event type registers
@@ -264,7 +286,7 @@ arm_vm_amu_handle_vcpu_trap_sysreg_read(ESR_EL2_ISS_MSR_MRS_t iss)
 		break;
 #if defined(ARCH_ARM_FEAT_AMUv1p1)
 	case ISS_MRS_MSR_AMCG1IDR_EL0:
-		val = register_AMCG1IDR_EL0_read();
+		val = AMCG1IDR_EL0_raw(register_AMCG1IDR_EL0_read());
 		break;
 #endif
 	default:

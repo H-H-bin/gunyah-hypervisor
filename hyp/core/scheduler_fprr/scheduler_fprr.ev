@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -21,6 +21,9 @@ subscribe vcpu_wakeup
 	require_scheduler_lock(vcpu)
 
 subscribe vcpu_expects_wakeup
+
+subscribe rootvm_init(qcbor_enc_ctxt)
+	priority 100
 #endif
 
 subscribe object_deactivate_thread

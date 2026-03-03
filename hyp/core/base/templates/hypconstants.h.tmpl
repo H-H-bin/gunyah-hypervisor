@@ -1,9 +1,11 @@
 // Automatically generated. Do not modify.
 //
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
+\#ifndef HYPCONSTANTS_H_
+\#define HYPCONSTANTS_H_
 // Struct and object member offsets
 
 #set global ofs_macros = set()
@@ -93,3 +95,6 @@ $print_offsets(prefix, 0, d)
 #end for
 
 \#endif // defined(__ASSEMBLER__)
+\#else
+\#error HYPCONSTANTS_H_ multiple include
+\#endif

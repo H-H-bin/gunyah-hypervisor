@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -136,8 +136,8 @@ platform_timer_lp_handle_boot_cold_init(void)
 
 	platform_timer_lp_visibility(true);
 
-	// FIXME:
-	// Unmap/remap the priviledged timer frame in the HLOS S2 address space
+	// FIXME: QC Gunyah issue #106
+	// Unmap/remap the privileged timer frame in the HLOS S2 address space
 }
 
 void

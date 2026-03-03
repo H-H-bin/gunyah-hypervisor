@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -35,12 +35,21 @@ vdebug_handle_boot_cpu_cold_init(void)
 	assert((ID_AA64DFR0_EL1_get_WRPs(&aa64dfr) + 1U) == CPU_DEBUG_WP_COUNT);
 }
 
+void
+vdebug_handle_boot_cpu_warm_init(void)
+{
+	// Write zeros to MDSCR_EL1.MDE and MDSCR_EL1.SS to disable breakpoints
+	// and single-stepping.
+	register_MDSCR_EL1_write_ordered(MDSCR_EL1_default(),
+					 &vdebug_asm_order);
+}
+
 bool
 vdebug_handle_vcpu_activate_thread(thread_t	      *thread,
 				   vcpu_option_flags_t options)
 {
 	assert(thread != NULL);
-	assert(thread->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(thread));
 
 	// Debug traps should all be enabled by default
 	assert(MDCR_EL2_get_TDOSA(&thread->vcpu_regs_el2.mdcr_el2));
@@ -56,14 +65,12 @@ vdebug_handle_vcpu_activate_thread(thread_t	      *thread,
 }
 
 void
-vdebug_handle_thread_save_state(void)
+vdebug_handle_vcpu_save_state(void)
 {
 	thread_t *current = thread_get_self();
 
 	if (compiler_unexpected(vcpu_runtime_flags_get_debug_active(
 		    &current->vcpu_flags))) {
-		assert(current->kind == THREAD_KIND_VCPU);
-
 		// Context-switch the debug registers only if
 		// - The device security state disallows debugging, or
 		// - The device security state allows debugging and the
@@ -86,14 +93,19 @@ vdebug_handle_thread_save_state(void)
 				&current->vdebug_state, &vdebug_asm_order);
 		}
 
-		// If debug is no longer in use, ensure register accesses will
-		// be trapped when we next switch back to this VCPU, so we can
-		// safely avoid restoring the registers.
+		// If debug is no longer in use, enable the traps. Note, this
+		// will take effect even if the context-switch is aborted.
 		if (!vdebug_enabled) {
 			MDCR_EL2_set_TDA(&current->vcpu_regs_el2.mdcr_el2,
 					 true);
+			register_MDCR_EL2_write(
+				current->vcpu_regs_el2.mdcr_el2);
 			vcpu_runtime_flags_set_debug_active(
 				&current->vcpu_flags, false);
+			// Write zeros to MDSCR_EL1.MDE and MDSCR_EL1.SS to
+			// disable breakpoints and single-stepping.
+			register_MDSCR_EL1_write_ordered(MDSCR_EL1_default(),
+							 &vdebug_asm_order);
 		}
 	}
 }
@@ -116,7 +128,7 @@ vdebug_handle_thread_context_switch_post(thread_t *prev)
 }
 
 void
-vdebug_handle_thread_load_state(void)
+vdebug_handle_vcpu_load_state(void)
 {
 	thread_t *current = thread_get_self();
 
@@ -141,6 +153,9 @@ vdebug_handle_thread_load_state(void)
 			debug_load_common(&current->vdebug_state,
 					  &vdebug_asm_order);
 		}
+	} else {
+		// Nothing to do, we rely on MDSCR_EL1 being zeroed during
+		// cpu_warm_boot and context_switch_post event handlers above.
 	}
 }
 

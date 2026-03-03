@@ -1,0 +1,4 @@
+
+interface noreturn_not_last_interface
+
+event noreturn_not_last_interface_event

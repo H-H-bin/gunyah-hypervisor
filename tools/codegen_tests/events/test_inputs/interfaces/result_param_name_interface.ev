@@ -1,0 +1,9 @@
+
+interface result_param_name_interface
+
+/* Error illegal param name == result */
+
+setup_event event_interface_setup_event_return_ref
+	param result: uintptr_t
+	return : uintptr_t = ERROR_FAILURE
+	success: OK

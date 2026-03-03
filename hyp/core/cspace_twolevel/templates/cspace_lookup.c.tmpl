@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -25,6 +25,7 @@ cspace_lookup_${o}_common(cspace_t *cspace, cap_id_t cap_id,
 	ret = cspace_lookup_object(cspace, cap_id, OBJECT_TYPE_${o.upper()},
 				   cap_rights_${o}_raw(rights), active_only);
 	if (compiler_expected(ret.e == OK)) {
+		assert_debug(ret.r.${o} != NULL);
 		result = ${o}_ptr_result_ok(ret.r.${o});
 	} else {
 		result = ${o}_ptr_result_error(ret.e);

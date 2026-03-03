@@ -1,4 +1,4 @@
-// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -47,6 +47,11 @@ define addrspace_map_flags public bitfield<32> {
 	// calls for a specific address space only if they have this flag set.
 	2	vmmio		bool;
 
+	// Set if the operation should unmap every mapping of the specified
+	// memory extent regardless of its address. This flag is mutually
+	// exclusive with the partial flag and is only valid for unmapping.
+	3	whole_extent	bool;
+
 	// Set if the operation does not need to guarantee that all accesses
 	// to pages unmapped during the operation have completed before it
 	// returns. In this case, the caller may wish to perform a separate
@@ -64,20 +69,18 @@ define addrspace_modify_pages_flags public bitfield<32> {
 	// call, the no_sync_unlock flag should be set.
 	0	unlock		bool;
 
-	// Set if the operation should zero and cache flush any locked pages,
-	// before unlocking them if applicable.
-	//
-	// Note that this operation does not provide any guarantee that
-	// concurrent memory accesses by VCPUs other than the caller will
-	// complete or fault before sanitisation occurs. Therefore, this
-	// option should only be used if the caller can guarantee that there
-	// are no such concurrent accesses in progress.
-	1	sanitise	bool;
+	// Reserved; formerly used to enable immediate sanitisation. This must
+	// be set to 1 for backwards compatibility.
+	1	unknown = 1;
 
 	// Set if the operation does not need to guarantee that all accesses
 	// to pages unlocked during the operation will fault if they occur
 	// after the operation completes.
 	2	no_sync_unlock	bool;
+
+	// Set if the operation should mark any unlocked pages as not requiring
+	// sanitisation when they are unmapped.
+	3	do_not_sanitise	bool;
 };
 
 define addrspace_lookup structure {
@@ -96,14 +99,19 @@ define addrspace_va_lookup structure {
 
 define addrspace_info_area_id_owner public enumeration(explicit) {
 	// Platform independent (0 - 15)
-	INVALID = 0;
+	INVALID	= 0;
 	GUNYAH	= 1;	// Hypervisor IDs
 	ROOTVM	= 2;	// Generic RootVM IDs
 	RM	= 3;	// Gunyah Resource Manager IDs
 	// Qualcomm reserved range (16 - 19)
 	QCRM	= 16;
+	// OEM / developer proprietary IDs
+	DEV	= 0xffff;
 	// Other values reserved
 };
+
+// For lookups only, used as index
+define ADDRSPACE_INFO_AREA_ID_OWNER_INDEX public constant uint32 = 0;
 
 define addrspace_info_area_entry_type public bitfield<32> {
 	15:0		id		uint32;

@@ -1,0 +1,43 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+// Retry timer for denied requests to EL3.
+//
+// There is an inherent potential for livelock in PSCI OS-initiated mode: two
+// or more CPUs may loop retrying cluster suspends, each being denied every
+// time because the other(s) are seen as active by EL3 but as inactive by EL2.
+//
+// To avoid this problem, when a DENIED result is received we wait a while in
+// WFI before allowing a retry of the PSCI request. This gives the other CPUs
+// that are active in EL3 (and in the process of either waking up or having a
+// suspend request denied) a chance to return to EL2 so they are seen as
+// active by the last-CPU calculation.
+
+define psci_retry_denied structure {
+	// Timer that is enqueued when a PSCI DENIED error is received, and
+	// prevents any attempts to call EL3 PSCI as long as it is pending.
+	timer		structure timer(contained);
+
+	// The number of consecutive PSCI DENIED errors on this CPU. This is
+	// cleared every time a suspend request succeeds (after the wakeup) or
+	// if we switch away from the idle thread.
+	count		type count_t;
+};
+
+// Action for the timer above. No handler is required; the timer interrupt
+// will restart idle_yield(), which is all we need.
+extend timer_action enumeration {
+	psci_retry_denied;
+};
+
+// A denied suspend request will generally return after a delay in the order
+// of 100µs. Retrying any faster than this might not break the loop at all.
+define PSCI_RETRY_DENIED_MIN_DELAY_NS constant type nanoseconds_t = 100000;
+
+// If the retry is denied repeatedly, there might be multiple CPUs in the
+// loop, or EL3 might be running slow for some reason. To handle this case, we
+// exponentially increase the timeout (base 2) until we reach a count of 10
+// consecutive denials, i.e. a 102.4ms delay. After that, we can reasonably
+// assume broken EL3 or hardware, so we panic.
+define PSCI_RETRY_DENIED_MAX_COUNT constant type count_t = 10;

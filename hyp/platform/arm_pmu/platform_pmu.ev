@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -6,6 +6,10 @@ module arm_pmu
 
 subscribe boot_cpu_cold_init
 	handler platform_pmu_handle_boot_cpu_cold_init()
+	require_preempt_disabled
+
+subscribe boot_cpu_warm_init
+	handler platform_pmu_handle_boot_cpu_warm_init()
 	require_preempt_disabled
 
 subscribe boot_hypervisor_start

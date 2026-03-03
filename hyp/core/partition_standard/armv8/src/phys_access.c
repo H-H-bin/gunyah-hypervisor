@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier; BSD-3-Clause
 
@@ -30,7 +30,7 @@ partition_phys_access_cpu_warm_init(void)
 static bool
 memory_attr_type_check(MAIR_ATTR_t memattr, paddr_t check_pa)
 {
-	bool ret = true;
+	bool ret;
 
 	switch (memattr) {
 	case MAIR_ATTR_DEVICE_NGNRNE:
@@ -45,6 +45,7 @@ memory_attr_type_check(MAIR_ATTR_t memattr, paddr_t check_pa)
 	case MAIR_ATTR_TAGGED_NORMAL_WB:
 #endif
 	case MAIR_ATTR_NORMAL_WB:
+		ret = true;
 		break;
 	case MAIR_ATTR_DEVICE_NGNRNE_XS:
 	case MAIR_ATTR_DEVICE_NGNRE_XS:
@@ -65,7 +66,7 @@ memory_attr_type_check(MAIR_ATTR_t memattr, paddr_t check_pa)
 bool
 partition_phys_valid(paddr_t paddr, size_t size)
 {
-	bool ret = true;
+	bool ret;
 
 	if (util_add_overflows(paddr, size)) {
 		ret = false;
@@ -90,7 +91,7 @@ partition_phys_valid(paddr_t paddr, size_t size)
 			    "partition_phys_valid failed for PA: {:#x}",
 			    check_pa);
 			ret = false;
-			break;
+			goto out;
 		}
 
 		if (compiler_unexpected(check_pa != pa_lookup)) {
@@ -103,13 +104,14 @@ partition_phys_valid(paddr_t paddr, size_t size)
 
 		// We map the hyp_aspace_physaccess_offset as device type when
 		// invalid.
-		ret = memory_attr_type_check(memattr, check_pa);
-
-		if (!ret) {
-			break;
+		if (!memory_attr_type_check(memattr, check_pa)) {
+			ret = false;
+			goto out;
 		}
 	}
 
+	// Checked the whole range
+	ret = true;
 out:
 	return ret;
 }
@@ -118,8 +120,9 @@ void *
 partition_phys_map(paddr_t paddr, size_t size)
 {
 	assert(!util_add_overflows(paddr, size));
-	assert_debug(partition_phys_valid(paddr, size));
-
+#if defined(VERBOSE) && VERBOSE
+	assert(partition_phys_valid(paddr, size));
+#endif
 	return (void *)((uintptr_t)paddr + hyp_aspace_get_physaccess_offset());
 }
 

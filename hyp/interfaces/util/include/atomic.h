@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -34,6 +34,10 @@
 	atomic_store_explicit((p), (v), memory_order_relaxed)
 #define atomic_store_release(p, v)                                             \
 	atomic_store_explicit((p), (v), memory_order_release)
+
+// Shortcut for exchange-relaxed
+#define atomic_exchange_relaxed(p, v)                                          \
+	atomic_exchange_explicit((p), (v), memory_order_relaxed)
 
 // Device memory fences
 //

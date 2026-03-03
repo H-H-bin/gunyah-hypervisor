@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -8,11 +8,11 @@
 // trapped and accessed indirectly.
 
 #define ISS_OP0_OP1_CRN_CRM_OP2(op0, op1, crn, crm, op2)                       \
-	(uint32_t)(((3U & (uint32_t)(op0)) << 20) |                            \
-		   ((7U & (uint32_t)(op2)) << 17) |                            \
-		   ((7U & (uint32_t)(op1)) << 14) |                            \
-		   ((15U & (uint32_t)(crn)) << 10) |                           \
-		   ((15U & (uint32_t)(crm)) << 1))
+	(uint32_t)(((uint32_t)(3U & (uint32_t)(op0)) << 20) |                  \
+		   ((uint32_t)(7U & (uint32_t)(op2)) << 17) |                  \
+		   ((uint32_t)(7U & (uint32_t)(op1)) << 14) |                  \
+		   ((uint32_t)(15U & (uint32_t)(crn)) << 10) |                 \
+		   ((uint32_t)(15U & (uint32_t)(crm)) << 1))
 
 // - op0 = 3 : Moves to and from non-debug System registers, Special-purpose
 //             registers
@@ -53,6 +53,7 @@
 #define ISS_MRS_MSR_ID_AA64MMFR2_EL1 ISS_OP0_OP1_CRN_CRM_OP2(3, 0, 0, 7, 2)
 #define ISS_MRS_MSR_ID_AA64MMFR3_EL1 ISS_OP0_OP1_CRN_CRM_OP2(3, 0, 0, 7, 3)
 #define ISS_MRS_MSR_ID_AA64MMFR4_EL1 ISS_OP0_OP1_CRN_CRM_OP2(3, 0, 0, 7, 4)
+#define ISS_MRS_MSR_SMIDR_EL1	     ISS_OP0_OP1_CRN_CRM_OP2(3, 1, 0, 0, 6)
 #define ISS_MRS_MSR_AIDR_EL1	     ISS_OP0_OP1_CRN_CRM_OP2(3, 1, 0, 0, 7)
 #define ISS_MRS_MSR_PMCR_EL0	     ISS_OP0_OP1_CRN_CRM_OP2(3, 3, 9, 12, 0)
 #define ISS_MRS_MSR_PMCNTENSET_EL0   ISS_OP0_OP1_CRN_CRM_OP2(3, 3, 9, 12, 1)
@@ -73,6 +74,7 @@
 
 #define ISS_MRS_MSR_SCTLR_EL1	   ISS_OP0_OP1_CRN_CRM_OP2(3, 0, 1, 0, 0)
 #define ISS_MRS_MSR_ACTLR_EL1	   ISS_OP0_OP1_CRN_CRM_OP2(3, 0, 1, 0, 1)
+#define ISS_MRS_MSR_SMPRI_EL1	   ISS_OP0_OP1_CRN_CRM_OP2(3, 0, 1, 2, 4)
 #define ISS_MRS_MSR_TTBR0_EL1	   ISS_OP0_OP1_CRN_CRM_OP2(3, 0, 2, 0, 0)
 #define ISS_MRS_MSR_TTBR1_EL1	   ISS_OP0_OP1_CRN_CRM_OP2(3, 0, 2, 0, 1)
 #define ISS_MRS_MSR_TCR_EL1	   ISS_OP0_OP1_CRN_CRM_OP2(3, 0, 2, 0, 2)

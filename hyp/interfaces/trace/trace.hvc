@@ -1,12 +1,12 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-define trace_update_class_flags hypercall {
+define trace_configure hypercall {
 	call_num	0x3f;
-	set_flags	input uregister;
-	clear_flags	input uregister;
-	res0		input uregister;
+	arg1		input uregister;
+	arg2		input uregister;
+	param		input enumeration trace_configure_parameter;
 	error		output enumeration error;
-	flags		output uregister;
+	ret		output uregister;
 };

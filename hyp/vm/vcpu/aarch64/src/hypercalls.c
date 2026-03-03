@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -16,11 +16,14 @@
 #include <cspace_lookup.h>
 #include <object.h>
 #include <platform_cpu.h>
+#include <qcbor.h>
 #include <scheduler.h>
 #include <spinlock.h>
 #include <thread.h>
 #include <util.h>
 #include <vcpu.h>
+
+#include <events/vcpu.h>
 
 #include "event_handlers.h"
 #include "reg_access.h"
@@ -61,7 +64,7 @@ hypercall_vcpu_configure(cap_id_t cap_id, vcpu_option_flags_t vcpu_options)
 
 	thread_t *vcpu = result.r.thread;
 
-	if (compiler_expected(vcpu->kind == THREAD_KIND_VCPU)) {
+	if (compiler_expected(vcpu_is_vcpu(vcpu))) {
 		spinlock_acquire(&vcpu->header.lock);
 		object_state_t state = atomic_load_relaxed(&vcpu->header.state);
 		if (state == OBJECT_STATE_INIT) {
@@ -211,7 +214,7 @@ hypercall_vcpu_set_affinity(cap_id_t cap_id, register_t arg1,
 
 	thread_t *vcpu = result.r;
 
-	if (compiler_unexpected(vcpu->kind != THREAD_KIND_VCPU)) {
+	if (compiler_unexpected(!vcpu_is_vcpu(vcpu))) {
 		ret = ERROR_ARGUMENT_INVALID;
 		object_put_thread(vcpu);
 		goto out;
@@ -255,39 +258,38 @@ hypercall_vcpu_poweron(cap_id_t cap_id, uint64_t entry_point, uint64_t context,
 		ret = result.e;
 		goto out;
 	}
-
 	thread_t *vcpu = result.r;
 
-	if (compiler_expected(vcpu->kind == THREAD_KIND_VCPU)) {
-		bool reschedule = false;
+	bool reschedule = false;
 
-		scheduler_lock(vcpu);
-		if (scheduler_is_blocked(vcpu, SCHEDULER_BLOCK_VCPU_OFF)) {
-			bool_result_t poweron_result = vcpu_poweron(
-				vcpu,
-				vcpu_poweron_flags_get_preserve_entry_point(
-					&flags)
-					? vmaddr_result_error(
-						  ERROR_ARGUMENT_INVALID)
-					: vmaddr_result_ok(entry_point),
-				vcpu_poweron_flags_get_preserve_context(&flags)
-					? register_result_error(
-						  ERROR_ARGUMENT_INVALID)
-					: register_result_ok(context));
-			reschedule = poweron_result.r;
-			ret	   = poweron_result.e;
-		} else {
-			ret = ERROR_BUSY;
-		}
-		scheduler_unlock(vcpu);
-		object_put_thread(vcpu);
-
-		if (reschedule) {
-			(void)scheduler_schedule();
-		}
-	} else {
+	if (!vcpu_is_vcpu(vcpu)) {
 		ret = ERROR_ARGUMENT_INVALID;
-		object_put_thread(vcpu);
+		goto out_release_vcpu;
+	}
+
+	vcpu_power_req_flags_t power_flags = vcpu_power_req_flags_default();
+
+	scheduler_lock(vcpu);
+
+	bool_result_t poweron_result = vcpu_poweron(
+		vcpu,
+		vcpu_poweron_flags_get_preserve_entry_point(&flags)
+			? vmaddr_result_error(ERROR_ARGUMENT_INVALID)
+			: vmaddr_result_ok(entry_point),
+		vcpu_poweron_flags_get_preserve_context(&flags)
+			? register_result_error(ERROR_ARGUMENT_INVALID)
+			: register_result_ok(context),
+		power_flags);
+	reschedule = poweron_result.r;
+	ret	   = poweron_result.e;
+
+	scheduler_unlock(vcpu);
+
+out_release_vcpu:
+	object_put_thread(vcpu);
+
+	if (reschedule) {
+		(void)scheduler_schedule();
 	}
 out:
 	return ret;
@@ -310,26 +312,28 @@ hypercall_vcpu_poweroff(cap_id_t cap_id, vcpu_poweroff_flags_t flags)
 		ret = result.e;
 		goto out;
 	}
-
 	thread_t *vcpu = result.r;
 
-	if (compiler_expected(vcpu->kind == THREAD_KIND_VCPU) &&
-	    (vcpu == thread_get_self())) {
-		// We can (and must) safely release our reference to the VCPU
-		// here, because we know it's the current thread so the
-		// scheduler will keep a reference to it. Since vcpu_poweroff()
-		// does not return, failing to release this reference will
-		// leave the thread as a zombie after it halts.
-		object_put_thread(vcpu);
-
-		ret = vcpu_poweroff(vcpu_poweroff_flags_get_last_vcpu(&flags),
-				    false);
-		// It will not reach here if it succeeded
-	} else {
+	if ((!vcpu_is_vcpu(vcpu)) || (vcpu != thread_get_self())) {
 		ret = ERROR_ARGUMENT_INVALID;
-		object_put_thread(vcpu);
+		goto out_release_vcpu;
 	}
 
+	// We can (and must) safely release our reference to the VCPU here,
+	// because we know it's the current thread so the scheduler will keep
+	// a reference to it. Since vcpu_poweroff() does not return, failing
+	// to release this reference will leave the thread as a zombie after
+	// it halts.
+	object_put_thread(vcpu);
+
+	vcpu_power_req_flags_t power_flags = vcpu_power_req_flags_default();
+	ret = vcpu_poweroff(vcpu_poweroff_flags_get_last_vcpu(&flags), false,
+			    power_flags);
+	// This point is only reached on error
+	goto out;
+
+out_release_vcpu:
+	object_put_thread(vcpu);
 out:
 	return ret;
 }
@@ -349,7 +353,7 @@ hypercall_vcpu_set_priority(cap_id_t cap_id, priority_t priority)
 
 	thread_t *vcpu = result.r;
 
-	if (compiler_unexpected(vcpu->kind != THREAD_KIND_VCPU)) {
+	if (compiler_unexpected(!vcpu_is_vcpu(vcpu))) {
 		ret = ERROR_ARGUMENT_INVALID;
 		object_put_thread(vcpu);
 		goto out;
@@ -392,7 +396,7 @@ hypercall_vcpu_set_timeslice(cap_id_t cap_id, nanoseconds_t timeslice)
 
 	thread_t *vcpu = result.r;
 
-	if (compiler_unexpected(vcpu->kind != THREAD_KIND_VCPU)) {
+	if (compiler_unexpected(!vcpu_is_vcpu(vcpu))) {
 		ret = ERROR_ARGUMENT_INVALID;
 		object_put_thread(vcpu);
 		goto out;
@@ -429,11 +433,34 @@ hypercall_vcpu_kill(cap_id_t cap_id)
 
 	thread_t *vcpu = result.r;
 
-	if (compiler_expected(vcpu->kind == THREAD_KIND_VCPU)) {
+	if (compiler_expected(vcpu_is_vcpu(vcpu))) {
 		ret = thread_kill(vcpu);
 	} else {
 		ret = ERROR_ARGUMENT_INVALID;
 	}
+
+	object_put_thread(vcpu);
+out:
+	return ret;
+}
+
+error_t
+hypercall_vcpu_set_local_virq(cap_id_t cap_id, vcpu_local_virq_type_t virq_type,
+			      virq_t virq)
+{
+	error_t	  ret	 = OK;
+	cspace_t *cspace = cspace_get_self();
+
+	thread_ptr_result_t result = cspace_lookup_thread_any(
+		cspace, cap_id, CAP_RIGHTS_THREAD_BIND_LOCAL_VIRQ);
+	if (compiler_unexpected(result.e != OK)) {
+		ret = result.e;
+		goto out;
+	}
+
+	thread_t *vcpu = result.r;
+
+	ret = trigger_vcpu_set_local_virq_event(virq_type, vcpu, virq);
 
 	object_put_thread(vcpu);
 out:

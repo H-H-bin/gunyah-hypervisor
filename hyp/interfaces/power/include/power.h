@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -26,3 +26,12 @@ power_vote_cpu_on(cpu_index_t cpu);
 // it is the caller's responsibility to avoid this.
 void
 power_vote_cpu_off(cpu_index_t cpu);
+
+#if defined(PLATFORM_ENABLE_SYSTEM_SUSPEND) && PLATFORM_ENABLE_SYSTEM_SUSPEND
+// Initiate System Suspend Sequence
+error_t
+power_system_suspend(void);
+#endif // PLATFORM_ENABLE_SYSTEM_SUSPEND
+
+error_t
+power_cpu_suspend(psci_suspend_powerstate_t power_state);

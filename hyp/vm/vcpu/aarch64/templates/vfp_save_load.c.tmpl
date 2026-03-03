@@ -1,0 +1,229 @@
+// Automatically generated. Do not modify.
+//
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+\#include <assert.h>
+\#include <hyptypes.h>
+
+\#include <hypregisters.h>
+
+\#include <asm/barrier.h>
+\#include "vfp_save_load.h"
+
+\#if defined(ARCH_ARM_FEAT_SVE) || defined(ARCH_ARM_FEAT_SME)
+void
+vfp_save_v_regs(vector_register_t (*v)[32], asm_ordering_dummy_t *ordering_var)
+{
+	__asm__ volatile(".arch_extension fp;"
+#for i in range(0, 32, 2)
+			 "stp q${i}, q${i+1}, [%[v], ${16*i}];"
+#end for
+			 ".arch_extension nofp;"
+			 : "=m"(*v), "+m"(*ordering_var)
+			 : [v] "r"(v));
+}
+
+void
+vfp_load_v_regs(vector_register_t (*v)[32], asm_ordering_dummy_t *ordering_var)
+{
+	__asm__ volatile(".arch_extension fp;"
+#for i in range(0, 32, 2)
+			 "ldp q${i}, q${i+1}, [%[v], ${16*i}];"
+#end for
+			 ".arch_extension nofp;"
+			 : "+m"(*ordering_var)
+			 : [v] "r"(v), "m"(*v));
+}
+\#endif
+
+\#if defined(ARCH_ARM_FEAT_SVE)
+void
+vfp_save_sve_z_regs(sve_vector_register_t (*z)[32],
+		    asm_ordering_dummy_t *ordering_var)
+{
+	__asm__ volatile(".arch_extension sve;"
+#for i in range(0, 32)
+			 "str z${i}, [%[z], ${i}, mul vl];"
+#end for
+			 ".arch_extension nosve;"
+			 : "=m"(*z), "+m"(*ordering_var)
+			 : [z] "r"(z));
+}
+
+void
+vfp_load_sve_z_regs(sve_vector_register_t (*z)[32],
+		    asm_ordering_dummy_t *ordering_var)
+{
+	__asm__ volatile(".arch_extension sve;"
+#for i in range(0, 32)
+			 "ldr z${i}, [%[z], ${i}, mul vl];"
+#end for
+			 ".arch_extension nosve;"
+			 : "+m"(*ordering_var)
+			 : [z] "r"(z), "m"(*z));
+}
+
+void
+vfp_save_sve_pffr_regs(sve_predicate_register_t (*pffr)[17],
+		       asm_ordering_dummy_t *ordering_var)
+{
+	__asm__ volatile(".arch_extension sve;"
+#for i in range(0, 16)
+			 "str p${i}, [%[pffr], ${i}, mul vl];"
+#end for
+			 "rdffr p0.b;"
+			 "str p0, [%[pffr], 16, mul vl];"
+			 ".arch_extension nosve;"
+			 : "=m"(*pffr), "+m"(*ordering_var)
+			 : [pffr] "r"(pffr));
+}
+
+void
+vfp_load_sve_pffr_regs(sve_predicate_register_t (*pffr)[17],
+		       asm_ordering_dummy_t *ordering_var)
+{
+	__asm__ volatile(".arch_extension sve;"
+			 "ldr p0, [%[pffr], 16, mul vl];"
+			 "wrffr p0.b;"
+#for i in range(0, 16)
+			 "ldr p${i}, [%[pffr], ${i}, mul vl];"
+#end for
+			 ".arch_extension nosve;"
+			 : "+m"(*ordering_var)
+			 : [pffr] "r"(pffr), "m"(*pffr));
+}
+\#endif
+
+\#if defined(ARCH_ARM_FEAT_SME)
+void
+vfp_save_streaming_z_regs(streaming_vector_register_t (*z)[32],
+			  asm_ordering_dummy_t *ordering_var)
+{
+	__asm__ volatile(".arch_extension sve;"
+#for i in range(0, 32)
+			 "str z${i}, [%[z], ${i}, mul vl];"
+#end for
+			 ".arch_extension nosve;"
+			 : "=m"(*z), "+m"(*ordering_var)
+			 : [z] "r"(z));
+}
+
+void
+vfp_load_streaming_z_regs(streaming_vector_register_t (*z)[32],
+			  asm_ordering_dummy_t *ordering_var)
+{
+	__asm__ volatile(".arch_extension sve;"
+#for i in range(0, 32)
+			 "ldr z${i}, [%[z], ${i}, mul vl];"
+#end for
+			 ".arch_extension nosve;"
+			 : "+m"(*ordering_var)
+			 : [z] "r"(z), "m"(*z));
+}
+
+void
+vfp_save_streaming_p_regs(streaming_predicate_register_t (*p)[16],
+			  asm_ordering_dummy_t *ordering_var)
+{
+	__asm__ volatile(".arch_extension sve;"
+#for i in range(0, 16)
+			 "str p${i}, [%[p], ${i}, mul vl];"
+#end for
+			 ".arch_extension nosve;"
+			 : "=m"(*p), "+m"(*ordering_var)
+			 : [p] "r"(p));
+}
+
+void
+vfp_load_streaming_p_regs(streaming_predicate_register_t (*p)[16],
+			  asm_ordering_dummy_t *ordering_var)
+{
+	__asm__ volatile(".arch_extension sve;"
+#for i in range(0, 16)
+			 "ldr p${i}, [%[p], ${i}, mul vl];"
+#end for
+			 ".arch_extension nosve;"
+			 : "+m"(*ordering_var)
+			 : [p] "r"(p), "m"(*p));
+}
+
+\#if defined(ARCH_ARM_FEAT_SME_FA64)
+void
+vfp_save_streaming_pffr_regs(streaming_predicate_register_t (*pffr)[17],
+			     asm_ordering_dummy_t *ordering_var)
+{
+	__asm__ volatile(".arch_extension sve;"
+#for i in range(0, 16)
+			 "str p${i}, [%[pffr], ${i}, mul vl];"
+#end for
+			 "rdffr p0.b;"
+			 "str p0, [%[pffr], 16, mul vl];"
+			 ".arch_extension nosve;"
+			 : "=m"(*pffr), "+m"(*ordering_var)
+			 : [pffr] "r"(pffr));
+}
+
+void
+vfp_load_streaming_pffr_regs(streaming_predicate_register_t (*pffr)[17],
+			     asm_ordering_dummy_t *ordering_var)
+{
+	__asm__ volatile(".arch_extension sve;"
+			 "ldr p0, [%[pffr], 16, mul vl];"
+			 "wrffr p0.b;"
+#for i in range(0, 16)
+			 "ldr p${i}, [%[pffr], ${i}, mul vl];"
+#end for
+			 ".arch_extension nosve;"
+			 : "+m"(*ordering_var)
+			 : [pffr] "r"(pffr), "m"(*pffr));
+}
+\#endif
+
+static void
+vfp_save_za_array_vectors(za_array_vectors_t *zav, uint32_t vsel,
+			  asm_ordering_dummy_t *ordering_var)
+{
+	__asm__ volatile(".arch_extension sme;"
+#for i in range(0, 16)
+			 "str za[%w[vsel], ${i}], [%[zav], ${i}, mul vl];"
+#end for
+			 ".arch_extension nosme;"
+			 : "=m"(*zav), "+m"(*ordering_var)
+			 : [vsel] "Ucj"(vsel), [zav] "r"(zav));
+}
+
+static void
+vfp_load_za_array_vectors(za_array_vectors_t *zav, uint32_t vsel,
+			  asm_ordering_dummy_t *ordering_var)
+{
+	__asm__ volatile(".arch_extension sme;"
+#for i in range(0, 16)
+			 "ldr za[%w[vsel], ${i}], [%[zav], ${i}, mul vl];"
+#end for
+			 ".arch_extension nosme;"
+			 : "+m"(*ordering_var)
+			 : [vsel] "Ucj"(vsel), [zav] "r"(zav), "m"(*zav));
+}
+
+void
+vfp_save_za_storage(za_array_vectors_t (*za)[PLATFORM_SME_REG_SIZE / 16U],
+		    asm_ordering_dummy_t *ordering_var)
+{
+	for (uint32_t vsel = 0U; vsel < PLATFORM_SME_REG_SIZE; vsel += 16U) {
+		vfp_save_za_array_vectors(&(*za)[vsel / 16U], vsel,
+					  ordering_var);
+	}
+}
+
+void
+vfp_load_za_storage(za_array_vectors_t (*za)[PLATFORM_SME_REG_SIZE / 16U],
+		    asm_ordering_dummy_t *ordering_var)
+{
+	for (uint32_t vsel = 0U; vsel < PLATFORM_SME_REG_SIZE; vsel += 16U) {
+		vfp_load_za_array_vectors(&(*za)[vsel / 16U], vsel,
+					  ordering_var);
+	}
+}
+\#endif

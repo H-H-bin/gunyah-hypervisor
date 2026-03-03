@@ -1,6 +1,18 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
+
+#if defined(HYPERCALLS)
+extend hyp_api_flags0 bitfield {
+	delete	power;
+	14	power bool = 1;
+};
+#endif
+
+extend cap_rights_power bitfield {
+	0	system_suspend	bool;
+	1	cpu_suspend	bool;
+};
 
 define cpu_power_state enumeration(explicit) {
 	off		= 0; // never booted

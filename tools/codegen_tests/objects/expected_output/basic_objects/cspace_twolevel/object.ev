@@ -1,0 +1,34 @@
+// Automatically generated. Do not modify.
+
+// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+module cspace_twolevel
+
+subscribe object_create_addrspace
+	handler cspace_init_addrspace_cap_list(addrspace_create)
+subscribe object_create_cspace
+	handler cspace_init_cspace_cap_list(cspace_create)
+subscribe object_create_doorbell
+	handler cspace_init_doorbell_cap_list(doorbell_create)
+subscribe object_create_gicv3_its
+	handler cspace_init_gicv3_its_cap_list(gicv3_its_create)
+subscribe object_create_hwirq
+	handler cspace_init_hwirq_cap_list(hwirq_create)
+subscribe object_create_memextent
+	handler cspace_init_memextent_cap_list(memextent_create)
+subscribe object_create_msgqueue
+	handler cspace_init_msgqueue_cap_list(msgqueue_create)
+subscribe object_create_partition
+	handler cspace_init_partition_cap_list(partition_create)
+subscribe object_create_thread
+	handler cspace_init_thread_cap_list(thread_create)
+subscribe object_create_vic
+	handler cspace_init_vic_cap_list(vic_create)
+subscribe object_create_virtio_backend
+	handler cspace_init_virtio_backend_cap_list(virtio_backend_create)
+subscribe object_create_vpm_group
+	handler cspace_init_vpm_group_cap_list(vpm_group_create)
+subscribe object_create_vrtc
+	handler cspace_init_vrtc_cap_list(vrtc_create)

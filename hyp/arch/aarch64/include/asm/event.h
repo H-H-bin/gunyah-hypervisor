@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -9,15 +9,13 @@
 
 #define asm_event_wait(p) __asm__ volatile("wfe" ::"m"(*(p)))
 
-// clang-format off
-#define asm_event_load_before_wait(p) _Generic(				       \
-	(p),								       \
-	_Atomic uint64_t *: asm_event_load64_before_wait,		       \
-	_Atomic uint32_t *: asm_event_load32_before_wait,		       \
-	_Atomic uint16_t *: asm_event_load16_before_wait,		       \
-	_Atomic uint8_t *: asm_event_load8_before_wait,		       \
-	_Atomic bool *: asm_event_loadbool_before_wait)(p)
-// clang-format on
+#define asm_event_load_before_wait(p)                                          \
+	_Generic((p),                                                          \
+		_Atomic uint64_t *: asm_event_load64_before_wait,              \
+		_Atomic uint32_t *: asm_event_load32_before_wait,              \
+		_Atomic uint16_t *: asm_event_load16_before_wait,              \
+		_Atomic uint8_t *: asm_event_load8_before_wait,                \
+		_Atomic bool *: asm_event_loadbool_before_wait)(p)
 
 #include <asm-generic/event.h>
 

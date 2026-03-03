@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -10,7 +10,7 @@ define AARCH64_INST_EXCEPTION_VAL constant uint32 = 0xd4000000;
 define AARCH64_INST_EXCEPTION_MASK constant uint32 = 0xff000000;
 
 define AARCH64_INST_EXCEPTION_IMM16_MASK constant uint32 = 0x001fffe0;
-define AARCH64_INST_EXCEPTION_IMM16_SHIFT constant = 5;
+define AARCH64_INST_EXCEPTION_IMM16_SHIFT constant type count_t = 5;
 
 define AARCH64_INST_EXCEPTION_SUBTYPE_HLT_VAL constant uint32 = 0x00400000;
 define AARCH64_INST_EXCEPTION_SUBTYPE_MASK constant uint32 = 0x00e0001f;

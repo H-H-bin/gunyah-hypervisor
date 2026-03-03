@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -7,10 +7,12 @@
 
 #include <hypcontainers.h>
 
+#include <compiler.h>
 #include <cpulocal.h>
 #include <panic.h>
 #include <platform_cpu.h>
 #include <preempt.h>
+#include <qcbor.h>
 #include <scheduler.h>
 #include <thread.h>
 #include <util.h>
@@ -51,7 +53,7 @@ vcpu_handle_object_create_thread(thread_create_t thread_create)
 	assert(thread != NULL);
 	error_t ret;
 
-	if (thread->kind == THREAD_KIND_VCPU) {
+	if (vcpu_is_vcpu(thread)) {
 		scheduler_block_init(thread, SCHEDULER_BLOCK_VCPU_OFF);
 	}
 
@@ -72,7 +74,7 @@ vcpu_handle_object_activate_thread(thread_t *thread)
 
 	assert(thread != NULL);
 
-	if (thread->kind == THREAD_KIND_VCPU) {
+	if (vcpu_is_vcpu(thread)) {
 		if (thread->cspace_cspace == NULL) {
 			ret = ERROR_OBJECT_CONFIG;
 			goto out;
@@ -107,12 +109,34 @@ vcpu_handle_thread_exited(void)
 
 	assert_preempt_disabled();
 
-	if (current->kind == THREAD_KIND_VCPU) {
+	if (vcpu_is_vcpu(current)) {
 		if (vcpu_option_flags_get_critical(&current->vcpu_options)) {
 			panic("Critical VCPU exited");
 		}
 
 		trigger_vcpu_stopped_event();
+	}
+}
+
+void
+vcpu_handle_thread_save_state(void)
+{
+	thread_t *thread = thread_get_self();
+
+	if (compiler_expected(vcpu_is_vcpu(thread))) {
+		trigger_vcpu_save_state_event();
+	}
+}
+
+void
+vcpu_handle_thread_load_state(void)
+{
+	thread_t *thread = thread_get_self();
+
+	if (compiler_expected(vcpu_is_vcpu(thread))) {
+		trigger_vcpu_load_state_event();
+	} else {
+		trigger_vcpu_disable_state_event();
 	}
 }
 
@@ -122,7 +146,7 @@ vcpu_handle_vcpu_activate_thread(thread_t *thread, vcpu_option_flags_t options)
 	bool ret = false;
 
 	assert(thread != NULL);
-	assert(thread->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(thread));
 
 	// Check that the partition has the right to mark the VCPU as critical.
 	if (vcpu_option_flags_get_critical(&options) ||
@@ -144,7 +168,7 @@ out:
 void
 vcpu_handle_object_deactivate_thread(thread_t *thread)
 {
-	if (thread->kind == THREAD_KIND_VCPU) {
+	if (vcpu_is_vcpu(thread)) {
 		vic_unbind(&thread->vcpu_halt_virq_src);
 	}
 }

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -20,6 +20,7 @@
 #include <scheduler.h>
 #include <thread.h>
 #include <trace.h>
+#include <vcpu.h>
 
 #include <asm/barrier.h>
 
@@ -313,6 +314,12 @@ arm_vm_timer_handle_boot_cpu_warm_init(void)
 			arm_vm_timer_irq_active)[ARM_VM_TIMER_TYPE_PHYSICAL]));
 #endif
 
+#if defined(ARCH_ARM_FEAT_ECV)
+	// Since we set CNTHCTL_EL2.ECV to zero, CNTPOFF_EL2 is not used;
+	// however, initialise it to 0 at warm boot to avoid random values from
+	// showing up in the debugger or RAM dumps.
+	register_CNTPOFF_EL2_write(CNTPOFF_EL2_cast(0U));
+#endif
 	register_CNTVOFF_EL2_write(CNTVOFF_EL2_cast(0U));
 
 	for (int tt = ENUM_ARM_VM_TIMER_TYPE_MIN_VALUE;
@@ -371,12 +378,11 @@ arm_vm_timer_load_state(thread_t *thread)
 }
 
 void
-arm_vm_timer_handle_thread_save_state(void)
+arm_vm_timer_handle_vcpu_save_state(void)
 {
 	thread_t *thread = thread_get_self();
 
-	if ((compiler_expected(thread->kind == THREAD_KIND_VCPU)) &&
-	    !scheduler_is_blocked(thread, SCHEDULER_BLOCK_VCPU_OFF)) {
+	if (!scheduler_is_blocked(thread, SCHEDULER_BLOCK_VCPU_OFF)) {
 		thread->vcpu_regs_el1.cntkctl_el1 = register_CNTKCTL_EL1_read();
 		thread->vcpu_regs_el1.cntv_ctl_el0 =
 			register_CNTV_CTL_EL0_read();

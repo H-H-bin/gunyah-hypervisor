@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -16,8 +16,8 @@ watchdog_queue_head(void);
 
 void
 watchdog_queue_acquire_lock(void) ACQUIRE_LOCK(watchdog_queue.lock)
-	ACQUIRE_PREEMPT_DISABLED;
+ACQUIRE_PREEMPT_DISABLED;
 
 void
 watchdog_queue_release_lock(void) RELEASE_LOCK(watchdog_queue.lock)
-	RELEASE_PREEMPT_DISABLED;
+RELEASE_PREEMPT_DISABLED;

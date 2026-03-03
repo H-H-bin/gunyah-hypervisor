@@ -1,0 +1,4 @@
+
+interface invalid_event_name_interface
+
+event invalid_name

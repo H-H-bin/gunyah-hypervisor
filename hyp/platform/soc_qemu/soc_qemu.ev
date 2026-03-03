@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -6,7 +6,7 @@ module soc_qemu
 
 subscribe boot_cold_init
 	handler soc_qemu_uart_init()
-	priority 5
+	priority 2
 	require_preempt_disabled
 
 subscribe boot_cpu_cold_init

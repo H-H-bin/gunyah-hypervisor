@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -13,6 +13,7 @@ import subprocess
 import logging
 import pickle
 import inspect
+import shlex
 
 
 # Determine the location of this script.
@@ -96,7 +97,7 @@ def get_type(c, ir):
     sys.exit(1)
 
 
-# FIXME:
+# FIXME: QC Gunyah issue #234
 # The ABI should be updated to include the supported number of input/output
 # registers, the abi.register_size should be used instead of hard coding
 # register size, and the ARM X and W register use should also be selected by
@@ -127,8 +128,8 @@ def get_hypercalls(tree, hypercalls, hyp_num, ir):
 
                         call_num = int(str(val), base=0)
                         if call_num in used_ids:
-                            logger.error("Hypercall call_num already used",
-                                         hypercalls[hyp_num].name)
+                            logger.error("Hypercall %d (%s) already used",
+                                         call_num, hypercalls[hyp_num].name)
                             sys.exit(1)
                         used_ids.add(call_num)
 
@@ -249,13 +250,17 @@ def main():
     result = apply_template(options.template)
 
     if options.formatter and not options.template.name.endswith('.S.tmpl'):
-        ret = subprocess.run([options.formatter],
+        ret = subprocess.run(shlex.split(options.formatter),
                              input=result.encode("utf-8"),
                              stdout=subprocess.PIPE)
         result = ret.stdout.decode("utf-8")
         if ret.returncode != 0:
             logger.error("Error formatting output", result)
             sys.exit(1)
+
+    # Ensure exactly one newline at the end of the file
+    result = result.rstrip('\n')
+    result += '\n'
 
     options.output.write(result)
     options.output.close()

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -46,7 +46,7 @@ error_t
 msgqueue_configure_send(msgqueue_t *msgqueue, count_t notfull_thd,
 			count_t notfull_delay)
 {
-	error_t ret = OK;
+	error_t ret;
 
 	assert(msgqueue != NULL);
 
@@ -73,6 +73,8 @@ msgqueue_configure_send(msgqueue_t *msgqueue, count_t notfull_thd,
 		}
 	}
 	spinlock_release(&msgqueue->lock);
+
+	ret = OK;
 out:
 	return ret;
 }
@@ -81,7 +83,7 @@ error_t
 msgqueue_configure_receive(msgqueue_t *msgqueue, count_t notempty_thd,
 			   count_t notempty_delay)
 {
-	error_t ret = OK;
+	error_t ret;
 
 	assert(msgqueue != NULL);
 
@@ -115,6 +117,8 @@ msgqueue_configure_receive(msgqueue_t *msgqueue, count_t notempty_thd,
 	}
 
 	spinlock_release(&msgqueue->lock);
+
+	ret = OK;
 out:
 	return ret;
 }
@@ -159,7 +163,7 @@ error_t
 msgqueue_configure(msgqueue_t *msgqueue, size_t max_msg_size,
 		   count_t queue_depth)
 {
-	error_t ret = OK;
+	error_t ret;
 
 	assert(msgqueue != NULL);
 
@@ -168,6 +172,7 @@ msgqueue_configure(msgqueue_t *msgqueue, size_t max_msg_size,
 	    (max_msg_size < MSGQUEUE_MAX_MAX_MSG_SIZE)) {
 		msgqueue->max_msg_size = max_msg_size;
 		msgqueue->queue_depth  = queue_depth;
+		ret		       = OK;
 	} else {
 		ret = ERROR_ARGUMENT_INVALID;
 	}
@@ -178,7 +183,7 @@ msgqueue_configure(msgqueue_t *msgqueue, size_t max_msg_size,
 error_t
 msgqueue_handle_object_activate_msgqueue(msgqueue_t *msgqueue)
 {
-	error_t ret = OK;
+	error_t ret;
 
 	assert(msgqueue != NULL);
 	assert(msgqueue->buf == NULL);
@@ -210,6 +215,7 @@ msgqueue_handle_object_activate_msgqueue(msgqueue_t *msgqueue)
 	atomic_init(&msgqueue->notfull_thd, msgqueue->queue_depth - 1U);
 	atomic_init(&msgqueue->notempty_thd, 1U);
 
+	ret = OK;
 out:
 	return ret;
 }

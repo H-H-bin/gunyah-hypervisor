@@ -1,0 +1,90 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+#if defined(ARCH_ARM_FEAT_SME) || defined(ARCH_ARM_FEAT_SVE)
+define vfp_vector_register_ctx union {
+	v		array(32) type vector_register_t;
+};
+
+define vfp_predicate_register_ctx union {
+};
+
+define vfp_lazy_state enumeration {
+	NONE;
+	ACTIVE;
+	BLOCKED;
+};
+
+define vfp structure {
+	vector_regs	pointer union vfp_vector_register_ctx;
+	predicate_regs	pointer union vfp_predicate_register_ctx;
+	state		enumeration vfp_lazy_state(atomic);
+	max_vl		type count_t;
+};
+
+extend thread object {
+	vfp		structure vfp;
+};
+
+extend scheduler_block enumeration {
+	vfp_save;
+};
+
+extend ipi_reason enumeration {
+	vfp_save;
+};
+#endif
+
+#if defined(ARCH_ARM_FEAT_SME)
+define streaming_vector_register_t newtype array(PLATFORM_SME_REG_SIZE) uint8();
+define streaming_predicate_register_t newtype
+	array(PLATFORM_SME_REG_SIZE / 8) uint8();
+
+extend vfp_vector_register_ctx union {
+	z_streaming	array(32) type streaming_vector_register_t;
+};
+
+extend vfp_predicate_register_ctx union {
+	p_streaming	array(16) type streaming_predicate_register_t;
+#if defined(ARCH_ARM_FEAT_SME_FA64)
+	pffr_streaming	array(17) type streaming_predicate_register_t;
+#endif
+};
+
+extend vcpu_el1_registers structure {
+	smcr_el1	bitfield SMCR_EL1;
+	tpidr2_el0	bitfield TPIDR2_EL0;
+};
+
+define za_array_vectors_t newtype array(PLATFORM_SME_REG_SIZE * 16U) uint8();
+
+define vcpu_sme_registers structure {
+	svcr		bitfield SVCR;
+	za_storage	pointer array(PLATFORM_SME_REG_SIZE / 16U)
+				type za_array_vectors_t;
+};
+
+extend vfp structure {
+	sme		structure vcpu_sme_registers;
+	sme_access	bool;
+};
+#endif
+
+#if defined(ARCH_ARM_FEAT_SVE)
+define sve_vector_register_t newtype array(PLATFORM_SVE_REG_SIZE) uint8();
+define sve_predicate_register_t newtype
+	array(PLATFORM_SVE_REG_SIZE / 8) uint8();
+
+extend vfp_vector_register_ctx union {
+	z_sve		array(32) type sve_vector_register_t;
+};
+
+extend vfp_predicate_register_ctx union {
+	pffr_sve	array(17) type sve_predicate_register_t;
+};
+
+extend vcpu_el1_registers structure {
+	zcr_el1		bitfield ZCR_EL1;
+};
+#endif

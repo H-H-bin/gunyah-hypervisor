@@ -1,8 +1,8 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-// FIXME:
+// FIXME: QC Gunyah issue #97
 // Integrate these tests into unittest configuration
 
 #include <assert.h>

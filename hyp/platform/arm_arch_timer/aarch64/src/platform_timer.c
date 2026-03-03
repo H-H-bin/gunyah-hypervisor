@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -49,7 +49,7 @@ platform_timer_cancel_timeout(void)
 	CNT_CTL_set_ENABLE(&cnthp_ctl, false);
 	CNT_CTL_set_IMASK(&cnthp_ctl, true);
 	register_CNTHP_CTL_EL2_write_ordered(cnthp_ctl, &asm_ordering);
-	__asm__ volatile("isb" : "+m"(asm_ordering));
+	asm_context_sync_ordered(&asm_ordering);
 }
 
 uint32_t
@@ -59,15 +59,28 @@ platform_timer_get_frequency(void)
 }
 
 uint64_t
+platform_timer_get_current_ticks_sync(void)
+{
+#if !defined(ARCH_ARM_FEAT_ECV)
+	asm_context_sync_ordered(&asm_ordering);
+#endif
+	return platform_timer_get_current_ticks();
+}
+
+uint64_t
 platform_timer_get_current_ticks(void)
 {
+#if defined(ARCH_ARM_FEAT_ECV)
+	CNTPCT_EL0_t cntpct =
+		register_CNTPCTSS_EL0_read_volatile_ordered(&asm_ordering);
+#else
 	// This register read below is allowed to occur speculatively at any
 	// time after the most recent context sync event. If caller the wants
 	// it to actually reflect the exact current time, it must execute an
 	// ordered ISB before calling this function.
 	CNTPCT_EL0_t cntpct =
 		register_CNTPCT_EL0_read_volatile_ordered(&asm_ordering);
-
+#endif
 	return CNTPCT_EL0_get_CountValue(&cntpct);
 }
 
@@ -94,8 +107,9 @@ platform_timer_set_timeout(ticks_t timeout)
 ticks_t
 platform_timer_convert_ns_to_ticks(nanoseconds_t ns)
 {
-	__uint128_t ticks = ((__uint128_t)ns * PLATFORM_TIMER_NS_FREQ_SCALE) >>
-			    (64 - PLATFORM_TIMER_NS_SHIFT);
+	__uint128_t ticks =
+		((__uint128_t)ns * PLATFORM_TIMER_TICKS_PER_NS_FIXED_POINT) >>
+		(PLATFORM_TIMER_TICKS_PER_NS_FRAC_BITS);
 
 	return (ticks_t)ticks;
 }
@@ -103,8 +117,9 @@ platform_timer_convert_ns_to_ticks(nanoseconds_t ns)
 nanoseconds_t
 platform_timer_convert_ticks_to_ns(ticks_t ticks)
 {
-	__uint128_t ns = ((__uint128_t)ticks * PLATFORM_TIMER_NS_SCALE) >>
-			 (64 - PLATFORM_TIMER_NSFREQ_SHIFT);
+	__uint128_t ns =
+		((__uint128_t)ticks * PLATFORM_TIMER_NS_PER_TICK_FIXED_POINT) >>
+		(PLATFORM_TIMER_NS_PER_TICK_FRAC_BITS);
 
 	return (nanoseconds_t)ns;
 }
@@ -112,8 +127,9 @@ platform_timer_convert_ticks_to_ns(ticks_t ticks)
 ticks_t
 platform_timer_convert_ms_to_ticks(milliseconds_t ms)
 {
-	__uint128_t ticks = ((__uint128_t)ms * PLATFORM_TIMER_MS_FREQ_SCALE) >>
-			    (64 - PLATFORM_TIMER_MS_SHIFT);
+	__uint128_t ticks =
+		((__uint128_t)ms * PLATFORM_TIMER_TICKS_PER_MS_FIXED_POINT) >>
+		(PLATFORM_TIMER_TICKS_PER_MS_FRAC_BITS);
 
 	return (ticks_t)ticks;
 }
@@ -121,8 +137,9 @@ platform_timer_convert_ms_to_ticks(milliseconds_t ms)
 milliseconds_t
 platform_timer_convert_ticks_to_ms(ticks_t ticks)
 {
-	__uint128_t ms = ((__uint128_t)ticks * PLATFORM_TIMER_MS_SCALE) >>
-			 (64 - PLATFORM_TIMER_MSFREQ_SHIFT);
+	__uint128_t ms =
+		((__uint128_t)ticks * PLATFORM_TIMER_MS_PER_TICK_FIXED_POINT) >>
+		(PLATFORM_TIMER_MS_PER_TICK_FRAC_BITS);
 
 	return (milliseconds_t)ms;
 }
@@ -133,7 +150,11 @@ platform_timer_handle_boot_cpu_cold_init(void)
 	CNTFRQ_EL0_t cntfrq = register_CNTFRQ_EL0_read();
 	assert(CNTFRQ_EL0_get_ClockFrequency(&cntfrq) ==
 	       PLATFORM_ARCH_TIMER_FREQ);
+}
 
+void
+platform_timer_handle_boot_cpu_warm_init(void)
+{
 #if !defined(IRQ_NULL)
 	if (hyp_timer_hwirq != NULL) {
 		irq_enable_local(hyp_timer_hwirq);
@@ -178,14 +199,15 @@ platform_timer_handle_irq_received(void)
 void
 platform_timer_ndelay(nanoseconds_t duration)
 {
-	ticks_t cur_ticks      = platform_timer_get_current_ticks();
+	ticks_t cur_ticks      = platform_timer_get_current_ticks_sync();
 	ticks_t duration_ticks = platform_timer_convert_ns_to_ticks(duration);
 	ticks_t target_ticks   = cur_ticks + duration_ticks;
 
 	// NOTE: assume we don't have overflow case since it covers huge range.
 	// And assumes the timer is always enabled/configured correctly.
-	while (platform_timer_get_current_ticks() < target_ticks) {
+	while (platform_timer_get_current_ticks_sync() < target_ticks) {
 		// Wait for the delay period
+		asm_wait_timeout(target_ticks);
 	}
 }
 #endif

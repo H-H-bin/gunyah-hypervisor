@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -116,6 +116,26 @@ arm_vm_timer_virq_check_pending(thread_t *thread, arm_vm_timer_type_t tt)
 	}
 
 	return ret;
+}
+
+error_t
+arm_vm_timer_handle_vcpu_set_virtual_timer_virq(thread_t *vcpu, virq_t virq)
+{
+	assert(vcpu != NULL);
+
+	vcpu->virtual_timer_virq = virq;
+
+	return OK;
+}
+
+error_t
+arm_vm_timer_handle_vcpu_set_physical_timer_virq(thread_t *vcpu, virq_t virq)
+{
+	assert(vcpu != NULL);
+
+	vcpu->physical_timer_virq = virq;
+
+	return OK;
 }
 
 bool

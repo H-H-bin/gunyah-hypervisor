@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -16,12 +16,14 @@
 #include <idle.h>
 #include <ipi.h>
 #include <list.h>
+#include <log.h>
 #include <object.h>
 #include <panic.h>
 #include <partition.h>
 #include <partition_alloc.h>
 #include <platform_cpu.h>
 #include <preempt.h>
+#include <qcbor.h>
 #include <rcu.h>
 #include <scheduler.h>
 #include <spinlock.h>
@@ -55,6 +57,9 @@ static_assert((SCHEDULER_DEFAULT_TIMESLICE <= SCHEDULER_MAX_TIMESLICE) &&
 	      "Default timeslice is invalid.");
 static_assert((index_t)SCHEDULER_BLOCK__MAX < BITMAP_WORD_BITS,
 	      "Scheduler block flags must fit in a register");
+
+static nanoseconds_t scheduler_fprr_default_timeslice =
+	SCHEDULER_DEFAULT_TIMESLICE;
 
 static ticks_t
 get_target_timeout(scheduler_t *scheduler, thread_t *target)
@@ -103,6 +108,26 @@ end_directed_yield(thread_t *target)
 	atomic_store_relaxed(&target->scheduler_yielding, false);
 }
 
+error_t
+scheduler_set_default_timeslice(nanoseconds_t default_timeslice)
+{
+	error_t ret;
+	if ((default_timeslice > SCHEDULER_MAX_TIMESLICE) ||
+	    (default_timeslice < SCHEDULER_MIN_TIMESLICE)) {
+		ret = ERROR_ARGUMENT_INVALID;
+	} else {
+		scheduler_fprr_default_timeslice = default_timeslice;
+		ret				 = OK;
+	}
+	if (ret != OK) {
+		TRACE_AND_LOG(
+			ERROR, WARN,
+			"Timeslice ({:d}) is not in the range, using the default one",
+			default_timeslice);
+	}
+	return ret;
+}
+
 static bool
 update_timeslice(scheduler_t *scheduler, thread_t *target, ticks_t curticks)
 	REQUIRE_PREEMPT_DISABLED
@@ -126,7 +151,7 @@ update_timeslice(scheduler_t *scheduler, thread_t *target, ticks_t curticks)
 
 static void
 add_to_runqueue(scheduler_t *scheduler, thread_t *target, bool at_tail)
-	REQUIRE_SPINLOCK(scheduler->lock)
+	REQUIRE_SPINLOCK(scheduler -> lock)
 {
 	assert_preempt_disabled();
 	assert_spinlock_held(&scheduler->lock);
@@ -150,7 +175,7 @@ add_to_runqueue(scheduler_t *scheduler, thread_t *target, bool at_tail)
 
 static void
 remove_from_runqueue(scheduler_t *scheduler, thread_t *target)
-	REQUIRE_SPINLOCK(scheduler->lock)
+	REQUIRE_SPINLOCK(scheduler -> lock)
 {
 	assert_preempt_disabled();
 
@@ -169,7 +194,7 @@ remove_from_runqueue(scheduler_t *scheduler, thread_t *target)
 
 static thread_t *
 pop_runqueue_head(scheduler_t *scheduler, index_t i)
-	REQUIRE_SPINLOCK(scheduler->lock)
+	REQUIRE_SPINLOCK(scheduler -> lock)
 {
 	assert_preempt_disabled();
 	assert(bitmap_isset(scheduler->prio_bitmap, i));
@@ -270,7 +295,7 @@ scheduler_fprr_handle_object_create_thread(thread_create_t thread_create)
 
 	nanoseconds_t timeslice = thread_create.scheduler_timeslice_valid
 					  ? thread_create.scheduler_timeslice
-					  : SCHEDULER_DEFAULT_TIMESLICE;
+					  : scheduler_fprr_default_timeslice;
 	assert((timeslice <= SCHEDULER_MAX_TIMESLICE) &&
 	       (timeslice >= SCHEDULER_MIN_TIMESLICE));
 	thread->scheduler_base_timeslice = timer_convert_ns_to_ticks(timeslice);
@@ -306,7 +331,7 @@ scheduler_fprr_handle_vcpu_activate_thread(thread_t	      *thread,
 {
 	bool ret = false, pin = false;
 
-	assert(thread->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(thread));
 
 	scheduler_lock(thread);
 
@@ -355,7 +380,7 @@ void
 scheduler_fprr_handle_vcpu_wakeup(thread_t *vcpu) REQUIRE_SCHEDULER_LOCK(vcpu)
 {
 	assert_spinlock_held(&vcpu->scheduler_lock);
-	assert(vcpu->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(vcpu));
 
 	bool was_yielding = atomic_exchange_explicit(
 		&vcpu->scheduler_yielding, false, memory_order_relaxed);
@@ -388,7 +413,7 @@ scheduler_fprr_handle_vcpu_wakeup(thread_t *vcpu) REQUIRE_SCHEDULER_LOCK(vcpu)
 bool
 scheduler_fprr_handle_vcpu_expects_wakeup(const thread_t *vcpu)
 {
-	assert(vcpu->kind == THREAD_KIND_VCPU);
+	assert(vcpu_is_vcpu(vcpu));
 
 	return atomic_load_relaxed(&vcpu->scheduler_yielding);
 }
@@ -466,7 +491,7 @@ scheduler_fprr_handle_affinity_change_update(rcu_entry_t *entry)
 
 static void
 set_next_timeout(scheduler_t *scheduler, thread_t *target)
-	REQUIRE_SPINLOCK(scheduler->lock)
+	REQUIRE_SPINLOCK(scheduler -> lock)
 {
 	assert_spinlock_held(&scheduler->lock);
 
@@ -491,7 +516,7 @@ set_next_timeout(scheduler_t *scheduler, thread_t *target)
 
 static thread_t *
 get_next_target(scheduler_t *scheduler, ticks_t curticks)
-	REQUIRE_SPINLOCK(scheduler->lock)
+	REQUIRE_SPINLOCK(scheduler -> lock)
 {
 	assert(scheduler != NULL);
 	assert_spinlock_held(&scheduler->lock);
@@ -703,8 +728,7 @@ scheduler_yield_to(thread_t *target)
 		set_yield_to(yielded_from, target);
 	} else {
 #if defined(INTERFACE_VCPU)
-		if ((current->kind == THREAD_KIND_VCPU) &&
-		    vcpu_pending_wakeup()) {
+		if ((vcpu_is_vcpu(current)) && vcpu_pending_wakeup()) {
 			// The current thread has a pending wakeup;
 			// skip the directed yield.
 			goto out;
@@ -1026,7 +1050,7 @@ scheduler_block_init(thread_t *thread, scheduler_block_t block)
 
 bool
 scheduler_unblock(thread_t *thread, scheduler_block_t block)
-	REQUIRE_LOCK(thread->scheduler_lock)
+	REQUIRE_LOCK(thread -> scheduler_lock)
 {
 	assert_spinlock_held(&thread->scheduler_lock);
 	assert(block <= SCHEDULER_BLOCK__MAX);
@@ -1067,7 +1091,7 @@ scheduler_unblock(thread_t *thread, scheduler_block_t block)
 bool
 scheduler_is_blocked(const thread_t *thread, scheduler_block_t block)
 {
-	assert(block <= SCHEDULER_BLOCK__MAX);
+	assert_debug(block <= SCHEDULER_BLOCK__MAX);
 	return bitmap_isset(thread->scheduler_block_bits, (index_t)block);
 }
 
@@ -1283,7 +1307,7 @@ scheduler_will_preempt_current(thread_t *thread)
 	thread_t *current = thread_get_self();
 
 	return (thread->scheduler_priority > current->scheduler_priority) ||
-	       (current->kind == THREAD_KIND_IDLE);
+	       (thread_is_kind(current, THREAD_KIND_IDLE));
 }
 
 void
@@ -1364,3 +1388,13 @@ scheduler_fprr_handle_thread_exited(void)
 
 	scheduler_unlock_nopreempt(thread);
 }
+
+#if defined(INTERFACE_VCPU)
+void
+scheduler_fprr_handle_rootvm_init(qcbor_enc_ctxt_t *qcbor_enc_ctxt)
+{
+	QCBOREncode_AddUInt64ToMap(qcbor_enc_ctxt,
+				   "scheduler_default_timeslice",
+				   scheduler_fprr_default_timeslice);
+}
+#endif

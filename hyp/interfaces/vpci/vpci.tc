@@ -1,0 +1,200 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+#if defined(HYPERCALLS)
+extend hyp_api_flags0 bitfield {
+	delete	vpci;
+	13	vpci bool = 1;
+};
+#endif
+
+extend cap_rights_vpci bitfield {
+	0	attach	bool;
+	1	bind	bool;
+};
+
+define vpci_option_flags public bitfield<64> {
+	0	pcie	bool = 1;
+	63:1	res0	uint64(const) = 0;
+};
+
+define vpci_aperture public bitfield<64> {
+	5:0	bits	type count_t;
+	11:6	res0	uint64(const) = 0;
+	63:12	base	type vmaddr_t lsl(12);
+};
+
+// Modules implementing VPCI devices should extend this enumeration.
+define vpci_function_type enumeration {
+};
+
+define vpci_device structure {
+	// The device's functions. These structures must have the same
+	// lifetime as the device structure itself, so there is no need for
+	// RCU protection or reference counting on these pointers.
+	functions		array(8) pointer structure vpci_function;
+};
+
+define vpci_function structure {
+	// Selector for the vpci interface events.
+	type			enumeration vpci_function_type;
+
+	// ID fields exposed to the VM through the configuration header. The
+	// device implementation may also use these in combination with the
+	// type field to identify the function in a multi-function device.
+	product_id		uint16;
+	vendor_id		uint16;
+	device_revision		uint8;
+	subsys_product_id	uint16;
+	subsys_vendor_id	uint16;
+	device_class		uint8;
+	device_subclass		uint8;
+	device_interface	uint8;
+
+	// Set interrupt_pin between 1-4 to enable legacy IRQ support, or 0 to
+	// disable it. The spec requires function 0 to use 1 (IRQA#) or 0.
+	// Larger values are not allowed. This is exposed to the VM through
+	// the configuration header.
+	interrupt_pin		uint8;
+
+	// The device's BARs. These will be exposed to the VM through the
+	// configuration header. They are also used by the vpci framework for
+	// mapping memextents and handling faults in the VM's chosen address
+	// ranges for the valid BARs.
+	bars			array(6)(contained) structure vpci_bar_data;
+
+	// The function's capability headers. These structures must have the
+	// same lifetime as the function structure itself, so there is no need
+	// for RCU protection or reference counting on these pointers.
+	//
+	// Using this is optional; it can be set to NULL if the device wants
+	// to handle the device-specific configuration space itself.
+	capabilities		pointer structure vpci_capability_data;
+};
+
+// Description of one of the device's PCI 2.1 capability structures in
+// configuration space. Note that these are completely unrelated to Gunyah
+// capabilities.
+define vpci_capability_data structure {
+	next			pointer structure vpci_capability_data;
+	cap_id			uint8;
+	size			uint8;
+	offset			uint8;
+};
+
+// Description of one of the device's BARs.
+define vpci_bar_data structure {
+	// If size_bits is 0, this BAR is unused.
+	size_bits		type count_t;
+
+	// The address_type field determines what kind of BAR is presented to
+	// the VM: I/O, Memory, 32-bit or 64-bit, prefetchable or not. If the
+	// address_type is mem_64, then there must be a following BAR with
+	// address_type set to mem_64_high, which must not be used otherwise.
+	address_type		enumeration vpci_bar_address_type;
+
+	// The access_type field determines how the hypervisor handles VM
+	// accesses to the region specified by this BAR.
+	access_type		enumeration vpci_bar_access_type;
+
+	// Valid and mandatory for all access types except trapped. Must be
+	// reference-counted by the device, and must not be removed as long as
+	// the device is bound to the bus. Size must be no greater than that
+	// specified by size_bits.
+	memextent		pointer object memextent;
+};
+
+define vpci_bar_address_type enumeration {
+	io;
+	mem_np_32;
+	mem_32;
+	mem_64;
+	mem_64_high;
+};
+
+define vpci_bar_access_type enumeration {
+	// All accesses are trapped and passed to the event handlers. A
+	// failing event handler will generate an Unsupported Request for
+	// ERROR_UNIMPLEMENTED, and Completer Abort for any other error. The
+	// memextent pointer is not used and must be NULL.
+	trapped;
+
+	// The memextent is mapped read-only, and writes within the memextent
+	// are trapped and passed to the event handlers. A failing event
+	// handler will generate an Unsupported Request for
+	// ERROR_UNIMPLEMENTED, and Completer Abort for any other error.
+	//
+	// Space beyond the end of the memextent is RAO/WI and signals a
+	// Completer Abort if accessed.
+	//
+	// This is faster than a R/W trapped access because the function and
+	// BAR can be located through the memdb.
+	trapped_w;
+
+	// The memextent is mapped read-write. Space beyond the end of the
+	// memextent is RAO/WI and signals a Completer Abort if accessed.
+	untrapped;
+};
+
+// State structure for the MSI-X helpers.
+//
+// A device that wishes to implement MSI-X can include this in its capabilities
+// list. The fields below must be initialised directly by the device; the
+// private fields must also be initialised, by calling vpci_msix_init().
+define vpci_msix_data structure {
+	// Capability structure. Must have ID 0x11 and size 12.
+	base			structure vpci_capability_data(contained);
+
+	// Table and PBA locations reported to the VM. The device can decide
+	// where to place these, but each specified BAR must have access type
+	// set to trapped, and must not be an I/O BAR.
+	table_offset		size;
+	pba_offset		size;
+	table_bar_index		type index_t;
+	pba_bar_index		type index_t;
+
+	// Number of vectors allocated for MSI-X, between 1 and 2048.
+	vector_count		type count_t;
+};
+
+// State structure for the PCIe helpers.
+//
+// A device that is bound to a PCIe bus must either include this in its
+// capabilities list, or implement the same functionality itself. The fields
+// below must be initialised directly by the device. The private fields must
+// also be initialised, by calling vpci_pcie_init().
+define vpci_pcie_data structure {
+	// Capability structure. Must have ID 0x10 and size 60.
+	base			structure vpci_capability_data(contained);
+
+	// MSI-X data structure and vector used for reporting changes to the
+	// status bits (i.e. error reporting).
+	msix_data		pointer structure vpci_msix_data;
+	msix_vector		type index_t;
+
+#if defined(VPCI_PCIE_CAPABILITIES) && VPCI_PCIE_CAPABILITIES
+	// The function's extended capability headers. These structures must
+	// have the same lifetime as the device itself, so there is no need
+	// for RCU protection or reference counting on these pointers.
+	//
+	// Using this is optional; it can be set to NULL if the device wants
+	// to handle the PCIe extended configuration space itself.
+	capabilities		pointer structure vpci_ext_capability_data;
+#endif
+};
+
+#if defined(VPCI_PCIE_CAPABILITIES) && VPCI_PCIE_CAPABILITIES
+// Description of one of the device's PCIe Extended Capability structures in
+// configuration space. Note that these are completely unrelated to Gunyah
+// capabilities.
+define vpci_ext_capability_data structure {
+	next			pointer structure vpci_ext_capability_data;
+	cap_id			uint16;
+	size			uint16;
+	offset			uint16;
+};
+#endif
+
+// Defined for PCI_VENDOR_ID_QUALCOMM (0x17cb)
+define VPCI_PRODUCT_ID_GUNYAH_VPCI_HOST_BRIDGE constant uint16 = 0x6000;

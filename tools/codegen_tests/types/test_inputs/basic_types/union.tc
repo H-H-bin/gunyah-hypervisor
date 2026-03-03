@@ -1,0 +1,31 @@
+// ============================================================================
+// Bitfield Definitions
+// ============================================================================
+
+// Bitfield with 83 bits for use in union definitions
+define UBitField bitfield<83> {
+	31:0	test	uint32;		// Bits 0-31: 32-bit unsigned integer
+	42:32	test1	uint16;		// Bits 32-42: 16-bit unsigned integer
+	58:51	test5	uint8;		// Bits 51-58: 8-bit unsigned integer
+};
+
+// ============================================================================
+// Union Definitions
+// ============================================================================
+
+// Union demonstrating overlapping integer and bitfield storage
+define Demo2U union {
+	int_var	uint32;			// 32-bit unsigned integer view
+	bit_var	bitfield UBitField;	// Bitfield view of same memory
+};
+
+// ============================================================================
+// Structure Definitions with Embedded Unions
+// ============================================================================
+
+// Structure containing an embedded union
+define DemoUStruct structure {
+	int_var		uint8;			// 8-bit integer variable
+	bit_field_var	bitfield UBitField;	// Embedded bitfield
+	embedded_union	union Demo2U;		// Embedded union (overlapping fields)
+};

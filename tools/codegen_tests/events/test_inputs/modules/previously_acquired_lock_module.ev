@@ -1,0 +1,12 @@
+
+module previously_acquired_lock_module
+
+subscribe previously_acquired_lock_interface_event
+		handler handle1()
+		priority first
+		acquire_lock(lock)
+
+subscribe previously_acquired_lock_interface_event
+		handler handle2()
+		priority last
+		acquire_lock(lock)

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -8,14 +8,16 @@ extend irq_range structure {
 };
 
 extend hwirq object {
-	is_bound bool(atomic);
-	irq type irq_t;
-	action enumeration hwirq_action;
+	is_bound	bool(atomic, group(flags));
+	irq		type irq_t;
+	action		enumeration hwirq_action;
+	opaque		uint64;
 };
 
 extend hwirq_create structure {
-	irq type irq_t;
-	action enumeration hwirq_action;
+	irq	type irq_t;
+	action	enumeration hwirq_action;
+	opaque	uint64;
 };
 
 define hwirq_action enumeration {

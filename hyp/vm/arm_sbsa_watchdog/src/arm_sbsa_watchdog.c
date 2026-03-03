@@ -1,4 +1,4 @@
-// © 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -34,7 +34,7 @@ calculate_current_compare_reg(watchdog_t *wdt)
 		platform_watchdog_ticks_to_ms(remaining_time_wdt_ticks);
 	ticks_t remaining_time_ticks =
 		platform_timer_convert_ms_to_ticks(remaining_time_ms);
-	ticks_t now = platform_timer_get_current_ticks();
+	ticks_t now = platform_timer_get_current_ticks_sync();
 	return now + remaining_time_ticks;
 }
 
@@ -43,7 +43,7 @@ write_new_compare_reg(watchdog_t *wdt, sbsa_wdog_compare_t wcv)
 {
 	// Calculate how much in the future it is
 	ticks_t			compare_ticks = sbsa_wdog_compare_raw(wcv);
-	ticks_t			now = platform_timer_get_current_ticks();
+	ticks_t			now = platform_timer_get_current_ticks_sync();
 	ticks_t			timeout_ticks = compare_ticks - now;
 	watchdog_milliseconds_t timeout_ms =
 		platform_timer_convert_ticks_to_ms(timeout_ticks);
@@ -226,6 +226,7 @@ arm_sbsa_watchdog_handle_object_create_watchdog(watchdog_create_t params)
 
 	wdt->offset_reg_ms	= 0U;
 	wdt->compare_overridden = false;
+	vdevice_init(&wdt->vdevice);
 
 	return OK;
 }
@@ -245,34 +246,15 @@ arm_sbsa_watchdog_handle_addrspace_attach_vdevice(
 		goto out;
 	}
 
-	if (!util_is_baligned(vbase, SBSA_WATCHDOG_FRAME_STRIDE)) {
+	if ((!util_is_baligned(vbase, SBSA_WATCHDOG_FRAME_STRIDE)) ||
+	    (size != SBSA_WATCHDOG_SIZE) || (flags.raw != 0U)) {
 		err = ERROR_ARGUMENT_INVALID;
-		goto out;
+	} else {
+		err = vdevice_attach_vmaddr(VDEVICE_TYPE_WATCHDOG,
+					    &wdt_r.r->vdevice, addrspace, vbase,
+					    SBSA_WATCHDOG_SIZE);
 	}
 
-	if (size != SBSA_WATCHDOG_SIZE) {
-		err = ERROR_ARGUMENT_INVALID;
-		goto out;
-	}
-
-	if (flags.raw != 0U) {
-		err = ERROR_ARGUMENT_INVALID;
-		goto out;
-	}
-
-	if (wdt_r.r->vdevice.type != VDEVICE_TYPE_NONE) {
-		err = ERROR_BUSY;
-		goto out_ref;
-	}
-	wdt_r.r->vdevice.type = VDEVICE_TYPE_WATCHDOG;
-
-	err = vdevice_attach_vmaddr(&wdt_r.r->vdevice, addrspace, vbase,
-				    SBSA_WATCHDOG_SIZE);
-	if (err != OK) {
-		wdt_r.r->vdevice.type = VDEVICE_TYPE_NONE;
-	}
-
-out_ref:
 	object_put_watchdog(wdt_r.r);
 out:
 	return err;
@@ -290,4 +272,11 @@ arm_sbsa_watchdog_handle_watchdog_pat_pre(watchdog_t *wdt)
 	}
 }
 
+void
+arm_sbsa_watchdog_handle_object_deactivate_watchdog(watchdog_t *watchdog)
+{
+	if (watchdog->vdevice.type != VDEVICE_TYPE_NONE) {
+		vdevice_detach_vmaddr(&watchdog->vdevice);
+	}
+}
 #endif

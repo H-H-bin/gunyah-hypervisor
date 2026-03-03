@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -29,7 +29,7 @@ refcount_get_additional(refcount_t *ref)
 	uint32_t count =
 		atomic_fetch_add_explicit(&ref->count, 1, memory_order_relaxed);
 
-	assert(count > 0U);
+	assert_safety(count > 0U);
 	(void)count;
 }
 

@@ -1,4 +1,4 @@
-// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -52,7 +52,7 @@ out:
 	// generator can't handle dropping the RCU critical section in the
 	// default case, so the handlers that do drop it are forced to
 	// re-acquire it, and we must drop it again here.
-	// FIXME:
+	// FIXME: QC Gunyah issue #252
 	rcu_read_finish();
 
 	return ret;
@@ -92,12 +92,12 @@ vdevice_access_ipa(vmaddr_t ipa, size_t size, register_t *val, bool is_write)
 		// critical section in the default case, so the handlers that do
 		// drop it are forced to re-acquire it, and we must drop it
 		// again here.
-		// FIXME:
+		// FIXME: QC Gunyah issue #252
 		rcu_read_finish();
 	} else {
 		rcu_read_finish();
 
-		// FIXME:
+		// FIXME: QC Gunyah issue #179
 		ret = trigger_vdevice_access_fixed_addr_event(ipa, size, val,
 							      is_write);
 	}

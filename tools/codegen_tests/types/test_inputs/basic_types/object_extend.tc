@@ -1,0 +1,22 @@
+// ============================================================================
+// Object Extensions - Module-Specific Fields
+// ============================================================================
+
+// Extend ExecContext object
+// Adds additional character fields to the base ExecContext object definition
+extend ExecContext object module Machine {
+	e	char;		// Character field for Machine module
+	f	char;		// Character field for Machine module
+};
+
+// ============================================================================
+// Optional Features (Disabled)
+// ============================================================================
+
+/* Optional feature: Embedded object extension
+// Extend EmbeddedExecContext object
+extend EmbeddedExecContext object module Machine {
+	ee char;
+	ff char;
+};
+*/

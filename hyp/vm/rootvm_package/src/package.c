@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -15,20 +15,18 @@
 #include <bitmap.h>
 #include <compiler.h>
 #include <cpulocal.h>
-#include <cspace.h>
 #include <elf.h>
 #include <elf_loader.h>
 #include <log.h>
 #include <memextent.h>
 #include <object.h>
 #include <panic.h>
-#include <partition.h>
-#include <partition_alloc.h>
 #include <pgtable.h>
 #include <platform_cpu.h>
 #include <prng.h>
 #include <qcbor.h>
 #include <spinlock.h>
+#include <thread.h>
 #include <trace.h>
 #include <util.h>
 #include <vcpu.h>
@@ -43,52 +41,6 @@ extern const char image_pkg_start;
 #if !defined(PLATFORM_ROOTVM_ELF_SIZE)
 #define PLATFORM_ROOTVM_ELF_SIZE 0x00080000U
 #endif
-
-static memextent_t *
-create_memextent(partition_t *root_partition, cspace_t *root_cspace,
-		 paddr_t phys_base, size_t size, cap_id_t *new_cap_id,
-		 pgtable_access_t access)
-{
-	error_t		    ret;
-	memextent_memtype_t memtype = MEMEXTENT_MEMTYPE_ANY;
-
-	memextent_create_t     params_me = { .memextent		   = NULL,
-					     .memextent_device_mem = false };
-	memextent_ptr_result_t me_ret;
-	me_ret = partition_allocate_memextent(root_partition, params_me);
-	if (me_ret.e != OK) {
-		panic("Failed creation of new mem extent");
-	}
-	memextent_t *me = me_ret.r;
-
-	spinlock_acquire(&me->header.lock);
-	memextent_attrs_t attrs = memextent_attrs_default();
-	memextent_attrs_set_access(&attrs, access);
-	memextent_attrs_set_memtype(&attrs, memtype);
-	ret = memextent_configure(me, phys_base, size, attrs);
-	if (ret != OK) {
-		panic("Failed configuration of new mem extent");
-	}
-	spinlock_release(&me->header.lock);
-
-	// Create a master cap for the memextent
-	object_ptr_t obj_ptr;
-	obj_ptr.memextent	  = me;
-	cap_id_result_t capid_ret = cspace_create_master_cap(
-		root_cspace, obj_ptr, OBJECT_TYPE_MEMEXTENT);
-	if (capid_ret.e != OK) {
-		panic("Error create memextent cap id.");
-	}
-
-	ret = object_activate_memextent(me);
-	if (ret != OK) {
-		panic("Failed activation of new mem extent");
-	}
-
-	*new_cap_id = capid_ret.r;
-
-	return me;
-}
 
 static paddr_t
 rootvm_package_load_elf(void *elf, size_t elf_max_size, addrspace_t *addrspace,
@@ -298,6 +250,8 @@ rootvm_package_process_image(hyp_env_data_t	     *hyp_env,
 	};
 }
 
+static_assert(MODULE_MEM_MEMEXTENT_SPARSE, "SPARSE type must be defined");
+
 void
 rootvm_package_handle_rootvm_init(partition_t *root_partition,
 				  thread_t *root_thread, cspace_t *root_cspace,
@@ -336,7 +290,7 @@ rootvm_package_handle_rootvm_init(partition_t *root_partition,
 	if (pkg_hdr->ident != ROOTVM_PACKAGE_IDENT) {
 		panic("RootVM package header not found!");
 	}
-	if (pkg_hdr->items >= (uint32_t)ROOTVM_PACKAGE_ITEMS_MAX) {
+	if (pkg_hdr->items >= ROOTVM_PACKAGE_ITEMS_MAX) {
 		panic("Invalid pkg_hdr");
 	}
 
@@ -351,7 +305,7 @@ rootvm_package_handle_rootvm_init(partition_t *root_partition,
 #endif
 
 #if 0
-	// FIXME:
+	// FIXME: QC Gunyah issue #60
 	// Root VM address space could be smaller
 	// Currently limit usable address space to 1GiB
 	vmaddr_t addr_limit = (vmaddr_t)util_bit(30);
@@ -367,11 +321,21 @@ rootvm_package_handle_rootvm_init(partition_t *root_partition,
 
 	// Map the root_thread memory as RW by default. Elf segments will be
 	// remapped with the required rights.
-	cap_id_t     me_cap;
-	memextent_t *me = create_memextent(root_partition, root_cspace,
-					   PLATFORM_ROOTVM_LMA_BASE,
-					   PLATFORM_ROOTVM_LMA_SIZE, &me_cap,
-					   PGTABLE_ACCESS_RWX);
+	cap_id_t	       me_cap;
+	memextent_ptr_result_t me_ret = memextent_construct(
+		root_partition, root_cspace, PLATFORM_ROOTVM_LMA_BASE,
+		PLATFORM_ROOTVM_LMA_SIZE, PGTABLE_ACCESS_RWX,
+		MEMEXTENT_MEMTYPE_ANY, MEMEXTENT_TYPE_SPARSE, false, &me_cap);
+	if (me_ret.e != OK) {
+		panic("Error constructing root VM memextent");
+	}
+	ret = memextent_donate_child(me_ret.r, 0U, PLATFORM_ROOTVM_LMA_SIZE,
+				     false);
+	if (ret != OK) {
+		panic("Error donating memory to root VM memextent");
+	}
+
+	memextent_t *me = me_ret.r;
 
 	image_process_info_t info = rootvm_package_process_image(
 		hyp_env, pkg_hdr, map_range_r, addrspace, me, map_size, ipa);
@@ -431,7 +395,7 @@ rootvm_package_handle_rootvm_init(partition_t *root_partition,
 	LOG(DEBUG, INFO, "env_data_ipa: {:#x}", env_data_ipa);
 	LOG(DEBUG, INFO, "app_heap_ipa: {:#x}", app_heap_ipa);
 
-	hyp_aspace_deallocate(root_partition, map_range_r.r);
+	hyp_aspace_unmap_and_deallocate(root_partition, map_range_r.r);
 
 	// New code has been loaded, so we need to invalidate any physical
 	// I-cache entries possibly prefetched.

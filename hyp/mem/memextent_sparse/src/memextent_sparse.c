@@ -1,4 +1,4 @@
-// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -25,6 +25,7 @@
 #include <events/memextent.h>
 
 #include "event_handlers.h"
+#include "memextent_memdb.h"
 #include "memextent_sparse.h"
 
 void
@@ -180,6 +181,11 @@ delete_sparse_mapping(memextent_sparse_mapping_t *map, addrspace_t *addrspace)
 	assert(atomic_load_relaxed(&map->addrspace) == addrspace);
 	assert(range_map_is_empty(&map->range_map));
 
+	// We're about to remove our link to this address space, so make sure
+	// any unmaps from it are complete.
+	error_t sync_err = addrspace_unmap_sync(addrspace);
+	assert(sync_err == OK);
+
 	spinlock_acquire_nopreempt(&addrspace->mapping_list_lock);
 	(void)list_delete_node(&addrspace->basic_mapping_list,
 			       &map->mapping_list_node);
@@ -211,7 +217,7 @@ apply_access_mask(memextent_t *me, memextent_mapping_attrs_t *attrs)
 static error_t
 add_sparse_mapping(memextent_t *me, addrspace_t *addrspace, paddr_t phys,
 		   size_t size, vmaddr_t vbase, memextent_mapping_attrs_t attrs,
-		   addrspace_map_flags_t map_flags) REQUIRE_SPINLOCK(me->lock)
+		   addrspace_map_flags_t map_flags) REQUIRE_SPINLOCK(me -> lock)
 {
 	error_t err    = OK;
 	bool	mapped = false;
@@ -297,7 +303,7 @@ out:
 
 static error_t
 remove_sparse_mapping(memextent_t *me, addrspace_t *addrspace, paddr_t phys,
-		      size_t size, vmaddr_t vbase) REQUIRE_SPINLOCK(me->lock)
+		      size_t size, vmaddr_t vbase) REQUIRE_SPINLOCK(me -> lock)
 {
 	error_t err	 = OK;
 	bool	unmapped = false;
@@ -338,46 +344,8 @@ out:
 }
 
 static error_t
-memextent_map_range_sparse(paddr_t phys, size_t size, void *arg)
-{
-	error_t err;
-
-	assert(size != 0U);
-	assert(!util_add_overflows(phys, size - 1U));
-	assert(arg != NULL);
-
-	memextent_sparse_arg_t *me_arg = (memextent_sparse_arg_t *)arg;
-
-	size_t offset = phys - me_arg->pbase;
-
-	err = addrspace_map(me_arg->addrspace, me_arg->vbase + offset, size,
-			    phys, me_arg->memtype, me_arg->kernel_access,
-			    me_arg->user_access, me_arg->map_flags);
-	if (err != OK) {
-		me_arg->fail_addr = phys;
-	}
-
-	return err;
-}
-
-static error_t
-memextent_unmap_range_sparse(paddr_t phys, size_t size, void *arg)
-{
-	assert(size != 0U);
-	assert(!util_add_overflows(phys, size - 1U));
-	assert(arg != NULL);
-
-	memextent_sparse_arg_t *me_arg = (memextent_sparse_arg_t *)arg;
-
-	size_t offset = phys - me_arg->pbase;
-
-	return addrspace_unmap(me_arg->addrspace, me_arg->vbase + offset, size,
-			       phys, me_arg->map_flags);
-}
-
-static error_t
 do_as_map(addrspace_t *as, vmaddr_t vbase, size_t size, paddr_t phys,
-	  memextent_mapping_attrs_t attrs)
+	  memextent_mapping_attrs_t attrs) EXCLUDE_ADDRSPACE_LOCK(as)
 {
 	assert(as != NULL);
 
@@ -394,8 +362,8 @@ do_as_map(addrspace_t *as, vmaddr_t vbase, size_t size, paddr_t phys,
 
 static error_t
 apply_mappings(memextent_t *me, paddr_t phys, size_t size, bool unmap,
-	       size_t *fail_offset) REQUIRE_SPINLOCK(me->lock)
-	REQUIRE_LOCK(me->mappings)
+	       size_t *fail_offset) REQUIRE_SPINLOCK(me -> lock)
+REQUIRE_LOCK(me->mappings)
 {
 	error_t err = OK;
 
@@ -516,9 +484,8 @@ revert_mapping_transfer(memextent_mapping_t x_mappings[],
 
 static error_t
 do_mapping_transfer(memextent_t *x, memextent_t *y, paddr_t phys, size_t size,
-		    size_t *fail_offset) REQUIRE_SPINLOCK(x->lock)
-	REQUIRE_SPINLOCK(y->lock) REQUIRE_LOCK(x->mappings)
-		REQUIRE_LOCK(y->mappings)
+		    size_t *fail_offset) REQUIRE_SPINLOCK(x -> lock)
+REQUIRE_SPINLOCK(y->lock) REQUIRE_LOCK(x->mappings) REQUIRE_LOCK(y->mappings)
 {
 	error_t err = OK;
 
@@ -625,7 +592,8 @@ do_mapping_transfer(memextent_t *x, memextent_t *y, paddr_t phys, size_t size,
 
 static error_t
 update_memdb_partition_and_extent(memextent_t *me, paddr_t phys, size_t size,
-				  bool to_partition) REQUIRE_SPINLOCK(me->lock)
+				  bool to_partition)
+	REQUIRE_SPINLOCK(me -> lock)
 {
 	assert(me != NULL);
 	assert(!util_add_overflows(phys, size - 1U));
@@ -650,8 +618,8 @@ update_memdb_partition_and_extent(memextent_t *me, paddr_t phys, size_t size,
 
 static bool
 memextent_range_has_mapping(memextent_t *me, paddr_t phys, size_t size,
-			    index_t mapping_index) REQUIRE_LOCK(me->lock)
-	REQUIRE_LOCK(me->mappings)
+			    index_t mapping_index) REQUIRE_LOCK(me -> lock)
+REQUIRE_LOCK(me->mappings)
 {
 	bool mapped;
 
@@ -676,7 +644,7 @@ out:
 static error_t
 update_memdb_two_extents(memextent_t *from, memextent_t *to, paddr_t phys,
 			 size_t size, bool require_from_unmapped)
-	REQUIRE_SPINLOCK(from->lock) REQUIRE_SPINLOCK(to->lock)
+	REQUIRE_SPINLOCK(from -> lock) REQUIRE_SPINLOCK(to->lock)
 {
 	assert(from != NULL);
 	assert(to != NULL);
@@ -1174,9 +1142,10 @@ memextent_map_partial_sparse(memextent_t *me, addrspace_t *addrspace,
 		goto out_locked;
 	}
 
-	ret = add_sparse_mapping(me, addrspace, phys, size, vm_base, map_attrs,
-				 map_flags);
-	if (ret != OK) {
+	error_t err = add_sparse_mapping(me, addrspace, phys, size, vm_base,
+					 map_attrs, map_flags);
+	if (err != OK) {
+		ret = err;
 		goto out_locked;
 	}
 
@@ -1187,40 +1156,33 @@ memextent_map_partial_sparse(memextent_t *me, addrspace_t *addrspace,
 	pgtable_access_t kernel_access =
 		memextent_mapping_attrs_get_kernel_access(&map_attrs);
 
-	memextent_sparse_arg_t arg = {
-		.addrspace     = addrspace,
-		.vbase	       = vm_base,
-		.pbase	       = phys,
-		.memtype       = memtype,
-		.user_access   = user_access,
-		.kernel_access = kernel_access,
-		.map_flags     = map_flags,
-	};
-
-	ret = memdb_range_walk((uintptr_t)me, MEMDB_TYPE_EXTENT, phys,
-			       phys + (size - 1U), &memextent_map_range_sparse,
-			       &arg);
-	if ((ret != OK) && !addrspace_map_flags_get_private(&map_flags)) {
+	addrspace_start(addrspace, map_flags);
+	paddr_result_t map_ret = memextent_memdb_walk_map(
+		me, addrspace, vm_base, phys, size, memtype, user_access,
+		kernel_access, map_flags);
+	if ((map_ret.e != OK) && !addrspace_map_flags_get_private(&map_flags)) {
 		// The mapping failed; try to undo it, unless it was protected
 		// in which case it is not possible to undo.
-		error_t err;
-
-		if (arg.fail_addr != phys) {
-			// Unmap any ranges that were mapped in the memdb walk.
-			err = memdb_range_walk((uintptr_t)me, MEMDB_TYPE_EXTENT,
-					       phys, arg.fail_addr - 1U,
-					       &memextent_unmap_range_sparse,
-					       &arg);
+		if (map_ret.r != phys) {
+			// Unmap any ranges that were mapped in the
+			// memdb walk.
+			err = memextent_memdb_walk_unmap(me, addrspace, vm_base,
+							 phys, map_ret.r - 1U,
+							 map_flags);
 		} else {
 			err = OK;
 		}
+		addrspace_commit(addrspace, map_flags);
 
 		if (err == OK) {
 			err = remove_sparse_mapping(me, addrspace, phys, size,
 						    vm_base);
 			assert(err == OK);
 		}
+	} else {
+		addrspace_commit(addrspace, map_flags);
 	}
+	ret = map_ret.e;
 
 out_locked:
 	spinlock_release(&me->lock);
@@ -1255,16 +1217,10 @@ memextent_unmap_partial_sparse(memextent_t *me, addrspace_t *addrspace,
 
 	spinlock_acquire(&me->lock);
 
-	memextent_sparse_arg_t arg = {
-		.addrspace = addrspace,
-		.vbase	   = vm_base,
-		.pbase	   = phys,
-		.map_flags = map_flags,
-	};
-
-	ret = memdb_range_walk((uintptr_t)me, MEMDB_TYPE_EXTENT, phys,
-			       phys + (size - 1U),
-			       &memextent_unmap_range_sparse, &arg);
+	addrspace_start(addrspace, map_flags);
+	ret = memextent_memdb_walk_unmap(me, addrspace, vm_base, phys, size,
+					 map_flags);
+	addrspace_commit(addrspace, map_flags);
 
 	if (ret == OK) {
 		ret = remove_sparse_mapping(me, addrspace, phys, size, vm_base);
@@ -1273,6 +1229,101 @@ memextent_unmap_partial_sparse(memextent_t *me, addrspace_t *addrspace,
 	spinlock_release(&me->lock);
 out:
 	return ret;
+}
+
+// We need LOCK_IMPL here because range_map_walk can't pass lock attributes
+// through its selector event (without interfering with other users)
+error_t
+memextent_unmap_range_map_entry(range_map_entry_t entry, size_t base,
+				size_t size, range_map_arg_t arg) LOCK_IMPL
+{
+	assert(size != 0U);
+	assert(!util_add_overflows(base, size - 1U));
+
+	addrspace_t *as = arg.memextent_sparse_arg->addrspace;
+	memextent_t *me = arg.memextent_sparse_arg->memextent;
+
+	vmaddr_t vbase = memextent_map_range_get_vbase(&entry.value.me_map);
+	return memextent_memdb_walk_unmap(me, as, vbase, base, size,
+					  arg.memextent_sparse_arg->map_flags);
+}
+
+error_t
+memextent_unmap_whole_extent_sparse(memextent_t *me, addrspace_t *addrspace,
+				    addrspace_map_flags_t map_flags)
+{
+	assert((me != NULL) && (addrspace != NULL));
+
+	error_t ret = ERROR_ADDR_INVALID;
+
+	spinlock_acquire(&me->lock);
+
+	// RCU protects ->addrspace
+	rcu_read_start();
+	for (index_t j = 0; j < MEMEXTENT_MAX_MAPS; j++) {
+		memextent_sparse_mapping_t *map = &me->mappings.sparse[j];
+
+		addrspace_t *as = atomic_load_relaxed(&map->addrspace);
+		if (as != addrspace) {
+			continue;
+		}
+
+		memextent_sparse_range_arg_t arg = {
+			.addrspace = addrspace,
+			.memextent = me,
+			.map_flags = map_flags,
+		};
+
+		range_map_arg_t range_map_arg = {
+			.memextent_sparse_arg = &arg,
+		};
+
+		addrspace_start(addrspace, map_flags);
+		ret = range_map_walk(&map->range_map, me->phys_base, me->size,
+				     RANGE_MAP_TYPE_MEMEXTENT_MAPPING,
+				     RANGE_MAP_CALLBACK_MEMEXTENT_UNMAP,
+				     range_map_arg);
+		addrspace_commit(addrspace, map_flags);
+
+		if (ret != OK) {
+			break;
+		}
+
+		range_map_clear_all(&map->range_map);
+		delete_sparse_mapping(map, as);
+	}
+	rcu_read_finish();
+
+	spinlock_release(&me->lock);
+
+	return ret;
+}
+
+error_t
+memextent_sync_all_sparse(memextent_t *me)
+{
+	error_t err = OK;
+
+	spinlock_acquire(&me->lock);
+
+	// RCU protects ->addrspace
+	rcu_read_start();
+	for (index_t j = 0; j < MEMEXTENT_MAX_MAPS; j++) {
+		memextent_sparse_mapping_t *map = &me->mappings.sparse[j];
+
+		addrspace_t *addrspace = atomic_load_consume(&map->addrspace);
+		if (addrspace != NULL) {
+			err = addrspace_unmap_sync(addrspace);
+			if (err != OK) {
+				break;
+			}
+		}
+	}
+	rcu_read_finish();
+
+	spinlock_release(&me->lock);
+
+	return err;
 }
 
 error_t
@@ -1357,6 +1408,7 @@ memextent_update_access_partial_sparse(memextent_t *me, addrspace_t *addrspace,
 
 		old_gpt_map = lookup_ret.entry.value.me_map;
 		if (memextent_map_range_get_vbase(&old_gpt_map) == vm_base) {
+			update_map = map;
 			break;
 		}
 	}
@@ -1375,48 +1427,48 @@ memextent_update_access_partial_sparse(memextent_t *me, addrspace_t *addrspace,
 	memextent_map_range_set_user_access(&new_gpt_map, new_user_access);
 	memextent_map_range_set_kernel_access(&new_gpt_map, new_kernel_access);
 
-	ret = update_range_mapping(update_map, phys, size, old_gpt_map,
-				   new_gpt_map);
-	if (ret != OK) {
+	error_t err = update_range_mapping(update_map, phys, size, old_gpt_map,
+					   new_gpt_map);
+	if (err != OK) {
+		ret = err;
 		goto out_locked;
 	}
 
-	memextent_sparse_arg_t arg = {
-		.addrspace     = addrspace,
-		.vbase	       = vm_base,
-		.pbase	       = phys,
-		.memtype       = memextent_map_range_get_memtype(&new_gpt_map),
-		.user_access   = new_user_access,
-		.kernel_access = new_kernel_access,
-		.map_flags     = map_flags,
-	};
+	pgtable_vm_memtype_t memtype =
+		memextent_map_range_get_memtype(&old_gpt_map);
 
-	ret = memdb_range_walk((uintptr_t)me, MEMDB_TYPE_EXTENT, phys,
-			       phys + (size - 1U), &memextent_map_range_sparse,
-			       &arg);
-	if (ret != OK) {
-		error_t err;
-
-		if (arg.fail_addr != phys) {
+	addrspace_start(addrspace, map_flags);
+	paddr_result_t map_ret = memextent_memdb_walk_map(
+		me, addrspace, vm_base, phys, size, memtype, new_user_access,
+		new_kernel_access, map_flags);
+	if (map_ret.e != OK) {
+		if (map_ret.r != phys) {
 			// Revert any access changes applied to the addrspace.
-			arg.user_access = memextent_map_range_get_user_access(
-				&old_gpt_map);
-			arg.kernel_access =
+			pgtable_access_t old_user_access =
+				memextent_map_range_get_user_access(
+					&old_gpt_map);
+			pgtable_access_t old_kernel_access =
 				memextent_map_range_get_kernel_access(
 					&old_gpt_map);
 
-			err = memdb_range_walk((uintptr_t)me, MEMDB_TYPE_EXTENT,
-					       phys, arg.fail_addr - 1U,
-					       &memextent_map_range_sparse,
-					       &arg);
+			err = memextent_memdb_walk_map(me, addrspace, vm_base,
+						       phys, size, memtype,
+						       old_user_access,
+						       old_kernel_access,
+						       map_flags)
+				      .e;
 			assert(err == OK);
 		}
+		addrspace_commit(addrspace, map_flags);
 
 		// Revert the range map update.
 		err = update_range_mapping(update_map, phys, size, new_gpt_map,
 					   old_gpt_map);
 		assert(err == OK);
+	} else {
+		addrspace_commit(addrspace, map_flags);
 	}
+	ret = map_ret.e;
 
 out_locked:
 	spinlock_release(&me->lock);
@@ -1465,29 +1517,39 @@ memextent_deactivate_sparse(memextent_t *me)
 		goto out;
 	}
 
-	spinlock_acquire(&me->parent->lock);
-	spinlock_acquire_nopreempt(&me->lock);
+	bool retry;
+	do {
+		spinlock_acquire(&me->parent->lock);
+		spinlock_acquire_nopreempt(&me->lock);
 
-	memextent_retain_mappings(me->parent);
-	memextent_retain_mappings(me);
+		memextent_retain_mappings(me->parent);
+		memextent_retain_mappings(me);
 
-	size_t offset = 0U;
-	while (offset < me->size) {
-		phys_range_result_t range = lookup_phys_range(me, &offset);
-		if (range.e != OK) {
-			break;
+		retry	      = false;
+		size_t offset = 0U;
+		while (offset < me->size) {
+			phys_range_result_t range =
+				lookup_phys_range(me, &offset);
+			if (range.e != OK) {
+				break;
+			}
+
+			error_t err = do_mapping_transfer(me, me->parent,
+							  range.r.base,
+							  range.r.size, NULL);
+			if (err == ERROR_RETRY) {
+				retry = true;
+				break;
+			}
+			assert(err == OK);
 		}
 
-		error_t err = do_mapping_transfer(me, me->parent, range.r.base,
-						  range.r.size, NULL);
-		assert(err == OK);
-	}
+		memextent_release_mappings(me->parent, false);
+		memextent_release_mappings(me, true);
 
-	memextent_release_mappings(me->parent, false);
-	memextent_release_mappings(me, true);
-
-	spinlock_release_nopreempt(&me->lock);
-	spinlock_release(&me->parent->lock);
+		spinlock_release_nopreempt(&me->lock);
+		spinlock_release(&me->parent->lock);
+	} while (retry);
 
 out:
 	return true;
@@ -1539,7 +1601,7 @@ out:
 }
 
 bool
-memextent_retain_mappings_sparse(memextent_t *me) REQUIRE_SPINLOCK(me->lock)
+memextent_retain_mappings_sparse(memextent_t *me) REQUIRE_SPINLOCK(me -> lock)
 {
 	assert(me != NULL);
 
@@ -1559,7 +1621,7 @@ memextent_retain_mappings_sparse(memextent_t *me) REQUIRE_SPINLOCK(me->lock)
 
 bool
 memextent_release_mappings_sparse(memextent_t *me, bool clear)
-	REQUIRE_SPINLOCK(me->lock)
+	REQUIRE_SPINLOCK(me -> lock)
 {
 	assert(me != NULL);
 
@@ -1657,9 +1719,9 @@ memextent_deactivate_addrspace_sparse(addrspace_t *addrspace)
 
 	list_t *list = &addrspace->sparse_mapping_list;
 
-	memextent_sparse_mapping_t *map = NULL;
-	list_foreach_container_maydelete (map, list, memextent_sparse_mapping,
-					  mapping_list_node) {
+	LIST_FOREACH_CONTAINER_BEGIN(memextent_sparse_mapping_t, list,
+				     memextent_sparse_mapping,
+				     mapping_list_node, map)
 		// An object_put() call is a release operation, and if the
 		// refcount reaches zero it is also an acquire operation. As
 		// such, we should have observed all prior updates to the
@@ -1674,7 +1736,7 @@ memextent_deactivate_addrspace_sparse(addrspace_t *addrspace)
 		// when the empty mapping is reused. This matches with the
 		// acquire fence in add_sparse_mapping().
 		atomic_store_release(&map->addrspace, NULL);
-	}
+	LIST_FOREACH_CONTAINER_END
 
 	spinlock_release(&addrspace->mapping_list_lock);
 }

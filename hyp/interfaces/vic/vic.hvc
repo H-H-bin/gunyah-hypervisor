@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -47,6 +47,6 @@ define vic_bind_msi_source hypercall {
 	// Some platforms may not implement any MSI sources, or multiple types
 	// of MSI source. For GICv3/v4, this is typically a virtual ITS.
 	msi_source	input type cap_id_t;
-	res0		input uregister;
+	source_config	input bitfield vic_msi_source_config;
 	error		output enumeration error;
 };

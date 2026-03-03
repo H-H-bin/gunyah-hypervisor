@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -25,7 +25,7 @@ static const unsigned char *elf_ident = (const unsigned char *)EI_MAG_STR;
 static bool
 str_equal(const unsigned char *s1, const unsigned char *s2, size_t n)
 {
-	bool	ret = true;
+	bool	ret;
 	index_t i;
 
 	assert(n > 0U);
@@ -33,10 +33,14 @@ str_equal(const unsigned char *s1, const unsigned char *s2, size_t n)
 	for (i = 0; i < n; i++) {
 		if (s1[i] != s2[i]) {
 			ret = false;
-			break;
+			goto out;
 		}
 	}
 
+	// All characters matched
+	ret = true;
+
+out:
 	return ret;
 }
 
@@ -154,7 +158,7 @@ elf_load_phys(void *elf_file, size_t elf_max_size, paddr_t phys_base)
 		Elf_Phdr *cur_phdr = &phdr[i];
 		Elf_Word  type	   = cur_phdr->p_type;
 
-		// FIXME:
+		// FIXME: QC Gunyah issue #80
 		assert(type != PT_TLS);
 
 		if (type != PT_LOAD) {

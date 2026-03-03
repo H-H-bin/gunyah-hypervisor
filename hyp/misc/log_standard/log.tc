@@ -1,10 +1,10 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 // '6LOG' = '364c4f47'
 // - Note, external tools can also use this to detect endianness.
-define LOG_MAGIC constant = 0x474f4c36;
+define LOG_MAGIC constant uint32 = 0x474f4c36;
 
 // This structure is a singleton, and is accessible from all CPUs.
 define log_control object {

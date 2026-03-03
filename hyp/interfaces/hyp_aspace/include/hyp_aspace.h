@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -11,12 +11,18 @@
 virt_range_result_t
 hyp_aspace_allocate(size_t min_size);
 
-// Free a block of virtual memory previously returned by hyp_aspace_allocate().
+// Free a range of virtual memory previously returned by hyp_aspace_allocate(),
+// and unmap anything that is mapped in the range.
 void
-hyp_aspace_deallocate(partition_t *partition, virt_range_t virt_range);
+hyp_aspace_unmap_and_deallocate(partition_t *partition,
+				virt_range_t virt_range);
 
 // Create a 1:1 mapping of the given physical address range, accessible by the
 // hypervisor without calling partition_phys_access_begin.
+//
+// The partition provided is used to allocate memory for page table levels (if
+// required). The same partition must be provided when hyp_aspace_unmap_direct
+// is called for the VA range.
 //
 // This should only be used by platform-specific legacy code that assumes 1:1
 // mappings.
@@ -26,6 +32,9 @@ hyp_aspace_map_direct(partition_t *partition, paddr_t phys, size_t size,
 		      vmsa_shareability_t share);
 
 // Remove a mapping created by hyp_aspace_map_direct().
+//
+// The partition provided is used as the partition to free page table levels
+// (if any) to. Must be the same partition used for the VA range.
 error_t
 hyp_aspace_unmap_direct(partition_t *partition, paddr_t phys, size_t size);
 

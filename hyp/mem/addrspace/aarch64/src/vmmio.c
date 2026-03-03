@@ -1,4 +1,4 @@
-// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -167,8 +167,7 @@ addrspace_handle_vcpu_run_resume_vmmio_write(thread_t  *vcpu,
 	       (vcpu->addrspace_fault_access_type ==
 		ADDRSPACE_ACCESS_TYPE_WRITE));
 
-	(void)resume_data_0;
-	if (resume_data_2 != 0U) {
+	if ((resume_data_0 != 0U) || (resume_data_2 != 0U)) {
 		err = ERROR_UNIMPLEMENTED;
 		goto out;
 	}
@@ -272,7 +271,7 @@ addrspace_handle_page_fault(iss_da_ia_fsc_t fsc, vmaddr_result_t fault_ipa,
 		error_t err = pgtable_vm_access_protected(
 			&addrspace->vm_pgtable, vmaddr,
 			access_type == ADDRSPACE_ACCESS_TYPE_WRITE);
-		pgtable_vm_commit(&addrspace->vm_pgtable);
+		pgtable_vm_commit(&addrspace->vm_pgtable, true);
 		if (err == OK) {
 			ret = VCPU_TRAP_RESULT_RETRY;
 			goto out;

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -7,12 +7,19 @@ define arm_vm_timer_type enumeration {
 	PHYSICAL;
 };
 
+extend vcpu_local_virq_type enumeration {
+	virtual_timer = 1;
+	physical_timer = 2;
+};
+
 extend thread object {
 	virtual_timer structure timer(contained);
 	virtual_timer_virq_src structure virq_source(contained);
+	virtual_timer_virq type virq_t;
 
 	physical_timer structure timer(contained);
 	physical_timer_virq_src structure virq_source(contained);
+	physical_timer_virq type virq_t;
 };
 
 extend timer_action enumeration {

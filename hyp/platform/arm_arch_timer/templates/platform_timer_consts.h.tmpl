@@ -1,10 +1,10 @@
 // Automatically generated. Do not modify.
 //
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-#set $ms_in_s = 1000000
+#set $ms_in_s = 1000
 #set $ns_in_s = 1000000000
 
 // This generates constants for conversion between ticks and time (ms/ns). The
@@ -15,41 +15,38 @@
 // because the inherent uint64_t base types limits the size of the ticks/time
 // values significantly because we need to avoid overflow in the multiply step.
 
-#set nsfreq_shift = 0
-#set ns_shift = 0
 #set $freq = $PLATFORM_ARCH_TIMER_FREQ
-#while freq / ($ns_in_s << $ns_shift) > 1
-#set ns_shift += 1
-#end while
-#while $ns_in_s / ($freq << $nsfreq_shift) > 1
-#set nsfreq_shift += 1
-#end while
 
-#set msfreq_shift = 0
-#set ms_shift = 0
-#set $freq = $PLATFORM_ARCH_TIMER_FREQ
-#while freq / ($ms_in_s << $ms_shift) > 1
-#set ms_shift += 1
-#end while
-#while $ms_in_s / ($freq << $msfreq_shift) > 1
-#set msfreq_shift += 1
-#end while
+// Assuming the values we are converting are 64-bit, the fraction we multiply
+// (in fixed-point) must also fit in 64 bits, so that that 128-bit multiply
+// does not overflow.
+#set $ticks_per_ns_frac_bits = 64 - (freq // ns_in_s).bit_length()
+#set $ticks_per_ns_fixed_point = (freq << ticks_per_ns_frac_bits) // ns_in_s
+
+#set $ns_per_tick_frac_bits = 64 - (ns_in_s // freq).bit_length()
+#set $ns_per_tick_fixed_point = (ns_in_s << ns_per_tick_frac_bits) // freq
+
+#set $ticks_per_ms_frac_bits = 64 - (freq // ms_in_s).bit_length()
+#set $ticks_per_ms_fixed_point = (freq << ticks_per_ms_frac_bits) // ms_in_s
+
+#set $ms_per_tick_frac_bits = 64 - (ms_in_s // freq).bit_length()
+#set $ms_per_tick_fixed_point = (ms_in_s << ms_per_tick_frac_bits) // freq
+
+\#define PLATFORM_TIMER_TICKS_PER_NS_FIXED_POINT \
+	((uint64_t)${ticks_per_ns_fixed_point}U)
+\#define PLATFORM_TIMER_TICKS_PER_NS_FRAC_BITS (${ticks_per_ns_frac_bits})
+
+\#define PLATFORM_TIMER_NS_PER_TICK_FIXED_POINT \
+	((uint64_t)${ns_per_tick_fixed_point}U)
+\#define PLATFORM_TIMER_NS_PER_TICK_FRAC_BITS (${ns_per_tick_frac_bits})
+
+\#define PLATFORM_TIMER_TICKS_PER_MS_FIXED_POINT \
+	((uint64_t)${ticks_per_ms_fixed_point}U)
+\#define PLATFORM_TIMER_TICKS_PER_MS_FRAC_BITS (${ticks_per_ms_frac_bits})
+
+\#define PLATFORM_TIMER_MS_PER_TICK_FIXED_POINT \
+	((uint64_t)${ms_per_tick_fixed_point}U)
+\#define PLATFORM_TIMER_MS_PER_TICK_FRAC_BITS (${ms_per_tick_frac_bits})
 
 \#define NS_IN_S (uint64_t)${ns_in_s}U
 \#define MS_IN_S (uint64_t)${ms_in_s}U
-
-\#define PLATFORM_TIMER_NSFREQ_SHIFT $nsfreq_shift
-\#define PLATFORM_TIMER_NS_SHIFT $ns_shift
-
-\#define PLATFORM_TIMER_MSFREQ_SHIFT $msfreq_shift
-\#define PLATFORM_TIMER_MS_SHIFT $ms_shift
-
-\#define PLATFORM_TIMER_NS_FREQ_SCALE					       \
-	 (uint64_t)(((__uint128_t)$freq << 64) / (${ns_in_s}U << $ns_shift))
-\#define PLATFORM_TIMER_NS_SCALE					       \
-	 (uint64_t)(((__uint128_t)$ns_in_s << 64) / (${freq}U << $nsfreq_shift))
-
-\#define PLATFORM_TIMER_MS_FREQ_SCALE					       \
-	 (uint64_t)(((__uint128_t)$freq << 64) / (${ms_in_s}U << $ms_shift))
-\#define PLATFORM_TIMER_MS_SCALE					       \
-	 (uint64_t)(((__uint128_t)$ms_in_s << 64) / (${freq}U << $msfreq_shift))

@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -113,6 +113,16 @@ memextent_unmap_partial(memextent_t *extent, addrspace_t *addrspace,
 			vmaddr_t vm_base, size_t offset, size_t size,
 			addrspace_map_flags_t map_flags);
 
+// Unmap a portion of a memory extent from all ranges in a specified address
+// space.
+//
+// There may still be in-progress EL2 operations using the removed mappings.
+// These are RCU read operations and are guaranteed to complete (or fault due to
+// the unmap) by the end of the next grace period.
+error_t
+memextent_unmap_whole_extent(memextent_t *extent, addrspace_t *addrspace,
+			     addrspace_map_flags_t map_flags);
+
 // Unmap a memory extent from all address spaces. The entire range is unmapped,
 // except for any carveouts contained within the extent.
 //
@@ -121,6 +131,12 @@ memextent_unmap_partial(memextent_t *extent, addrspace_t *addrspace,
 // the unmap) by the end of the next grace period.
 error_t
 memextent_unmap_all(memextent_t *extent);
+
+// Ensure that all preceding unmap operations performed with the no_sync flag
+// set in map_flags have completed. Note that this does not wait for hypervisor
+// operations using removed mappings to complete; a separate rcu_sync is needed.
+error_t
+memextent_sync_all(memextent_t *extent);
 
 // Zero all owned regions of a memory extent in the given range.
 //
@@ -183,16 +199,16 @@ memextent_derive(memextent_t *parent, paddr_t offset, size_t size,
 // This acquires references to all addrspaces the memextent has mappings in,
 // preventing the addrspace from being destroyed while looking up mappings.
 void
-memextent_retain_mappings(memextent_t *me) REQUIRE_LOCK(me->lock)
-	ACQUIRE_LOCK(me->mappings);
+memextent_retain_mappings(memextent_t *me) REQUIRE_LOCK(me -> lock)
+ACQUIRE_LOCK(me->mappings);
 
 // Release a memextent's retained mappings.
 //
 // This frees any references acquired in memextent_retain_mappings().
 // If clear is true, all mappings will be cleared as well.
 void
-memextent_release_mappings(memextent_t *me, bool clear) REQUIRE_LOCK(me->lock)
-	RELEASE_LOCK(me->mappings);
+memextent_release_mappings(memextent_t *me, bool clear) REQUIRE_LOCK(me -> lock)
+RELEASE_LOCK(me->mappings);
 
 // Lookup a mapping in a memextent.
 //
@@ -207,7 +223,7 @@ memextent_release_mappings(memextent_t *me, bool clear) REQUIRE_LOCK(me->lock)
 // the range is only partially mapped.
 memextent_mapping_t
 memextent_lookup_mapping(memextent_t *me, paddr_t phys, size_t size, index_t i)
-	REQUIRE_LOCK(me->lock) REQUIRE_LOCK(me->mappings);
+	REQUIRE_LOCK(me -> lock) REQUIRE_LOCK(me->mappings);
 
 // Claim and map a memextent for access in the hypervisor.
 //
@@ -220,7 +236,7 @@ memextent_lookup_mapping(memextent_t *me, paddr_t phys, size_t size, index_t i)
 // remains attached, derivation of children or donation of memory to or from
 // this extent will not be permitted. It may, however, be mapped in VM address
 // spaces while attached, and existing VM address space mappings will not be
-// removed by attachement.
+// removed by attachment.
 //
 // The specified virtual address range must be within a region allocated to the
 // specified partition by hyp_aspace_allocate(). The specified size must be a
@@ -243,14 +259,30 @@ memextent_attach(partition_t *owner, memextent_t *extent, uintptr_t hyp_va,
 void
 memextent_detach(partition_t *owner, memextent_t *extent);
 
+// Find the mapped size of the memextent.
+//
+// This is the largest offset from the vm_base specified to memextent_map() that
+// will be mapped. It is not necessarily the same as the total amount of memory
+// in the extent, as the extent may be sparse.
+size_result_t
+memextent_get_mapped_size(const memextent_t *me);
+
 // Find the offset of a specified physical access within a memextent.
 //
 // This is intended to be used for handling faults. If any part of the specified
 // physical address range is outside the memextent (including in a gap in a
 // sparse memextent), it will return an error.
 size_result_t
-memextent_get_offset_for_pa(memextent_t *memextent, paddr_t pa, size_t size);
+memextent_get_offset_for_pa(memextent_t *me, paddr_t pa, size_t size);
 
 // Register an extent to be sanitised on reset, if supported by the target.
 error_t
 memextent_sanitise_on_reset(memextent_t *me);
+
+// Helper function to create a basic/sparse memory extent from partition memory.
+// Returns the memextent_t and capability in new_cap_id, if cspace is not NULL.
+memextent_ptr_result_t
+memextent_construct(partition_t *partition, cspace_t *cspace, paddr_t phys_base,
+		    size_t size, pgtable_access_t access,
+		    memextent_memtype_t memtype, memextent_type_t type,
+		    bool memextent_device_mem, cap_id_t *new_cap_id);

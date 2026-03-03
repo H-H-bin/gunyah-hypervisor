@@ -1,4 +1,4 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -36,15 +36,25 @@ extern thread_t _Thread_local current_thread;
 thread_t _Thread_local current_thread
 	__attribute__((section(".tbss.current_thread")));
 
+void
+thread_standard_handle_object_init_thread(thread_create_t thread_create)
+{
+	thread_t *thread = thread_create.thread;
+
+	assert_debug(thread != NULL);
+
+	thread->kind = thread_create.kind;
+}
+
 error_t
 thread_standard_handle_object_create_thread(thread_create_t thread_create)
 {
 	error_t	  err	 = OK;
 	thread_t *thread = thread_create.thread;
 
-	assert(thread != NULL);
+	assert_debug(thread != NULL);
+	assert_debug(thread->kind == thread_create.kind);
 
-	thread->kind   = thread_create.kind;
 	thread->params = thread_create.params;
 
 	size_t stack_size = (thread_create.stack_size != 0U)
@@ -181,7 +191,7 @@ thread_switch_to(thread_t *thread, ticks_t schedtime)
 	assert_preempt_disabled();
 
 	thread_t *current = thread_get_self();
-	assert(thread != current);
+	assert_safety(thread != current);
 
 	// Trace to the cpu local buffer for improved per-core history
 	TRACE_LOCAL(INFO, INFO, "thread: ctx switch from: {:#x} to: {:#x}",
@@ -297,6 +307,7 @@ thread_exit_to_user(thread_entry_reason_t reason)
 	assert_safety(thread != NULL);
 
 	trigger_thread_exit_to_user_event(reason);
+	assert_preempt_disabled();
 
 	thread_state_t state = atomic_load_relaxed(&thread->state);
 
@@ -318,9 +329,15 @@ thread_exit_to_user(thread_entry_reason_t reason)
 	}
 
 	if (compiler_unexpected(state == THREAD_STATE_KILLED)) {
+		trigger_thread_entry_from_user_event(
+			THREAD_ENTRY_REASON_INTERRUPT);
+		preempt_disable_in_irq();
 		thread_exit();
 	}
 	assert(state == THREAD_STATE_READY);
+
+	assert_preempt_disabled();
+	trigger_thread_exit_to_user_final_event(thread, reason);
 
 	// It is important that only handlers without side-effects run here.
 	trigger_thread_exit_to_user_trace_event(reason);

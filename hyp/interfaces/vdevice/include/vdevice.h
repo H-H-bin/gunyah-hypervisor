@@ -1,6 +1,10 @@
-// © 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
+
+// Initialize a vdevice structure
+void
+vdevice_init(vdevice_t *vdevice);
 
 // Configure a vdevice that is backed by a physical memory extent.
 //
@@ -29,8 +33,10 @@ vdevice_detach_phys(vdevice_t *vdevice, memextent_t *memextent);
 // Configure a vdevice that is not backed by physical memory.
 //
 // After this call succeeds, any translation faults in the specified range will
-// be forwarded to the access handler for the vdevice. The vdevice's type must
-// be set before calling this function.
+// be forwarded to the access handler for the vdevice.
+//
+// The vdevice's type must *not* be set before calling this function -
+// the function updates it to the given vdevice type.
 //
 // The given address range in the addrspace is presumed to not be mapped to any
 // physical memextent. If such a mapping exists or is created later, it may
@@ -42,8 +48,8 @@ vdevice_detach_phys(vdevice_t *vdevice, memextent_t *memextent);
 //
 // This function will retain a reference to the specified address space.
 error_t
-vdevice_attach_vmaddr(vdevice_t *vdevice, addrspace_t *addrspace, vmaddr_t ipa,
-		      size_t size);
+vdevice_attach_vmaddr(vdevice_type_t type, vdevice_t *vdevice,
+		      addrspace_t *addrspace, vmaddr_t ipa, size_t size);
 
 // Tear down a vdevice's attachment to a guest address range. This must only
 // be called after receiving an OK result from vdevice_attach_vmaddr().
@@ -53,3 +59,9 @@ vdevice_attach_vmaddr(vdevice_t *vdevice, addrspace_t *addrspace, vmaddr_t ipa,
 // period has elapsed after calling this function.
 void
 vdevice_detach_vmaddr(vdevice_t *vdevice);
+
+// Same as above, but also calls RCU sync after detaching from an address range,
+//  followed by clearing the vdevice type.
+void
+vdevice_detach_vmaddr_sync(vdevice_t *vdevice) EXCLUDE_RCU_READ
+EXCLUDE_PREEMPT_DISABLED;

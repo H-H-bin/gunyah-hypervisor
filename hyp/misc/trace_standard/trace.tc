@@ -1,14 +1,14 @@
-// © 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
 // '6TRA' = '36545241'
 // '6BUF' = '36425546'
 // - Note, external tools can also use these to detect endianness.
-define TRACE_MAGIC constant = 0x41525436;
-define TRACE_MAGIC_BUFFER constant = 0x46554236;
+define TRACE_MAGIC constant uint32 = 0x41525436;
+define TRACE_MAGIC_BUFFER constant uint32 = 0x46554236;
 
-define TRACE_VERSION constant = 0x0100;
+define TRACE_VERSION constant uint16 = 0x0101;
 
 #include <bitmap.h>
 
@@ -54,14 +54,14 @@ extend thread object {
 	trace_ids	bitfield trace_ids;
 };
 
-#define WORD_BYTES (sizeof(uregister))
-
 define trace_buffer_entry structure(aligned(64)) {
 	info	bitfield trace_info(atomic);
 	tag	bitfield trace_tag;
 	fmt	pointer char(const);
 	args	array(5) uregister;
 };
+
+define TRACE_NOTIFY_DISABLED constant type count_t = 0;
 
 define trace_buffer_header structure(aligned(64)) {
 	buf_magic	uint32;
@@ -75,9 +75,20 @@ define trace_buffer_header structure(aligned(64)) {
 	// current head of the circular buffer
 	head		type index_t(atomic);
 
-	// The flag to indicate if this buffer has wrapped around.
-	// Use inverted logic for backwards compatibility.
-	not_wrapped	bool;
+	// head index notify mask.
+	// Defaults to 0 (disabled) for backwards compat with previous
+	// not_wrapped field.
+	notify_mask	uint32;
+
+	// count of the number of buffer wraps
+	wrap_count	type count_t(atomic);
+
+	// reserved for future extension
+	res0_2		array(8) uint8;
+
+	// trace format version
+	flags		bitfield trace_control_flags;
+	version		uint16;
 };
 
 define trace_control_flags bitfield<16> {
@@ -105,8 +116,14 @@ define trace_control structure {
 
 	header_phys	type paddr_t;
 	header		pointer structure trace_buffer_header;
+
+#if defined(INTERFACE_ROOTVM)
+	// Internal private data
+	me		pointer object memextent;
+	dbl		pointer object doorbell;
+#endif
 };
 
 // One per each CPU, plus one for the global buffer
 // The global buffer will be the first, followed by the local buffers
-define TRACE_BUFFER_NUM constant = (PLATFORM_MAX_CORES + 1);
+define TRACE_BUFFER_NUM constant type count_t = (PLATFORM_MAX_CORES + 1);

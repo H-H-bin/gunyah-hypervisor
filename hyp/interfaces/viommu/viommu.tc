@@ -1,0 +1,18 @@
+// Copyright © Qualcomm Technologies, Inc. and/or its subsidiaries.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+define viommu structure {
+	type			enumeration viommu_type;
+
+	partition		pointer object partition;
+	addrspace		pointer object addrspace;
+
+	endpoint_ranges		structure range_tree;
+};
+
+define viommu_stream_id_t public newtype uint64;
+
+define viommu_type enumeration {
+	invalid = 0;
+};

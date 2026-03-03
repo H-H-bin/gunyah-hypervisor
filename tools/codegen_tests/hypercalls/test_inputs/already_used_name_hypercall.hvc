@@ -1,0 +1,12 @@
+// Hypercall with single input
+define test_hypercall_1 hypercall {
+	call_num	0x0;
+	in0		input bitfield interrupt_control_register;
+	error		output enumeration error_code;
+};
+
+define test_hypercall_1 hypercall {
+	call_num	0x0;
+	in0		input bitfield interrupt_control_register;
+	error		output enumeration error_code;
+};
