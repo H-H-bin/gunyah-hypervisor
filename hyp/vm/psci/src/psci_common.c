@@ -54,9 +54,6 @@ static _Atomic register_t vpm_active_pcpus_bitmap;
 void
 psci_handle_boot_cold_init(void)
 {
-	if (smccc_get_tz_version() < 0x10001U) {
-		panic("smccc version");
-	}
 	if (psci_smc_psci_version() < PSCI_VERSION) {
 		panic("psci version");
 	}
